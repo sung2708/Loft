@@ -198,7 +198,17 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         connect
         audio={false}
         video={false}
-        options={{ adaptiveStream: true, dynacast: true }}
+        options={{
+          adaptiveStream: true,
+          dynacast: true,
+          videoCaptureDefaults: {
+            resolution: { width: 1280, height: 720, frameRate: 30 },
+          },
+          publishDefaults: {
+            simulcast: true,
+            degradationPreference: "maintain-framerate",
+          },
+        }}
         onError={(error) => setMediaError(formatMediaError(error, "general"))}
         onMediaDeviceFailure={(failure) =>
           setMediaError(formatDeviceFailure(failure))
