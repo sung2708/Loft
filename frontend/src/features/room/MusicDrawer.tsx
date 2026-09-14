@@ -811,7 +811,7 @@ export function MusicDrawer({
 
                     {/* Inline mini slider when hovered */}
                     {showVolumeSlider && (
-                      <div className="absolute right-0 bottom-full mb-1 p-2 rounded-xl bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-xl z-50 flex items-center gap-2">
+                      <div className="absolute right-0 bottom-full p-2 rounded-xl bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-xl z-50 flex items-center gap-2">
                         <input
                           type="range"
                           min="0"
