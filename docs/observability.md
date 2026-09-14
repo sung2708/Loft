@@ -1,137 +1,88 @@
-﻿# Observability, Telemetry & Logging Architecture — Loft
+# Observability, Telemetry & Structured Logging — Loft
 
-## 1. Observability Philosophy
-
-Observability in Loft is designed to provide rapid diagnosis of distributed race conditions, latency spikes, and disconnect storms without bloating runtime memory or leaking sensitive information.
+This document specifies the structured logging format, contextual correlation dimensions, and bounded metric specifications for Loft.
 
 ---
 
-## 2. Structured Logging with `log/slog`
+## 1. Structured Logging with `log/slog`
 
-All backend logging is structured as JSON using Go's standard library `slog`.
+All backend logging is structured as JSON using Go's standard library `log/slog`. Plain text string formatting (`fmt.Printf`, `log.Println`) is strictly prohibited in production code.
 
 ### Mandatory Contextual Dimensions
 
-Every log entry must carry correlation context injected through `context.Context`:
+Every log entry must carry correlation context injected through `context.Context` or handler state:
 
-| Dimension | Type | Description |
-| :--- | :--- | :--- |
-| `request_id` | UUID | HTTP request correlation identifier. |
-| `connection_id`| String | Unique per-socket identifier (`conn_<uuid>`). |
-| `instance_id` | String | Identifier of the running Go backend container/process. |
-| `room_id` | UUID | Target room identifier (safe for logs, NOT metrics). |
-| `user_id` | UUID | Authenticated user or guest identifier. |
-| `event_type` | String | Realtime protocol event name (`media.play`, `room.join`). |
-| `event_id` | UUID | Client- or server-generated event UUID. |
+| Dimension | Key Name | Example Value | Description |
+| :--- | :--- | :--- | :--- |
+| **Request ID** | `request_id` | `"req_7a8b9c1d"` | Unique HTTP request correlation ID (from `chi/middleware`). |
+| **Room ID** | `room_id` | `"8a4f21b8-6c3e-4d05-..."` | UUID of the room being operated upon. |
+| **Participant ID** | `participant_id`| `"user:8a4f21b8-..."` | Canonical identity string (`user:<uuid>` or `guest:<uuid>`). |
+| **Connection ID** | `connection_id` | `"conn_f42b891a-..."` | Unique UUID assigned to the active WebSocket socket. |
+| **Instance ID** | `instance_id` | `"inst_east_78b9"` | Container or process identifier of the Go backend node. |
+| **Event Type** | `event_type` | `"chat.send"` | Realtime protocol event name. |
 
-### Example Structured Log Event
+### Redaction Invariant (Zero Credential Leaks)
+> **CRITICAL SECURITY RULE:** Authorization headers, Supabase JWTs, guest tokens, LiveKit API secrets, and passwords must **NEVER** be logged under any circumstance. Payloads must be sanitized before passing to loggers.
+
+---
+
+## 2. Example Structured Log Entries
+
 ```json
 {
   "time": "2026-09-14T10:48:12.104Z",
   "level": "INFO",
-  "msg": "realtime event broadcast complete",
-  "instance_id": "loft-backend-78b9",
-  "room_id": "c73d9e84-1b72-4d26-9f4a-71829e81b674",
+  "msg": "websocket joined",
+  "instance_id": "inst_east_78b9",
+  "room_id": "8a4f21b8-6c3e-4d05-9271-93e5a2c418f2",
   "connection_id": "conn_f42b891a",
-  "user_id": "8a4f21b8-6c3e-4d05-9271-93e5a2c418f2",
-  "event_type": "media.play",
-  "event_id": "9b12a84c-3e21-4d10-8fa4-61729b84a123",
-  "duration_ms": 1.42,
-  "recipients_count": 8
+  "participant_id": "user:1234-...",
+  "identity_type": "user"
+}
+```
+
+```json
+{
+  "time": "2026-09-14T10:52:01.320Z",
+  "level": "WARN",
+  "msg": "slow consumer disconnected",
+  "instance_id": "inst_east_78b9",
+  "room_id": "8a4f21b8-6c3e-4d05-9271-93e5a2c418f2",
+  "connection_id": "conn_9876-...",
+  "buffered_frames": 64,
+  "action": "CloseNow"
 }
 ```
 
 ---
 
-## 3. Prometheus Metrics & Cardinality Guardrails
+## 3. Production Metrics Catalog (Prometheus)
 
-### The High-Cardinality Cardinal Rule
-> **CRITICAL RULE:** Never use dynamic UUIDs (`room_id`, `user_id`, `event_id`, `client_ip`) as Prometheus metric labels. High-cardinality labels cause unbounded memory growth in metric collectors (Prometheus/Grafana Mimir) and can crash the monitoring infrastructure. UUIDs belong in **logs and traces only**.
+All metrics are designed for low cardinality. Dynamic UUIDs (`room_id`, `user_id`, `client_ip`) are **strictly prohibited** as Prometheus labels to prevent collector memory exhaustion.
 
-### Registered Prometheus Metrics Catalog
+### Registered Metrics
 
-```go
-package telemetry
-
-import "github.com/prometheus/client_golang/prometheus"
-
-var (
-    // HTTP Metrics
-    HTTPRequestsTotal = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "http_requests_total",
-            Help: "Total number of HTTP requests processed.",
-        },
-        []string{"method", "path", "status_code"},
-    )
-    HTTPRequestDurationSeconds = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name:    "http_request_duration_seconds",
-            Help:    "HTTP request latency distributions.",
-            Buckets: prometheus.DefBuckets,
-        },
-        []string{"method", "path"},
-    )
-
-    // WebSocket & Realtime Metrics
-    WebSocketConnections = prometheus.NewGauge(
-        prometheus.GaugeOpts{
-            Name: "websocket_connections_active",
-            Help: "Current number of active WebSocket connections on this node.",
-        },
-    )
-    WebSocketSlowClientsTotal = prometheus.NewCounter(
-        prometheus.CounterOpts{
-            Name: "websocket_slow_clients_total",
-            Help: "Count of slow clients dropped due to saturated outbound buffers.",
-        },
-    )
-    RoomBroadcastDuration = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name:    "room_broadcast_duration_seconds",
-            Help:    "Time taken to fan out events to room subscribers.",
-            Buckets: []float64{0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1},
-        },
-        []string{"event_family"},
-    )
-
-    // Media & Synchronization Metrics
-    MediaCommandsTotal = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "media_commands_total",
-            Help: "Count of media state mutations processed.",
-        },
-        []string{"action", "provider", "status"},
-    )
-    MediaSyncDriftMs = prometheus.NewHistogram(
-        prometheus.HistogramOpts{
-            Name:    "media_sync_drift_ms",
-            Help:    "Observed client drift reported during periodic telemetry pings.",
-            Buckets: []float64{50, 100, 250, 500, 1000, 2500, 5000},
-        },
-    )
-)
-```
+| Metric Name | Type | Labels | Description |
+| :--- | :--- | :--- | :--- |
+| `http_requests_total` | Counter | `method`, `path`, `status` | Total HTTP requests handled. |
+| `http_request_duration_seconds` | Histogram | `method`, `path` | HTTP request latency distribution ($P_{50}, P_{95}, P_{99}$). |
+| `websocket_connections_active` | Gauge | `instance_id` | Current active WebSocket connections on this node. |
+| `websocket_rooms_active` | Gauge | `instance_id` | Current active in-memory rooms on this node. |
+| `websocket_slow_clients_dropped_total` | Counter | `reason` | Saturated slow consumer connections terminated. |
+| `realtime_broadcast_duration_seconds` | Histogram | `event_family` | Time taken to fan out events to room subscribers. |
+| `redis_pubsub_messages_total` | Counter | `direction` (`pub`/`sub`) | Cross-instance messages routed via Redis. |
+| `redis_operation_errors_total` | Counter | `operation` | Failures communicating with Redis. |
+| `database_query_duration_seconds` | Histogram | `query_name` | PostgreSQL query latencies. |
+| `livekit_token_grants_total` | Counter | `identity_type` | Successfully minted LiveKit tokens. |
+| `media_drift_corrections_total` | Counter | `tier` (`soft`/`hard`) | Client-side drift correction events. |
 
 ---
 
-## 4. Service Indicators & Pragmatic SLOs
+## 4. Alerting Thresholds (Production Playbook)
 
-Rather than arbitrary SLAs, we track actionable service indicators:
-
-| Service Indicator | Measurement Point | Target Indicator |
-| :--- | :--- | :--- |
-| **Room Join Latency** | Time from HTTP/WS upgrade to `room.snapshot` delivery | $P_{95} < 150\text{ms}$ |
-| **Media Command Latency** | Time from client `media.play` to room broadcast receipt | $P_{95} < 50\text{ms}$ |
-| **WebSocket Reconnect Success** | Percentage of reconnecting clients successfully resynced | $> 99.5\%$ |
-| **Slow Client Rate** | Percentage of active connections forcibly terminated | $< 0.1\%$ |
-| **LiveKit Token Generation** | Go internal token generation latency | $P_{99} < 10\text{ms}$ |
-
----
-
-## 5. Profiling & Diagnostics (`pprof`)
-
-In development and staging, Go’s runtime diagnostic profiler is exposed on an internal localhost port (`:6060/debug/pprof/`):
-- Memory heap profile: `go tool pprof http://localhost:6060/debug/pprof/heap`
-- Goroutine dump: `go tool pprof http://localhost:6060/debug/pprof/goroutine`
-- 30-second CPU trace: `go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30`
+1. **Slow Consumer Spike**: `rate(websocket_slow_clients_dropped_total[5m]) > 10`
+   - *Investigation*: Inspect network congestion or frontend rendering freeze.
+2. **Redis Outage**: `redis_operation_errors_total > 0`
+   - *Behavior*: Backend falls back to local in-memory operation; investigate Redis cluster health.
+3. **Database Connection Saturation**: `pgxpool.AcquireDuration > 500ms`
+   - *Investigation*: Identify unindexed queries or connection pool exhaustion.

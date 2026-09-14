@@ -42,6 +42,16 @@ func main() {
 	guests := auth.NewGuestTokens(cfg.GuestTokenSecret, cfg.GuestTokenTTL)
 	liveKitService := livekit.New(cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
 	hub := realtime.New(database, guests, users, cfg.FrontendOrigins, logger)
+	if cfg.RedisURL != "" {
+		bus, err := realtime.NewRedisBus(cfg.RedisURL, cfg.InstanceID, logger)
+		if err != nil {
+			logger.Error("redis disabled; serving local realtime only", "error", err)
+		} else {
+			hub.SetBus(bus)
+			bus.Start(ctx, hub.DeliverRemote)
+			defer bus.Close()
+		}
+	}
 	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, logger, hub)
 	server := &http.Server{Addr: cfg.Address, Handler: api.Routes(hub), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {

@@ -147,3 +147,7 @@ func CanDeleteRoom(room Room, identity Identity) bool {
 func CanManageQueue(room Room, identity Identity) bool {
 	return CanJoin(room, identity)
 }
+
+func CanChangeSettings(room Room, identity Identity) bool { return CanControlMedia(room, identity) }
+
+func CanKick(room Room, identity Identity) bool { return CanControlMedia(room, identity) }

@@ -20,6 +20,8 @@ type Config struct {
 	GuestTokenSecret  string
 	GuestTokenTTL     time.Duration
 	ShutdownTimeout   time.Duration
+	RedisURL          string
+	InstanceID        string
 }
 
 func Load() (Config, error) {
@@ -36,6 +38,8 @@ func Load() (Config, error) {
 		GuestTokenSecret:  os.Getenv("GUEST_TOKEN_SECRET"),
 		GuestTokenTTL:     12 * time.Hour,
 		ShutdownTimeout:   15 * time.Second,
+		RedisURL:          os.Getenv("REDIS_URL"),
+		InstanceID:        env("INSTANCE_ID", ""),
 	}
 	if cfg.DatabaseURL == "" || cfg.SupabaseURL == "" || cfg.GuestTokenSecret == "" {
 		return Config{}, errors.New("DATABASE_URL, SUPABASE_URL and GUEST_TOKEN_SECRET are required")

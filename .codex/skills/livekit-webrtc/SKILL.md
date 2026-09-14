@@ -1,62 +1,53 @@
-# Skill: LiveKit WebRTC Integration & Token Minting
+# Skill: LiveKit WebRTC Integration & Optimization
 
-## Trigger
-Use this skill whenever modifying LiveKit token generation, video/audio grants, screen share track permissions, LiveKit server webhooks, or WebRTC client connection handshakes.
+## WHEN TO USE THIS SKILL
+Use this skill when modifying LiveKit token issuance, video/audio track publishing, WebRTC connection options, adaptive stream subscriptions, simulcast layers, screen-share settings, or participant media rendering.
 
-## Goals
-- Maintain strict boundary between LiveKit SFU media transport and Go application control plane.
-- Ensure `LIVEKIT_API_SECRET` is never exposed or delivered to the client.
-- Generate cryptographically scoped tokens enforcing room-level permissions.
+## SOURCE OF TRUTH
+- **RTP Media Transport & Track State**: LiveKit SFU.
+- **Permission Grants & Token Issuance**: Go backend (`internal/livekit/token.go`).
+- **Rendered Track State**: `@livekit/components-react` hooks (`useTracks`, `useParticipants`).
 
-## Required reading
-- [livekit.md](file:///d:/git/Loft/docs/livekit.md)
-- [system-boundaries.md](file:///d:/git/Loft/docs/system-boundaries.md)
-- [auth-and-permissions.md](file:///d:/git/Loft/docs/auth-and-permissions.md)
+## ARCHITECTURAL BOUNDARIES
+- WebRTC media flows peer-to-SFU directly to LiveKit; the Go WebSocket layer **never** routes media packets.
+- The client **never** receives `LIVEKIT_API_SECRET`.
+- The Go backend manages token generation via REST endpoint `POST /api/v1/rooms/{id}/livekit-token` after WebSocket admission.
 
-## Source of truth
-- WebRTC track routing and active streams belong to LiveKit SFU.
-- Permission grants and token signing belong to Go `internal/livekit/token.go`.
+## REQUIRED WORKFLOW
+1. **Token Minting**:
+   - Evaluate user capabilities on the server (`CanJoin`, `CanShareScreen`).
+   - Construct video grant claims using `golang-jwt/jwt/v5` signed with `LIVEKIT_API_SECRET`.
+   - Set subject to `identity.LiveKitIdentity()` (`"user:<uuid>"` or `"guest:<uuid>"`).
+2. **Client Media Connection**:
+   - Request token via REST API only after WebSocket `room.snapshot` admission succeeds.
+   - Mount `<LiveKitRoom>` with `adaptiveStream: true` and `dynacast: true`.
+3. **Adaptive Subscription Optimization**:
+   - Configure participant tiles with layout-aware subscription quality (low-bitrate for compact tiles, full 720p for solo/stage).
+4. **Screen Share Configuration**:
+   - Set `contentHint: "detail"`, 1080p resolution, and 15fps cap to prioritize text sharpness over motion smoothness.
+5. **Device Lifecycle**:
+   - Handle device switches in-place via `localParticipant.switchProvider()` without disconnecting from the SFU room.
 
-## Invariants
-- Application WebSocket must **never** route raw audio/video frames or screen-share streams.
-- LiveKit tokens must have short expirations (max 2 hours) and room-scoped video grants.
-- Screen sharing permission (`CanShareScreen`) must be checked before granting `CanPublishSources: [SCREEN_SHARE]`.
-- All incoming webhooks from LiveKit must be cryptographically verified using `auth.VerifyWebhook`.
+## IMPLEMENTATION RULES
+- Always check `can_share_screen` before adding `"screen_share"` to `CanPublishSources`.
+- Do not claim a WebRTC optimization (simulcast, dynacast) is active until verified with browser WebRTC stats (`chrome://webrtc-internals`).
+- Handle `onMediaDeviceFailure` to notify users gracefully without crashing the session.
 
-## Workflow
-1. When user joins room or requests media token: evaluate user permissions.
-2. Construct `auth.VideoGrant` with explicitly permitted track sources.
-3. Sign JWT using `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`.
-4. Deliver token to client via REST `GET /api/v1/rooms/{id}/livekit-token` or inside `room.snapshot`.
-5. For webhooks: parse payload, verify signature, and update active speaker / presenter state.
+## FAILURE CASES
+- **LiveKit Outage**: Token request fails or WebRTC drops; UI displays media reconnection badge; WebSocket chat and shared media remain 100% operational.
+- **Uplink Packet Loss**: Adaptive stream lowers published layer automatically; if severe, prompt user to disable camera.
 
-## Implementation rules
-- **WHAT TO DO:** Restrict participant grants based on domain evaluation (`can_share_screen`).
-- **WHAT NOT TO DO:** Never grant wildcard admin permissions (`RoomAdmin: true`) to client tokens.
-- **WHY:** Granting admin permissions allows a malicious client to kick participants directly at the SFU layer, bypassing Go business authority.
-- **HOW TO VERIFY IT:** Inspect minted JWT claims using a JWT decoder.
+## TEST REQUIREMENTS
+- **Unit**: Verify token claims, expiration (max 2 hours), and room-scoped grants in Go tests.
+- **Browser**: Verify small participant thumbnail receives low-bitrate layer ($<150\text{kbps}$); screen share preserves crisp 1080p IDE text.
 
-## Failure cases
-- If LiveKit SFU is down, token requests fail gracefully; the client renders a voice reconnection badge while chat and shared media remain operational.
+## DO NOT
+- DO NOT route audio or video packets through the Go WebSocket connection.
+- DO NOT grant wildcard admin privileges (`RoomAdmin: true`) to client tokens.
+- DO NOT disconnect and reconnect the entire WebRTC room session just to toggle microphone or camera.
 
-## Security considerations
-- Keep `LIVEKIT_API_SECRET` strictly in backend environment variables.
-- Verify webhook `Authorization` header on `/api/v1/webhooks/livekit` before processing.
-
-## Testing
-- Unit test token generator claims and expiration.
-- Test that unauthorized members (e.g. guests without screen permission) receive tokens without screen-publishing grants.
-
-## Verification
-- Generated token decodes to valid claims matching the user's identity and room ID.
-- Webhook endpoint rejects unsigned payloads with HTTP 401.
-
-## Common mistakes
-- Attempting to pass audio packets over the Go WebSocket connection.
-- Omitting room ID in the video grant, allowing a token to join any room on the LiveKit server.
-
-## Completion report
-Upon finishing changes, summarize:
-1. Video grant modifications and permission bindings.
-2. Webhook handler adjustments and signature validation.
-3. Token verification test output.
+## DONE WHEN
+- LiveKit tokens are securely minted with strictly scoped room and participant claims.
+- Video tiles adapt stream quality based on rendered size without visual stutter.
+- Screen share renders crisp code text without mirroring.
+- Audio and video survive transient network blips without tearing down the control plane.

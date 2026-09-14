@@ -1,122 +1,146 @@
-﻿# Go Concurrency & Thread-Safety Architecture — Loft
+# Concurrency, Thread Safety & Backpressure — Loft
 
-## 1. Concurrency Philosophy: Explicit Ownership
-
-In Loft, concurrency is designed around strict, predictable lifecycle boundaries:
-1. **Every Goroutine Has an Owner:** No anonymous fire-and-forget goroutines (`go func() { ... }()`) are permitted unless tied to an explicit lifecycle context or waitgroup.
-2. **Deterministic Termination:** Every goroutine must be guaranteed to terminate via context cancellation (`ctx.Done()`) or channel closure.
-3. **No I/O Under Locks:** Mutexes protect pure in-memory state mutations only. Network I/O, database queries, Redis calls, and LiveKit HTTP requests are **strictly forbidden** inside critical sections.
-4. **Race Detection is Release-Blocking:** Any data race detected by `go test -race ./...` blocks deployment.
+This document specifies the concurrency principles, channel buffering, backpressure policies, and locking scope rules for Loft's Go backend.
 
 ---
 
-## 2. Choosing Synchronization Primitives: Mutex vs. Channel
+## 1. Core Concurrency Invariants
 
-Developers often misuse Go channels as general-purpose state locks. Loft enforces clear usage criteria:
+Every technical change in the Go backend must adhere to these non-negotiable concurrency invariants:
 
-| Requirement | Preferred Primitive | Concrete Pattern |
-| :--- | :--- | :--- |
-| **Protecting Mutable Room State** | `sync.RWMutex` | Read-write locks inside `RoomActor` for sub-microsecond in-memory state checks and version bumps. |
-| **Buffering Outbound Client Frames**| Bounded Channel (`chan []byte`) | Decouples the broadcaster from individual socket write speeds. |
-| **Worker Fan-Out / Throttling** | Worker Pool + Semaphore | Limiting concurrent database batch writes or external webhook calls. |
-| **Graceful Teardown Signaling** | `context.Context` / `chan struct{}` | Propagating cancellation from `main()` down to individual connection loops. |
+1. **Every Goroutine Has an Explicit Owner**: Anonymous, detached goroutines (`go func() { ... }()`) are strictly forbidden. Every goroutine must be tracked by a `sync.WaitGroup` or managed by an explicit lifecycle context (`ctx.Done()`).
+2. **Zero I/O Under Locks**: Mutexes (`sync.Mutex`, `sync.RWMutex`) protect pure in-memory state mutations only. Network I/O, database queries, Redis calls, and LiveKit HTTP requests are **strictly forbidden inside critical sections**.
+3. **No Unbounded Channels or Buffers**: All Go channels must have explicit, bounded capacities. Unbounded channels risk out-of-memory crashes under load spikes.
+4. **Race Detector is Mandatory**: All concurrency-sensitive backend tests must pass with `go test -race ./...`. Any pull request introducing a data race is release-blocking.
 
 ---
 
-## 3. The RoomActor Concurrency Pattern
+## 2. Bounded Queues & Backpressure
+
+### Outbound Buffer Sizing (`outboundCapacity = 64`)
+Each connected WebSocket client owns a bounded outbound channel:
 
 ```go
-type RoomActor struct {
-    mu          sync.RWMutex
-    roomID      uuid.UUID
-    version     uint64
-    media       MediaPlaybackState
-    queue       []QueueItem
-    subscribers map[string]*ClientConnection // conn_id -> connection
-    closing     chan struct{}
-}
-
-// MutateMedia executes pure in-memory mutation without I/O
-func (r *RoomActor) MutateMedia(command MediaCommand) (MediaPlaybackState, error) {
-    r.mu.Lock()
-    defer r.mu.Unlock()
-
-    // 1. Stale command check
-    if command.ExpectedVersion != r.version {
-        return MediaPlaybackState{}, ErrStaleVersion
-    }
-
-    // 2. State transition
-    r.media.PlaybackStatus = command.Status
-    r.media.BasePositionMs = command.PositionMs
-    r.media.StartedAtServerTime = time.Now()
-    r.version++ // Monotonic bump
-
-    return r.media, nil
+type client struct {
+    id          string
+    roomID      string
+    conn        *websocket.Conn
+    send        chan []byte // Bounded: cap 64
+    // Token buckets for per-connection rate limiting
+    chatTokens     chan struct{} // cap 5
+    reactionTokens chan struct{} // cap 4
 }
 ```
 
-### Notice What is NOT Inside the Lock
-- The resulting event is **not** marshaled to JSON inside the lock.
-- The outbound broadcast is **not** written to client channels inside the lock.
-- The state snapshot is returned by value to the caller, and the lock is released immediately.
-
----
-
-## 4. Bounded Goroutines & Worker Pools
-
-### Batch Chat Persistence Worker
-Instead of spawning a new goroutine or executing a SQL insert for every single incoming chat message, a background worker batches messages:
+### The Slow Consumer Policy
+In a realtime room, one slow or paused client (e.g. mobile device switching cell towers or browser tab throttled by the OS) must **never** block or delay event broadcasts to the rest of the room.
 
 ```go
-type ChatBatcher struct {
-    inbox    chan *ChatMessage // Bounded (1024 capacity)
-    db       *pgxpool.Pool
-    ctx      context.Context
-    cancel   context.CancelFunc
-    wg       sync.WaitGroup
-}
-
-func (b *ChatBatcher) Start() {
-    b.wg.Add(1)
-    go func() {
-        defer b.wg.Done()
-        ticker := time.NewTicker(2 * time.Second)
-        defer ticker.Stop()
-
-        var batch []*ChatMessage
-
-        for {
-            select {
-            case <-b.ctx.Done():
-                // Flush remaining messages before exit
-                b.flush(batch)
-                return
-            case msg := <-b.inbox:
-                batch = append(batch, msg)
-                if len(batch) >= 100 {
-                    b.flush(batch)
-                    batch = nil
-                }
-            case <-ticker.C:
-                if len(batch) > 0 {
-                    b.flush(batch)
-                    batch = nil
-                }
+func (h *Hub) broadcast(roomID string, data []byte, exclude string) {
+    h.mu.RLock()
+    state := h.rooms[roomID]
+    clients := make([]*client, 0)
+    if state != nil {
+        for id, c := range state.clients {
+            if id != exclude {
+                clients = append(clients, c)
             }
         }
-    }()
+    }
+    h.mu.RUnlock()
+
+    for _, c := range clients {
+        if !h.enqueue(c, data) {
+            // A saturated peer may never acknowledge a graceful close frame.
+            // Terminate connection immediately to protect the room loop.
+            _ = c.conn.CloseNow()
+        }
+    }
+}
+
+func (h *Hub) enqueue(c *client, data []byte) bool {
+    select {
+    case c.send <- data:
+        return true
+    default:
+        return false // Buffer full: client is a slow consumer
+    }
 }
 ```
 
+### Key Behaviors:
+- **Non-blocking Enqueue**: Messages are delivered via `select ... case c.send <- data: default: return false`. The broadcast loop never waits for a socket write.
+- **Immediate Socket Termination**: If `c.send` is full (64 buffered frames pending), the server calls `c.conn.CloseNow()`. This immediately drops the TCP connection, aborts the write pump, frees allocated memory, and broadcasts `participant.left` to the room.
+
 ---
 
-## 5. Concurrency Checklist for PR Review
+## 3. Lock Scopes & Critical Section Guidelines
 
-Before merging any concurrency-sensitive code, verify:
-- [ ] Does every spawned goroutine exit cleanly when `ctx.Done()` fires?
-- [ ] Are all channels bounded with explicit buffer capacities?
-- [ ] Is there any `select` without a default case that could block indefinitely?
-- [ ] Are all struct pointers passed to goroutines either immutable or protected by synchronization?
-- [ ] Has `go test -race ./...` been executed across all unit and integration test suites?
-- [ ] Are locks acquired in a consistent hierarchical order across the codebase?
+```
+   [ Incoming WS Message ]
+              │
+              ▼ (ReadPump: Outside Lock)
+      1. Parse & Validate Envelope
+      2. Check Rate Limits
+              │
+              ▼ (Acquire Lock: Hub.mu.Lock)
+      3. In-Memory State Mutation
+         - Mutate mediaState
+         - Verify expected_version
+         - Increment version++
+         - Create snapshot copy
+              │
+              ▼ (Release Lock: Hub.mu.Unlock)
+      4. Asynchronous / Non-Blocking Operations
+         - Insert to PostgreSQL (if chat)
+         - Broadcast snapshot to room clients
+         - Publish to Redis Pub/Sub
+```
+
+### Invariant Table
+
+| Operation | Permitted Inside Mutex? | Rationale |
+| :--- | :---: | :--- |
+| Inspecting / Updating `version` | **YES** | Sub-microsecond RAM access; preserves serializability. |
+| Permuting `Queue` slice | **YES** | Pure in-memory pointer rearrangement ($<10\mu\text{s}$). |
+| JSON Marshaling / Unmarshaling | **NO** | CPU-intensive; serialize outside the critical section. |
+| Database Queries (`pgxpool`) | **NO** | Network latency ($1–10\text{ms}$) blocks concurrent room operations. |
+| Redis Pub/Sub (`PUBLISH`) | **NO** | Network round-trip causes contention under high load. |
+| WebSocket Socket Write (`conn.Write`) | **NO** | Network TCP backpressure would stall entire server process. |
+
+---
+
+## 4. Connection Lifecycle & Clean Teardown
+
+```go
+func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    ctx, cancel := context.WithCancel(r.Context())
+    defer cancel()
+
+    // 1. WebSocket Upgrade
+    conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{ ... })
+    if err != nil { return }
+    defer conn.CloseNow()
+
+    // 2. Authenticate & Admit
+    identity, room, err := h.authenticate(ctx, conn)
+    if err != nil { return }
+
+    c := &client{ ... }
+    h.add(c, room)
+    defer h.remove(c)
+
+    // 3. Supervised Pumps
+    var pumps sync.WaitGroup
+    pumps.Add(1)
+    go func() { defer pumps.Done(); _ = h.writePump(ctx, c) }()
+    defer func() { cancel(); _ = conn.CloseNow(); pumps.Wait() }()
+
+    // 4. Read pump blocks until disconnect
+    _ = h.readPump(ctx, c)
+}
+```
+
+- When the read pump exits (socket closed, EOF, or error), context cancellation terminates the write pump.
+- `conn.CloseNow()` interrupts pending socket I/O instantly.
+- `pumps.Wait()` guarantees zero dangling goroutines before `ServeHTTP` completes.

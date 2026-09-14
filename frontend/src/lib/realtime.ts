@@ -132,6 +132,7 @@ export class RoomSocket {
     type:
       | "chat.send"
       | "connection.ping"
+      | "room.leave"
       | "queue.add"
       | "queue.next"
       | "queue.select"
@@ -147,7 +148,7 @@ export class RoomSocket {
       | "reaction.send",
     payload: object,
   ) {
-    if (this.socket?.readyState !== WebSocket.OPEN || (!this.ready && type !== "connection.ping")) return false;
+    if (this.socket?.readyState !== WebSocket.OPEN || (!this.ready && type !== "connection.ping" && type !== "room.leave")) return false;
     this.socket.send(
       JSON.stringify({
         type,
@@ -160,7 +161,10 @@ export class RoomSocket {
     return true;
   }
 
-  close() {
+  close(explicit = false) {
+    if (explicit) {
+      this.send("room.leave", {});
+    }
     this.stopped = true;
     this.attempt += 1;
     this.ready = false;

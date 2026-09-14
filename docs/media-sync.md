@@ -1,117 +1,148 @@
-﻿# Media Synchronization Engine — Loft
+# Synchronized Media Playback Engine — Loft
 
-## Current MVP implementation (YouTube)
-
-The room currently accepts HTTPS `youtube.com/watch`, `youtube.com/shorts`, and `youtu.be` links only. The Go WebSocket hub owns the in-memory current track, bounded 50-item queue, playback anchor, shared repeat setting, and monotonically increasing version. Every room snapshot includes this state; accepted mutations broadcast a full `media.state`. Host-only play/pause/seek/next/select/repeat commands carry `expected_version`, so concurrent Next clicks cannot skip multiple tracks from one version. Any joined participant may add or reorder queue items; parsing is local with no outbound fetch. Queue order is validated as an exact permutation of queued track IDs.
-
-Playback bytes stay in each browser's official YouTube IFrame player. Each browser requires a user gesture to enable audio. The host player reports the current video's duration to the Go authority; Go schedules automatic repeat or queue advance at the canonical end, even if every browser stops playing or disconnects afterward. Without a host duration report, automatic advance is unavailable. The client performs hard seek when drift exceeds 1.5 seconds and estimates server clock offset from ping/pong. Queue/playback state is retained ten minutes after the last participant leaves, then evicted; it does **not** survive a Go process restart. Persistent media history and the finer three-tier drift algorithm below remain roadmap work.
-
-Media commands are limited to 10 per 10 seconds per room identity; queue mutations are limited to 10 per minute. The server rejects excess commands with `MEDIA_RATE_LIMITED`.
-
-Reactions use a separate ephemeral WebSocket event: six allowed emoji, four per connection and twenty per room per two-second window. Slow consumers may miss reactions without losing chat or media state.
-
-## 1. Media Sync Philosophy & Legal Architecture
-
-Loft enables social co-watching and listening without copyright infringement or bandwidth re-streaming:
-1. **No Media Proxying:** The server **never** proxies, downloads, caches, or re-streams audio/video bytes from YouTube, Spotify, or SoundCloud.
-2. **Client-Side Official SDKs:** Each client embeds the official provider player (YouTube IFrame API, Spotify Web Playback SDK, SoundCloud Widget API).
-3. **Synchronized State Authority:** The Go backend synchronizes the canonical playback timeline, play/pause commands, and media queue mutations.
+This document defines the synchronized YouTube playback engine for Loft, detailing state authority, timestamp prediction, client drift correction, and playback state transitions.
 
 ---
 
-## 2. Canonical Playback State Model
+## 1. Legal Architecture & Philosophy
+
+Loft provides a shared media social viewing experience with strict copyright and bandwidth safety:
+1. **Zero Media Restreaming**: The Go backend and WebSocket layer **never** download, buffer, transcode, cache, or proxy YouTube audio/video frames.
+2. **Official Client Embed**: Media delivery is fulfilled directly between the client's browser and YouTube's CDN using the official YouTube IFrame Player API.
+3. **State Authority Only**: The Go backend acts solely as an authoritative timeline coordinator, synchronizing playback status (`PLAYING`, `PAUSED`, `IDLE`), anchor positions, and monotonic state versions.
+
+---
+
+## 2. Canonical Media State Model
 
 ```go
-type MediaPlaybackState struct {
-    Provider            MediaProvider `json:"provider"`              // "youtube" | "spotify" | "soundcloud"
-    MediaID             string        `json:"media_id"`              // Provider-specific content ID
-    Title               string        `json:"title"`
-    PlaybackStatus      PlaybackState `json:"playback_status"`       // "PLAYING" | "PAUSED" | "BUFFERING" | "IDLE"
-    BasePositionMs      int64         `json:"base_position_ms"`      // Offset position in milliseconds
-    StartedAtServerTime time.Time     `json:"started_at_server_time"`// Anchor time when status became PLAYING
-    ControlledBy        uuid.UUID     `json:"controlled_by"`         // User who triggered current state
-    Version             uint64        `json:"version"`               // Monotonic version for stale command guard
-    UpdatedAt           time.Time     `json:"updated_at"`
+type MediaState struct {
+    Current    *YouTubeTrack `json:"current"`      // Currently active track
+    Queue      []YouTubeTrack`json:"queue"`        // Ordered collaborative queue
+    Repeat     bool          `json:"repeat"`       // Repeat active track toggle
+    Status     string        `json:"status"`       // "IDLE" | "PLAYING" | "PAUSED"
+    PositionMs int64         `json:"position_ms"`  // Anchor playback position
+    StartedAt  time.Time     `json:"started_at"`   // Server UTC timestamp when status became PLAYING
+    Version    uint64        `json:"version"`      // Monotonic sequence number
+}
+
+type YouTubeTrack struct {
+    ID          string `json:"id"`                 // Unique stable track UUID
+    VideoID     string `json:"video_id"`           // 11-character YouTube video ID
+    AddedBy     string `json:"added_by"`           // Display name of contributor
+    Title       string `json:"title,omitempty"`    // Video title
+    Channel     string `json:"channel,omitempty"`  // Channel / author name
+    DurationSec int64  `json:"duration_sec"`       // Total video duration in seconds
 }
 ```
 
-### Authoritative Playback Position Formula
+---
 
-At any instantaneous moment, the canonical playback position is calculated deterministically without requiring high-frequency server ticks:
+## 3. Timestamp-Based Prediction (Zero Periodic Ticks)
 
-$$\text{CurrentPositionMs} = \begin{cases} \text{BasePositionMs} & \text{if Status} = \text{PAUSED} \\ \text{BasePositionMs} + (\text{ServerNow} - \text{StartedAtServerTime}) & \text{if Status} = \text{PLAYING} \end{cases}$$
+### The Anti-Pattern
+Broadcasting `currentTime` ticks every second or every frame generates severe network overhead, high CPU wakeups, and latency jitter across clients. Loft **strictly forbids** continuous playback broadcast ticks.
 
-> **Performance Invariant:** The Go backend **never** writes continuous playback progress to PostgreSQL. The state is maintained in RAM and only the initial track selection is persisted to room media history.
+### The Authoritative Anchor Formula
+The server maintains a static anchor `(position_ms, started_at)`. Any client computes the canonical instantaneous playback position deterministically:
+
+$$\text{PredictedPositionMs} = \begin{cases} 
+\text{PositionMs} & \text{if Status} = \text{PAUSED} \text{ or } \text{IDLE} \\ 
+\text{PositionMs} + (\text{ClientNow} + \text{ClockOffset} - \text{StartedAt}) \times \text{PlaybackRate} & \text{if Status} = \text{PLAYING} 
+\end{cases}$$
+
+Where:
+- $\text{ClientNow}$ is the local browser `Date.now()`.
+- $\text{ClockOffset}$ is the NTP-calibrated delta computed from `connection.ping` / `connection.pong`.
+- $\text{PlaybackRate}$ is standard $1.0$ (or nudged rate during soft drift correction).
 
 ---
 
-## 3. Clock Synchronization & Drift Correction
+## 4. Playback State Transitions & Commands
 
-### Clock Offset Calibration (NTP-Style Handshake)
-Clients compute server clock offset $O$ using roundtrip ping packets:
-1. Client records $t_0$ and sends `connection.ping`.
-2. Server responds immediately with `connection.pong` containing `server_time` ($T_s$).
-3. Client receives response at local time $t_1$.
-4. Calculated offset:
-   $$\text{RoundTrip} = t_1 - t_0$$
-   $$\text{ClockOffset} = T_s - \left(t_0 + \frac{\text{RoundTrip}}{2}\right)$$
-   $$\text{ServerNow} = \text{LocalDate.now()} + \text{ClockOffset}$$
-
-### Three-Tier Drift Correction Engine
-
-On the frontend, every 500ms the client compares its local player position ($P_{local}$) with canonical calculated position ($P_{server}$):
-
-$$\Delta_{\text{drift}} = P_{local} - P_{server}$$
+All media mutations are verified by the Go backend before modifying the in-memory room state:
 
 ```
-                |Δ_drift| < 250ms
-       ┌─────────────────────────────────┐
-       │     TIER 1: PASSIVE NO-OP       │
-       │   - Inaudible / natural drift   │
-       │   - Do not touch player         │
-       └─────────────────────────────────┘
+                  ┌──────────────┐
+                  │     IDLE     │
+                  └──────┬───────┘
+                         │ queue.add / queue.select
+                         ▼
+        ┌──────────────────────────────────┐
+        │              PAUSED              │◄────────────────┐
+        └───────┬──────────────────▲───────┘                 │
+                │                  │                         │
+     media.play │       media.pause│              media.seek │
+                ▼                  │                         │
+        ┌──────────────────────────┴───────┐                 │
+        │             PLAYING              ├─────────────────┘
+        └───────┬──────────────────────────┘
+                │
+                ▼ (Canonical Duration Timer Expires)
+        [ Automatic Queue Advance / Repeat ]
+```
 
-          250ms <= |Δ_drift| <= 1000ms
-       ┌─────────────────────────────────┐
-       │     TIER 2: SOFT CORRECTION     │
-       │   - Nudge playback rate to      │
-       │     0.95x or 1.05x for 2 sec    │
-       │   - Prevents abrupt audio pops  │
-       └─────────────────────────────────┘
+### Command Lifecycle
 
-                |Δ_drift| > 1000ms
-       ┌─────────────────────────────────┐
-       │     TIER 3: HARD SEEK RESYNC    │
-       │   - Force seek to P_server      │
-       │   - Used on late join/scrub     │
-       └─────────────────────────────────┘
+1. **`media.play`**:
+   - Authorized: `CanControlMedia(room, actor) == true`.
+   - Verification: Current track must be present; `expected_version == state.Version`.
+   - Transition: `Status = "PLAYING"`, `StartedAt = time.Now().UTC()`, `Version++`.
+   - Action: Server schedules `mediaTimer` to fire at canonical end time (`DurationSec * 1000 - PositionMs`).
+
+2. **`media.pause`**:
+   - Authorized: Host only.
+   - Transition: `PositionMs += (Now - StartedAt).Milliseconds()`, `Status = "PAUSED"`, `StartedAt = Zero`, `Version++`.
+   - Action: Server stops `mediaTimer`.
+
+3. **`media.seek`**:
+   - Authorized: Host only.
+   - Transition: `PositionMs = command.PositionMs`. If `PLAYING`, reset `StartedAt = Now`. `Version++`.
+   - Action: Server reschedules `mediaTimer`.
+
+4. **`media.duration`**:
+   - Host player reports video duration extracted from YouTube iframe API.
+   - Updates `Current.DurationSec`, enabling the Go server to manage automatic queue advance.
+
+---
+
+## 5. Three-Tier Client Drift Correction
+
+On the frontend (`frontend/src/features/room/MusicDrawer.tsx`), an internal 1-second interval compares the local YouTube player position ($P_{\text{local}}$) against the calculated canonical position ($P_{\text{predicted}}$):
+
+$$\Delta_{\text{drift}} = P_{\text{local}} - P_{\text{predicted}}$$
+
+```
+                 |Δ_drift| < 250ms
+        ┌───────────────────────────────────┐
+        │      TIER 1: PASSIVE NO-OP        │
+        │ • Natural imperceptible drift     │
+        │ • Zero player adjustments made    │
+        └───────────────────────────────────┘
+
+           250ms <= |Δ_drift| <= 1500ms
+        ┌───────────────────────────────────┐
+        │      TIER 2: SOFT CORRECTION      │
+        │ • Nudge player speed to 0.95x/1.05│
+        │ • Smooth audio, avoids pop/clicks │
+        │ • Reverts to 1.0x when drift <50ms│
+        └───────────────────────────────────┘
+
+                 |Δ_drift| > 1500ms
+        ┌───────────────────────────────────┐
+        │      TIER 3: HARD SEEK RESYNC     │
+        │ • Forces player.seekTo()          │
+        │ • Triggered on late join/scrub    │
+        └───────────────────────────────────┘
 ```
 
 ---
 
-## 4. Provider Capability Matrix
+## 6. Late Join & Reconnect Synchronization
 
-Providers offer radically different browser control APIs. Loft enforces an explicit capability contract:
-
-| Capability | YouTube IFrame | Spotify Web SDK | SoundCloud Widget |
-| :--- | :--- | :--- | :--- |
-| **CanPlay / CanPause** | Yes | Yes (Premium req.) | Yes |
-| **CanSeek** | Yes | Yes | Yes |
-| **CanReadPosition** | Yes (`getCurrentTime`) | Yes (State Event) | Yes (`getPosition`) |
-| **CanAdjustRate** | Yes (`setPlaybackRate`)| No (1.0x fixed) | No |
-| **Requires User Auth** | No (Public URLs) | Yes (OAuth token) | No (Public tracks) |
-| **Supports Embed** | Yes (IFrame) | Yes (Web Playback) | Yes (Widget API) |
-| **Autoplay Policy** | Requires User Gesture| Requires User Gesture| Requires User Gesture|
-
-> **Rule:** If a provider does not support dynamic playback rate adjustment (e.g., Spotify, SoundCloud), Tier 2 soft correction is skipped and Tier 3 hard seek is triggered when drift exceeds $750\text{ms}$.
-
----
-
-## 5. Race Condition Resolution & Stale Command Guards
-
-| Race Scenario | Resolution & Server Rule |
-| :--- | :--- |
-| **Two users press Play/Pause simultaneously** | Only the first command to acquire the `RoomActor` lock succeeds. Second command compares `expected_version` with updated `version` and is rejected with `ERROR_STALE_VERSION`. |
-| **User seeks while host switches tracks** | Seek command contains `expected_media_id`. Server detects mismatch (`expected_media_id != current_media_id`) and ignores the seek. |
-| **Late joiner connects during playback** | Server dispatches `room.snapshot` containing exact canonical timestamp. Client immediately initializes player at calculated offset. |
-| **Host disconnects during media playback** | Playback continues uninterrupted; media authority resides in the `RoomActor`, not in the host's browser. |
+When a client joins an active room or reconnects after an interruption:
+1. Client receives authoritative `room.snapshot` containing `mediaState`.
+2. Client mounts/cues the active `Current.VideoID`.
+3. Client computes $P_{\text{predicted}}$ from the snapshot anchor.
+4. Client seeks directly to $P_{\text{predicted}}$ (Tier 3 Hard Seek) and initiates playback if `Status == "PLAYING"` and user gesture activation is present.
+5. Result: The user is in sync with the room in $<500\text{ms}$ without custom streaming infrastructure.

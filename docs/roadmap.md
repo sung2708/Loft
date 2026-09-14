@@ -1,75 +1,170 @@
-# Implementation Roadmap (16-Phase Plan) — Loft
+# Loft Engineering Roadmap — MVP 2 Execution Plan
 
-## Overview
-
-The Loft implementation follows a progressive, iterative roadmap. Each phase delivers a working, verifiable layer of functionality without premature complexity.
+This document outlines the sequential, dependency-ordered implementation roadmap for **Loft MVP 2**. Each sub-phase delivers a verifiable layer of functionality with concrete acceptance criteria and explicit dependency gates.
 
 ---
 
-### Phase 0 — Engineering Foundation
-- **Deliverables:** Directory layout, environment config validation (`platform/config`), structured logger (`slog`), database pool (`pgxpool`), sequential migration engine, Docker Compose local dev stack, health/readiness endpoints (`/healthz`, `/readyz`).
-- **Success Criteria:** Backend boots locally, executes migrations cleanly, and passes health checks.
+## Roadmap Dependency Graph
 
-### Phase 1 — Identity & Authentication
-- **Deliverables:** Supabase JWT parser with in-memory JWKS cache, guest identity generator (HMAC-SHA256), `UserContext` HTTP middleware, profile persistence in PostgreSQL.
-- **Success Criteria:** Verified tokens extract `user_id` correctly; guest tokens are validated and rejected if expired or mismatched by room.
+```mermaid
+flowchart TD
+    subgraph Media Pipeline & WebRTC
+        M21["MVP 2.1: Media Correctness & Mirroring"] --> M22["MVP 2.2: Client-Side Camera Effects"]
+        M21 --> M23["MVP 2.3: LiveKit/WebRTC Optimization"]
+    end
 
-### Phase 2 — Room Authority & Membership
-- **Deliverables:** Room creation API, membership table, role model (`host`, `moderator`, `member`, `guest`), centralized permission evaluator (`CanChangeSettings`, `CanKick`, etc.), in-memory `RoomActor` skeleton.
-- **Success Criteria:** Room state holds canonical `host_id`; permission evaluator passes exhaustive unit tests.
+    subgraph Realtime Control Plane
+        R24["MVP 2.4: Realtime Protocol Hardening & Backpressure"] --> R25["MVP 2.5: Redis & Multi-Instance Pub/Sub"]
+    end
 
-### Phase 3 — WebSocket Realtime Protocol
-- **Deliverables:** WebSocket upgrade handler with origin verification, read/write pump loops with bounded channels (`256`), ping/pong heartbeats, typed JSON protocol envelopes, `room.join` and `room.snapshot` delivery.
-- **Success Criteria:** Clients receive authoritative snapshot upon joining; malformed or oversized payloads (>64KB) return typed error without crashing the server.
+    subgraph Collaborative Shared Media
+        M21 --> S26["MVP 2.6: Shared YouTube Sync Engine"]
+        R24 --> S26
+        S26 --> Q27["MVP 2.7: Collaborative Media Queue"]
+        R24 --> P28["MVP 2.8: Host Governance & Permissions"]
+    end
 
-### Phase 4 — Ephemeral Presence & Heartbeats
-- **Deliverables:** In-memory presence tracker, client heartbeat pings (every 10s), multi-connection aggregation (multiple tabs per user), presence diff broadcasts (`participant.joined`, `participant.left`).
-- **Success Criteria:** Closing one tab while another remains open does not drop the user's presence in the room.
+    subgraph Verification & Release Gating
+        M22 --> O29["MVP 2.9: Observability & Failure Resilience"]
+        M23 --> O29
+        R25 --> O29
+        Q27 --> O29
+        P28 --> O29
+        O29 --> L210["MVP 2.10: Load Testing & Release Gate"]
+    end
+```
 
-### Phase 5 — Room Chat & History Archive
-- **Deliverables:** Realtime chat routing via WebSocket, sliding-window rate limiting (5 msgs/3s), asynchronous database persistence batcher (`ChatBatcher`), cursor-paginated chat history REST endpoint.
-- **Success Criteria:** High-frequency chat bursts do not stall room broadcasts; all chat messages persist to PostgreSQL within 2 seconds.
+---
 
-### Phase 6 — LiveKit SFU Integration
-- **Deliverables:** LiveKit client SDK integration in Go, cryptographic token issuance endpoint (`GET /rooms/{id}/livekit-token`), room-to-LiveKit room mapping, React CallDock with mic/camera controls and active speaker highlighting.
-- **Success Criteria:** Low-latency voice and video streaming between participants; tokens expire in 2 hours and enforce room boundaries.
+## Phase Breakdown
 
-### Phase 7 — Screen Sharing Experience
-- **Deliverables:** Browser screen/window/tab capture (`getDisplayMedia`), LiveKit screen track publishing, `screen.started`/`screen.stopped` application signaling, dynamic Stage layout switching to prioritize screen share view.
-- **Success Criteria:** Screen share track displays at high framerate on the Stage; stopping share resets stage to video grid.
+### MVP 2.1 — Media Correctness & Mirroring
+- **Goals:** Establish deterministic camera device lifecycles, eliminate orientation confusion, and maintain stable LiveKit video tracks.
+- **Key Deliverables:**
+  - Front-camera preview mirroring via CSS/Canvas (`transform: scaleX(-1)` for local self-preview).
+  - Unmirrored published video track (remote peers observe natural orientation; text on shirts is readable).
+  - Screen-share tracks strictly exempted from mirroring.
+  - Facing mode detection (`facingMode: "user"` vs `"environment"`).
+  - Resilient device switching without tearing down active WebRTC peer connections.
+- **Dependencies:** None (builds directly on MVP 1 LiveKit setup).
+- **Gate Criteria:** Self-preview appears mirrored on front camera; remote peer observes unmirrored video; screen share is never flipped.
 
-### Phase 8 — Synchronized Media Engine (YouTube First)
-- **Deliverables:** YouTube IFrame API adapter, Go canonical playback calculation `base_pos + (now - started_at)`, NTP clock offset calibration, three-tier drift correction engine (<250ms, 250–1000ms, >1000ms), stale command rejection.
-- **Success Criteria:** Multiple connected clients stay synchronized within 250ms of each other during play, pause, and seek actions.
+---
 
-### Phase 9 — Shared Media Queue
-- **Deliverables:** Queue mutation protocol (`queue.add`, `queue.remove`, `queue.reorder`), server-side URL validation & regex ID extraction, idempotency keys to prevent double-adds, automatic track progression on finish.
-- **Success Criteria:** Concurrent queue additions resolve deterministically; non-permitted users cannot delete other members' submissions.
+### MVP 2.2 — Client-Side Camera Effects
+- **Goals:** Deliver smooth background segmentation and face filters running client-side with minimal CPU/GPU overhead.
+- **Key Deliverables:**
+  - `@mediapipe/tasks-vision` pipeline with `ImageSegmenter` and `FaceLandmarker`.
+  - Background blur effect with edge feathering.
+  - Custom background image replacement.
+  - Curated MVP face landmark effects (sunglasses, cat ears, mesh glow).
+  - Track replacement in LiveKit using `localParticipant.switchProvider` or track substitution.
+  - Tab backgrounding and visibility change handling (bypass inference when hidden).
+  - Performance tiering: `HIGH` (30fps), `MEDIUM` (15fps), `LOW` (blur only, 10fps), `OFF` (raw passthrough).
+  - Degradation guard: **Audio stability > Camera stability > Filter quality**.
+- **Dependencies:** Requires **MVP 2.1** (clean track pipeline and mirroring).
+- **Gate Criteria:** Background blur and face filter toggle without interrupting audio or remounting the room participant tree.
 
-### Phase 10 — Reconnect Recovery & Host Failover
-- **Deliverables:** Client reconnect finite state machine (`RECONNECTING` -> `RESYNCING`), exponential backoff with jitter, versioned snapshot recovery, host failover grace period (15s), deterministic successor election.
-- **Success Criteria:** Disconnecting and reconnecting recovers room and media state in <1 second without manual refresh; killing host browser reassigns host role cleanly after 15s.
+---
 
-### Phase 11 — Redis Ephemeral Clustering
-- **Deliverables:** Redis Pub/Sub room event fan-out, Redis TTL presence tracking (15s TTL), distributed sliding-window rate limiters, fallback to in-memory mode when Redis is absent.
-- **Success Criteria:** Two separate Go instances forward chat and playback events to each other's clients seamlessly.
+### MVP 2.3 — LiveKit / WebRTC Media Optimization
+- **Goals:** Maximize video call quality and bandwidth efficiency across heterogeneous network conditions.
+- **Key Deliverables:**
+  - Adaptive streaming: clients subscribe only to video resolutions matching their rendered DOM element size.
+  - Dynacast & Simulcast: SFU pauses track forwarding for off-screen or hidden participants.
+  - Dynamic subscription quality: compact tile thumbnails receive low-bitrate streams; solo/stage receives high-bitrate streams.
+  - Screen-share optimization: set `contentHint: "detail"`, high framerate text sharpness, prioritized bandwidth.
+  - Connection quality indicators displaying packet loss and jitter states.
+- **Dependencies:** Requires **MVP 2.1** (stable media track lifecycle).
+- **Gate Criteria:** Minimizing a participant tile drops received bitrate by $>60\%$; screen share maintains legible small text at 1080p.
 
-### Phase 12 — Multi-Provider Media (Spotify & SoundCloud)
-- **Deliverables:** Spotify Web Playback SDK integration, SoundCloud Widget adapter, provider capability enforcement matrix (skipping soft drift correction on unadjustable players).
-- **Success Criteria:** Room can switch seamlessly between YouTube, Spotify, and SoundCloud without crashing playback state.
+---
 
-### Phase 13 — Moderation & Room Governance
-- **Deliverables:** Moderation APIs (`moderation.kick`, `moderation.ban`), host transfer workflow, moderator assignment, token revocation, audit log table in PostgreSQL.
-- **Success Criteria:** Banned user's WebSocket is immediately closed, LiveKit token revoked, and re-entry attempts rejected.
+### MVP 2.4 — Realtime Protocol Hardening & Backpressure
+- **Goals:** Eliminate head-of-line blocking, enforce strict backpressure, and harden client reconnect recovery.
+- **Key Deliverables:**
+  - Bounded outbound channel buffers (`outboundCapacity = 64`) per connection.
+  - Non-blocking broadcast loop with slow consumer isolation (`conn.CloseNow()` on saturated buffers).
+  - Standardized JSON Envelope (`type`, `version`, `event_id`, `room_id`, `payload`).
+  - Finite state machine for reconnect: `DISCONNECTED` → `CONNECTING` → `CONNECTED` → `RECONNECTING` → `RESYNCING` → `FAILED`.
+  - Authoritative `room.snapshot` state replacement upon reconnect (zero event replay buffers).
+  - Heartbeat ping/pong with client-side NTP-style clock offset calibration.
+- **Dependencies:** Builds on MVP 1 Go WebSocket hub.
+- **Gate Criteria:** Saturated mock client dropped in $<50\text{ms}$; fast peers experience zero broadcast latency penalty; reconnecting client recovers state in $<1\text{s}$.
 
-### Phase 14 — Observability & Telemetry
-- **Deliverables:** Prometheus metrics exporter (`/metrics`), structured log correlation IDs (`request_id`, `connection_id`, `room_id`), pprof profiling endpoints on internal port, Grafana dashboard configuration.
-- **Success Criteria:** System metrics expose connection count, latency histograms, and dropped slow client counters without high-cardinality label leakage.
+---
 
-### Phase 15 — Performance Tuning & Load Testing
-- **Deliverables:** k6 / Go load testing harness, progressive benchmarks (Profiles A, B, C, D), reconnect storm tests, slow-consumer isolation validation, pprof memory and goroutine leak audits.
-- **Success Criteria:** System sustains Profile C (500 concurrent connections) with $P_{95}$ broadcast latency $< 50\text{ms}$ and zero goroutine leaks.
+### MVP 2.5 — Redis & Multi-Instance Realtime
+- **Goals:** Allow Loft backend instances to scale horizontally behind a load balancer without room fragmentation.
+- **Key Deliverables:**
+  - Redis Pub/Sub room bus (`room:<id>:events`) relaying events across Go instances.
+  - Loop prevention using unique `origin_instance_id` in inter-node payloads.
+  - Ephemeral presence tracking in Redis using key TTLs (15s) refreshed by client heartbeats.
+  - Distributed rate limiting counters for join, chat, and media actions.
+  - Graceful fallback to single-node in-memory operation if `REDIS_URL` is empty or Redis drops.
+- **Dependencies:** Requires **MVP 2.4** (typed protocol and bounded channels).
+- **Gate Criteria:** Client A on Instance 1 and Client B on Instance 2 in the same room exchange chat and media state seamlessly; Redis restart drops presence temporarily without data corruption.
 
-### Phase 16 — Production Hardening & Security Audit
-- **Deliverables:** Security threat model verification, dependency vulnerability scans (`govulncheck`, `pnpm audit`), SSRF IP blocklist validation, rate limit tuning, graceful deployment verification.
-- **Success Criteria:** Clean vulnerability scan, zero secrets in repo, robust operational runbook ready.
+---
+
+### MVP 2.6 — Shared YouTube Synchronization Engine
+- **Goals:** Deliver rock-solid, synchronized YouTube video playback across all room members with zero backend media streaming.
+- **Key Deliverables:**
+  - Server-authoritative `MediaState`: anchor position and timestamp calculation ($P = P_0 + (t - t_0) \times \text{rate}$).
+  - Client YouTube IFrame API integration with gesture activation.
+  - Zero periodic position broadcasting (state updates broadcast only on play/pause/seek/advance).
+  - Three-tier client drift correction:
+    - Tier 1 ($<250\text{ms}$): Inaudible natural drift, no adjustment.
+    - Tier 2 ($250\text{ms}–1500\text{ms}$): Gentle playback rate nudge ($0.95\times$ / $1.05\times$).
+    - Tier 3 ($>1500\text{ms}$): Hard seek resync.
+  - Canonical automatic progression at video conclusion based on server duration timer.
+- **Dependencies:** Requires **MVP 2.1** (stable room session) and **MVP 2.4** (clock offset calibration).
+- **Gate Criteria:** 4 concurrent clients stay synchronized within $\pm 250\text{ms}$; pausing host immediately pauses all clients within $100\text{ms}$.
+
+---
+
+### MVP 2.7 — Collaborative Media Queue
+- **Goals:** Enable room members to curate, reorder, and advance a shared playback queue safely.
+- **Key Deliverables:**
+  - Stable UUID track identities (never index-based references).
+  - Queue operations: `queue.add`, `queue.remove`, `queue.reorder`, `queue.select`, `queue.next`, `queue.clear`, `queue.shuffle`.
+  - Optimistic concurrency control via `expected_version` checking; stale mutations cleanly rejected (`errMediaStale`).
+  - Input validation: strict YouTube URL parsing, title/channel length sanitization, max 50 items.
+- **Dependencies:** Requires **MVP 2.6** (shared YouTube engine).
+- **Gate Criteria:** Rapid concurrent queue additions resolve deterministically without track duplication or index corruption.
+
+---
+
+### MVP 2.8 — Host Governance & Permissions
+- **Goals:** Protect rooms from griefing with server-evaluated permissions and host authority.
+- **Key Deliverables:**
+  - Centralized domain authorization functions: `CanChangeSettings`, `CanKick`, `CanControlMedia`, `CanManageQueue`.
+  - Room lock toggle (`room.lock`): prevents new guest entries while active.
+  - Participant eviction (`participant.kick`): immediately closes WebSocket connection and revokes LiveKit token.
+  - Host disconnect grace period (15s timer before room state eviction or host reassignment).
+- **Dependencies:** Requires **MVP 2.4** (protocol envelopes and client eviction).
+- **Gate Criteria:** Non-host clients attempting privileged operations receive `403 / MEDIA_COMMAND_REJECTED`; kicked participant cannot rejoin locked room.
+
+---
+
+### MVP 2.9 — Observability & Failure Resilience
+- **Goals:** Instrument the entire distributed system with structured telemetry and verify graceful degradation across all failure modes.
+- **Key Deliverables:**
+  - Structured JSON logging (`log/slog`) with correlation context (`request_id`, `room_id`, `participant_id`, `connection_id`, `instance_id`).
+  - Zero logging of credentials, tokens, or personal identifiers.
+  - Low-cardinality Prometheus domain metrics (connection counts, latency histograms, queue drops, Redis errors).
+  - Automated failure test suite: PostgreSQL disconnect, Redis crash, LiveKit downtime, client network drops, camera revocation.
+- **Dependencies:** Requires **MVP 2.2**, **MVP 2.3**, **MVP 2.5**, **MVP 2.7**, **MVP 2.8**.
+- **Gate Criteria:** Complete failure mode runbook verified; all error logs carry structured IDs; metrics collector does not leak high-cardinality labels.
+
+---
+
+### MVP 2.10 — Load Testing & Release Gate
+- **Goals:** Validate concurrency, memory boundaries, and broadcast latency under synthetic multi-user stress before production deployment.
+- **Key Deliverables:**
+  - k6 / Go load testing harness executing 10, 25, 50, and 100 concurrent room connection scenarios.
+  - Join/leave burst tests, chat burst fan-out, slow consumer injection, and reconnect storm validation.
+  - Memory and goroutine leak profiling with `pprof`.
+  - Release gate signoff: zero data races (`go test -race ./...`), $P_{95}$ broadcast latency $<50\text{ms}$, zero memory leaks.
+- **Dependencies:** Requires **MVP 2.9** (observability instrumentation).
+- **Gate Criteria:** All load test profiles pass within specified latency and resource envelopes.

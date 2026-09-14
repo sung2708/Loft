@@ -42,9 +42,16 @@ export const useRoomStore = create<RoomStoreState>((set) => ({
   participantJoined: (participant) =>
     set((state) => ({
       participants: state.participants.some(
-        (item) => item.connection_id === participant.connection_id,
+        (item) =>
+          item.identity_id === participant.identity_id ||
+          item.connection_id === participant.connection_id,
       )
-        ? state.participants
+        ? state.participants.map((item) =>
+            item.identity_id === participant.identity_id ||
+            item.connection_id === participant.connection_id
+              ? participant
+              : item,
+          )
         : [...state.participants, participant],
     })),
   participantLeft: (connectionId) =>

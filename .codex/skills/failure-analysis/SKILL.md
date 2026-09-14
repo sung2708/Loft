@@ -1,65 +1,51 @@
 # Skill: Failure Analysis & Resilience Modeling
 
-## Trigger
-Use this skill before designing or implementing critical workflows such as room creation, joining, host failover, media queue transitions, ban enforcement, or WebSocket reconnection.
+## WHEN TO USE THIS SKILL
+Use this skill before designing, implementing, or refactoring critical workflows (room creation, joins, host disconnect, media state transitions, camera effects, WebSocket reconnection) to model failure points and recovery paths.
 
-## Goals
-- Identify failure points at every boundary before writing code.
-- Prevent cascading failures, thread leaks, and partial database states.
-- Ensure every critical operation has an explicit, tested recovery path.
+## SOURCE OF TRUTH
+- **Resilience Matrix**: [failure-modes.md](file:///d:/git/Loft/docs/failure-modes.md).
+- **Boundary Rules**: [system-boundaries.md](file:///d:/git/Loft/docs/system-boundaries.md).
 
-## Required reading
-- [failure-modes.md](file:///d:/git/Loft/docs/failure-modes.md)
-- [reconnect-recovery.md](file:///d:/git/Loft/docs/reconnect-recovery.md)
-- [system-boundaries.md](file:///d:/git/Loft/docs/system-boundaries.md)
+## ARCHITECTURAL BOUNDARIES
+- Subsystems fail independently: LiveKit failure does not bring down WebSocket control; Redis failure does not corrupt PostgreSQL.
+- Degradation is graceful: Capabilities degrade (e.g. video effects disable, rate limits become local) rather than crashing the process.
+- No cross-subsystem distributed transactions (2PC). Use transactional PostgreSQL for durability and ephemeral TTLs for coordination.
 
-## Source of truth
-- Failure analysis matrix defined in [failure-modes.md](file:///d:/git/Loft/docs/failure-modes.md).
+## REQUIRED WORKFLOW
+1. **Model the Boundary Failure Protocol**:
+   - What if PostgreSQL is unreachable? (Return friendly error; RAM state continues).
+   - What if Redis Pub/Sub fails? (Fall back to local in-memory fan-out; do not crash).
+   - What if LiveKit SFU is down? (Text chat and YouTube co-watching continue; show reconnecting badge on video dock).
+   - What if client disconnects mid-mutation? (State version is already incremented; reconnecting client fetches fresh snapshot).
+   - What if client vision filter throws an error? (Circuit breaker disables effect; raw camera stream continues).
+2. **Apply Bounded Timeouts**:
+   - Every external call must use `context.WithTimeout` ($<500\text{ms}$ for Redis, $<5\text{s}$ for DB queries).
+3. **Log Contextual Warnings**:
+   - Log failures with structured `slog` fields without leaking user credentials.
+4. **Implement Automatic Recovery**:
+   - Use exponential backoff with jitter on reconnections.
 
-## Invariants
-- No operation may leave the system in an inconsistent or undefined state upon partial failure.
-- Every external dependency call (PostgreSQL, Redis, LiveKit, Network) must be treated as potentially failing, hanging, or timing out.
+## IMPLEMENTATION RULES
+- **Graceful Local Fallback**: Design the Go backend to operate with zero Redis dependency when needed.
+- **Never Panic**: Catch panics at the HTTP and WebSocket handler boundaries using middleware.
+- **Zero Cascading Crashes**: A slow or failing client must never degrade other participants in the room.
 
-## Workflow: The Boundary Failure Protocol
-Before writing implementation code for a critical workflow:
-1. **Document Happy Path:** Step-by-step sequence when all systems succeed.
-2. **Inject External Boundary Failures:**
-   - What if PostgreSQL succeeds, but Redis Pub/Sub fails?
-   - What if Go succeeds, but LiveKit token verification fails?
-   - What if client disconnects while the server is processing the command?
-   - What if the Go process dies immediately after committing the database transaction?
-   - What if the client retries the identical request twice?
-3. **Define Recovery Action for Each:**
-   - Rollback transaction?
-   - Rely on TTL expiration?
-   - Return idempotent cached response?
-   - Mark state degraded?
-4. Implement the recovery logic and add deterministic failure tests.
+## FAILURE CASES
+- **Database Down**: Reject new room creation and chat insertion with clear user feedback; keep active in-memory rooms running.
+- **WASM Filter Exception**: Step down to raw camera stream without remounting the React tree.
 
-## Implementation rules
-- **WHAT TO DO:** Set bounded timeouts (`context.WithTimeout`) on all external boundary calls.
-- **WHAT NOT TO DO:** Never write infinite retries without exponential backoff and max retry limits.
-- **WHY:** Infinite retries create thundering herd storms that prevent recovering services from booting.
-- **HOW TO VERIFY IT:** Execute boundary failure integration tests.
+## TEST REQUIREMENTS
+- Simulate PostgreSQL connection timeout; verify server returns HTTP 503 without panic.
+- Kill Redis container; verify multi-instance hubs degrade to local mode cleanly.
+- Simulate slow client; verify `CloseNow()` drops the socket in $<50\text{ms}$.
 
-## Failure cases
-- If LiveKit token issuance fails during room join, the client is notified via `system.error (MEDIA_UNAVAILABLE)` and can still participate in text chat and media watching.
+## DO NOT
+- DO NOT allow an external dependency outage (Redis, LiveKit) to panic or crash the Go backend.
+- DO NOT execute infinite retries without exponential backoff.
+- DO NOT assume atomic operations across PostgreSQL and Redis.
 
-## Security considerations
-- Ensure that failure handling does not bypass authorization or leak sensitive error details to clients.
-
-## Testing
-- Inject simulated timeouts on database queries using mock or delayed network wrappers.
-- Verify that transient network loss recovers via `room.snapshot` without duplicate records.
-
-## Verification
-- Workflow passes failure injection test suite cleanly.
-
-## Common mistakes
-- Assuming an operation is atomic across PostgreSQL, Redis, and LiveKit without implementing compensating actions.
-
-## Completion report
-Upon finishing changes, summarize:
-1. Critical workflow mapped across subsystems.
-2. Failure cases analyzed at each boundary.
-3. Compensating and recovery actions verified in tests.
+## DONE WHEN
+- Workflow has explicit failure recovery for every external boundary.
+- Process does not crash under simulated dependency failure.
+- User receives actionable, friendly feedback when degraded.

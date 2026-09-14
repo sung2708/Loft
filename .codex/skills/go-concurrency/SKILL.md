@@ -1,72 +1,57 @@
-# Skill: Go Concurrency & Synchronization
+# Skill: Go Concurrency, Thread Safety & Synchronization
 
-## Trigger
-Use this skill whenever spawning goroutines, introducing channels, acquiring mutexes, managing worker pools, or modifying concurrency-sensitive code (e.g. `RoomActor`, pump loops, broadcast hubs).
+## WHEN TO USE THIS SKILL
+Use this skill whenever spawning goroutines, introducing channels, acquiring mutexes, structuring worker loops, or modifying concurrency-sensitive code in the Go backend.
 
-## Goals
-- Guarantee zero data races, zero goroutine leaks, and zero deadlocks.
-- Ensure all channels are bounded and non-blocking under broadcast fan-out.
-- Prevent network or database I/O while holding synchronization locks.
+## SOURCE OF TRUTH
+- **In-Memory Room State**: Protected by `Hub.mu (sync.RWMutex)` and `roomState` pointers.
+- **Outbound Socket Buffer**: Protected by dedicated client `writePump` and bounded channel `send`.
 
-## Required reading
-- [concurrency.md](file:///d:/git/Loft/docs/concurrency.md)
-- [realtime-architecture.md](file:///d:/git/Loft/docs/realtime-architecture.md)
+## ARCHITECTURAL BOUNDARIES
+- Critical sections are pure RAM mutations ($<50\mu\text{s}$).
+- Network I/O, database queries, Redis calls, and socket writes are **strictly prohibited** inside mutex critical sections.
+- Bounded channels only (`outboundCapacity = 64`). Every goroutine must have an explicit owner and context.
 
-## Source of truth
-- In-memory room state authority belongs to the specific `RoomActor` instance.
+## REQUIRED WORKFLOW
+1. **The Concurrency Checklist**:
+   - What state is shared?
+   - What synchronization protects it?
+   - Does any network/DB I/O occur inside the critical section? (**MUST BE NO**)
+   - How does the goroutine terminate? (Listens to `ctx.Done()`)
+   - Is all buffering bounded?
+2. **Execute Critical Section**:
+   - Acquire `mu.Lock()` or `mu.RLock()`.
+   - Perform sub-microsecond in-memory updates or reads.
+   - Extract state copies by value.
+   - Release lock via `mu.Unlock()` or `mu.RUnlock()`.
+3. **Dispatch Outside Lock**:
+   - Execute JSON marshaling, database inserts, and room broadcasts **after** releasing the lock.
+4. **Non-Blocking Channel Send**:
+   - Always use `select { case ch <- msg: default: ... }`.
+   - For saturated clients, call `c.conn.CloseNow()` immediately to prevent head-of-line blocking.
+5. **Clean Teardown with WaitGroups**:
+   - Supervise background pumps using `sync.WaitGroup`.
+   - Cancel context on exit and wait for pumps to terminate before returning.
 
-## Invariants (The Concurrency Questionnaire)
-Before writing any concurrent code, answer these ten mandatory questions:
-1. **What state is shared?** Identify the exact struct fields.
-2. **Who owns it?** Specify the single struct or loop that coordinates access.
-3. **What can mutate it?** Restrict mutation to designated actor methods.
-4. **What synchronization protects it?** (`sync.RWMutex`, atomic value, or channel loop).
-5. **Can network I/O happen while locked?** **NO.** Critical sections must be $< 50\mu s$.
-6. **How does the goroutine terminate?** Listening on `ctx.Done()` or explicit quit channel.
-7. **What happens on shutdown?** Graceful drain via `sync.WaitGroup`.
-8. **Is buffering bounded?** Yes, all channels must have explicit non-zero capacity.
-9. **What happens to slow consumers?** Ephemeral events dropped; persistently slow sockets closed with code 1008.
-10. **How will this be race-tested?** `go test -race -count=10 ./...`.
+## IMPLEMENTATION RULES
+- Always check and pass `-race`: `go test -race ./...`.
+- Never use unbounded channels (`make(chan T)`).
+- Never spawn detached fire-and-forget goroutines (`go func() { ... }()`) without tracking.
 
-## Workflow
-1. Scope the critical section: copy necessary state by value or reference under lock.
-2. Release lock **before** serializing to JSON, sending across channels, or writing to sockets.
-3. If dispatching to a client channel, use non-blocking `select`:
-   ```go
-   select {
-   case ch <- msg:
-   default:
-       // Handle slow consumer outside lock
-   }
-   ```
-4. Verify goroutine lifecycle with `sync.WaitGroup` and `context.CancelFunc`.
+## FAILURE CASES
+- **Slow Consumer**: If a client's 64-capacity outbound buffer fills, drop the client with `conn.CloseNow()`. Fast clients must not suffer broadcast latency spikes.
+- **Context Cancellation**: Goroutines listening on `ctx.Done()` must exit promptly and free allocated resources.
 
-## Implementation rules
-- **WHAT TO DO:** Use `defer mu.Unlock()` immediately after `mu.Lock()`; use bounded channels (`make(chan []byte, 256)`).
-- **WHAT NOT TO DO:** Never perform database, Redis, or LiveKit calls while holding a lock. Never create unbounded channels (`make(chan T)`).
-- **WHY:** Blocking inside locks cascades into thread exhaustion and server-wide lockups.
-- **HOW TO VERIFY IT:** Run `go test -race ./...`.
+## TEST REQUIREMENTS
+- Parallel stress tests spawning 50 concurrent goroutines executing mutations against the hub.
+- Assert goroutine counts return to baseline after connection teardown.
 
-## Failure cases
-- If a client stops consuming frames, the non-blocking send drops ephemeral messages and flags the connection for slow-consumer termination after 5 seconds of continuous saturation.
+## DO NOT
+- DO NOT perform SQL queries, Redis calls, or HTTP requests under mutex locks.
+- DO NOT allow concurrent socket writers on the same WebSocket connection.
+- DO NOT ignore race detector warnings during testing.
 
-## Security considerations
-- Saturated channels must not cause memory exhaustion (OOM); bounded buffers prevent DoS from slow clients.
-
-## Testing
-- Write parallel stress tests spawning 100 goroutines concurrently reading and mutating state.
-- Assert that goroutine count returns to baseline after teardown (`runtime.NumGoroutine()`).
-
-## Verification
-- `go test -race -v -run TestConcurrent ./...` passes cleanly with 0 race warnings.
-
-## Common mistakes
-- Launching goroutines inside HTTP handlers without passing request context or tracking in a WaitGroup.
-- Calling `conn.WriteMessage()` from multiple goroutines simultaneously (Gorilla/Coder WS does not allow concurrent writers; use dedicated `writePump`).
-
-## Completion report
-Upon finishing changes, summarize:
-1. Shared state identified and synchronization mechanism chosen.
-2. Goroutine termination condition and WaitGroup tracking.
-3. Confirmation that no I/O occurs inside critical sections.
-4. Output of `go test -race ./...`.
+## DONE WHEN
+- Critical sections hold locks only for in-memory pointer/counter mutations.
+- `go test -race ./...` passes with zero race warnings.
+- All goroutines terminate cleanly on context cancellation.

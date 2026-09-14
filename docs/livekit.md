@@ -1,10 +1,14 @@
-﻿# LiveKit SFU & WebRTC Media Architecture — Loft
+# LiveKit SFU & WebRTC Media Architecture — Loft
+
+This document specifies the WebRTC media plane architecture, token minting contract, and **MVP 2 optimization strategy** for Loft's LiveKit integration.
+
+---
 
 ## 1. WebRTC & Media Transport Boundary
 
 LiveKit serves as the dedicated Selective Forwarding Unit (SFU) for Loft.
 1. **Zero Media via WebSocket:** The Go backend and its WebSocket connections **never** transport Opus audio frames, H.264/VP8 video streams, or screen-share pixels. All realtime media flows peer-to-server via WebRTC directly to the LiveKit SFU.
-2. **Control vs. Media Plane Separation:** The Go backend controls authorization, access grants, and presence tracking; LiveKit manages RTP track ingestion, simulcast switching, and client bandwidth adaptation.
+2. **Control vs. Media Plane Separation:** The Go backend controls authentication, room lifecycle, and token minting; LiveKit manages RTP track ingestion, simulcast distribution, and client bandwidth adaptation.
 
 ```
 +-------------------------------------------------------------------------------+
@@ -19,88 +23,91 @@ LiveKit serves as the dedicated Selective Forwarding Unit (SFU) for Loft.
             | - Issues Scoped JWT   |       | - Ingests RTP Streams |
             | - Validates Bans/Roles|       | - Forwards Tracks     |
             | - Enforces Permissions|       | - Active Speaker Det. |
-            +-----------+-----------+       +-----------+-----------+
-                        |                               |
-                        | LiveKit Webhooks (Signed)     |
-                        +◄──────────────────────────────+
-                          (participant_joined, track_published)
+            +-----------+-----------+       +-----------------------+
 ```
 
 ---
 
-## 2. Mapping Entity Identifiers
+## 2. Token Minting Implementation (Actual Code vs Target)
 
-To maintain clean correlation across domain and media layers:
-
-| Loft Concept | LiveKit SFU Entity | Identifier Format |
-| :--- | :--- | :--- |
-| **Room** | LiveKit Room | `room.id` (e.g. `c73d9e84-1b72-4d26-9f4a-71829e81b674`) |
-| **User / Guest** | LiveKit Participant Identity | `user.id` (e.g. `8a4f21b8-6c3e-4d05-9271-93e5a2c418f2`) |
-| **Display Name** | Participant Name | `user.display_name` |
-| **Metadata** | Participant Metadata | JSON: `{ "role": "host", "avatar_url": "..." }` |
-| **Mic Track** | Audio Track | `TrackSource: MICROPHONE` |
-| **Camera Track**| Video Track | `TrackSource: CAMERA` |
-| **Screen Track**| Screen Share Video Track | `TrackSource: SCREEN_SHARE` |
-| **Tab Audio** | Screen Share Audio Track | `TrackSource: SCREEN_SHARE_AUDIO` |
+### Actual MVP 1 Implementation (`backend/internal/livekit/token.go`)
+- Tokens are minted using standard JWT library `github.com/golang-jwt/jwt/v5` with HMAC-SHA256 (`LIVEKIT_API_SECRET`).
+- Token subject uses canonical prefix: `identity.LiveKitIdentity()` = `"user:<uuid>"` or `"guest:<uuid>"`.
+- Video grant claims specify:
+  ```json
+  {
+    "roomJoin": true,
+    "room": "<room_id>",
+    "canPublish": true,
+    "canSubscribe": true,
+    "canPublishData": true,
+    "canPublishSources": ["microphone", "camera", "screen_share", "screen_share_audio"]
+  }
+  ```
+- **Discrepancy Note**: Legacy docs referenced `github.com/livekit/protocol/auth`. The actual codebase uses pure `golang-jwt` to eliminate heavy CGO or protocol dependencies while preserving full LiveKit SFU compatibility.
 
 ---
 
-## 3. Cryptographic Token Minting in Go
+## 3. Actual Current Client Configuration (MVP 1)
 
-The frontend **never** receives the `LIVEKIT_API_SECRET`. The Go backend mints short-lived, permission-scoped tokens using `github.com/livekit/protocol/auth`:
-
-```go
-func (s *LiveKitService) CreateRoomToken(
-    ctx context.Context,
-    actor *Subject,
-    room *RoomState,
-) (string, error) {
-    // 1. Centralized capability evaluation
-    canPublishAudio := true
-    canPublishVideo := true
-    canPublishScreen := s.perms.CanShareScreen(actor, room)
-
-    // 2. Build LiveKit video grant
-    at := auth.NewAccessToken(s.apiKey, s.apiSecret)
-    grant := &auth.VideoGrant{
-        RoomJoin:             true,
-        Room:                 room.RoomID.String(),
-        CanPublish:           &canPublishAudio,
-        CanPublishData:       &canPublishAudio,
-        CanSubscribe:         &[]bool{true}[0],
-    }
-
-    if !canPublishScreen {
-        grant.CanPublishSources = []livekit.TrackSource{
-            livekit.TrackSource_MICROPHONE,
-            livekit.TrackSource_CAMERA,
-        }
-    }
-
-    at.AddGrant(grant).
-        SetIdentity(actor.ID.String()).
-        SetName(actor.DisplayName).
-        SetValidFor(2 * time.Hour)
-
-    return at.ToJWT()
-}
+In `frontend/src/features/room/RoomSession.tsx`:
+```tsx
+<LiveKitRoom
+  token={liveKitToken}
+  serverUrl={LIVEKIT_URL}
+  connect
+  audio={false}
+  video={false}
+  onError={(error) => setMediaError(error.message)}
+  onMediaDeviceFailure={(failure) => setMediaError(`Device unavailable: ${failure}`)}
+>
+  <LiveMediaContext ... />
+  <RoomAudioRenderer />
+</LiveKitRoom>
 ```
+- Media tracks are rendered using `<VideoTrack trackRef={camera} className="w-full h-full object-cover" />`.
+- Local track publishing is initiated imperatively via `localParticipant.setCameraEnabled(true)` and `setMicrophoneEnabled(true)` based on preferences saved in `sessionStorage`.
 
 ---
 
-## 4. Screen Sharing Architecture & Constraints
+## 4. MVP 2 Optimization Strategy
 
-Screen sharing leverages the standard Web API `navigator.mediaDevices.getDisplayMedia()`:
-1. **Platform Picker:** The browser manages the native OS window/screen selection modal. The application cannot enumerate unauthorized private windows directly.
-2. **Audio Capture:** Where supported by the browser and operating system (e.g. Chrome on Windows/macOS), the user may toggle "Share tab audio" or "Share system audio". This generates a secondary audio track (`SCREEN_SHARE_AUDIO`).
-3. **Application Control Broadcast:** When a user initiates or stops screen sharing, their client notifies the Go backend via `screen.started` / `screen.stopped`. The Go backend updates `RoomState.ActiveShare` and broadcasts the layout change to all room subscribers.
+The following WebRTC optimizations are scheduled for implementation in **MVP 2.3**:
 
----
+### A. Adaptive Stream & Dynacast
+- **Adaptive Stream (`adaptiveStream: true`)**:
+  - Automatically manages track subscription quality based on the actual rendered pixel dimensions of the `<video>` element in the DOM.
+  - When enabled in `<LiveKitRoom options={{ adaptiveStream: true }}>`, LiveKit client requests lower resolution layers when a video tile is small.
+- **Dynacast (`dynacast: true`)**:
+  - Directs publishing clients to pause video layers when no remote participant is actively subscribing to that layer, drastically cutting uplink CPU and bandwidth.
 
-## 5. LiveKit Webhooks & Reconciliation
+### B. Viewport- & Layout-Aware Subscriptions
+Loft's `MediaStage` dynamically shifts between layouts (`grid`, `solo`, `screen-share`):
 
-LiveKit notifies the Go backend of media lifecycle events via HTTP POST to `/api/v1/webhooks/livekit`:
-- **Security Check:** Webhook requests are verified using LiveKit's cryptographic signature header (`auth.VerifyWebhook(req, apiKey, apiSecret)`).
-- **Track Lifecycle Handling:**
-  - `participant_left`: If a participant disconnects unexpectedly from LiveKit, Go checks if their WebSocket is also dead.
-  - `track_published` / `track_unpublished`: Updates the active speaker and presenter state in the in-memory `RoomActor`.
+| Participant Visual State | Subscription Quality | Target Resolution | Target Bitrate |
+| :--- | :---: | :---: | :---: |
+| **Stage Solo / Active Presenter** | **HIGH** | 1280x720 @ 30fps | ~1,200 kbps |
+| **Grid Tile (2–4 participants)** | **MEDIUM** | 640x360 @ 24fps | ~450 kbps |
+| **Compact Strip (Screen share active)** | **LOW** | 320x180 @ 15fps | ~120 kbps |
+| **Drawer / Tab Hidden Participant** | **PAUSED** | Layer paused | 0 kbps |
+
+- **Implementation**: Hook `useTracks` with `{ onlySubscribed: false }` coupled with `TrackSubscribed` components that notify LiveKit of element size changes.
+
+### C. Screen Share Optimization
+- **Text Sharpness & Detail**:
+  ```typescript
+  localParticipant.setScreenShareEnabled(true, {
+    contentHint: "detail",
+    resolution: { width: 1920, height: 1080, frameRate: 15 }
+  });
+  ```
+- **Prioritization**: In LiveKit, screen share tracks are given high priority over webcam video so packet drops affect cameras before degrading screen clarity.
+
+### D. Camera Resolutions & Framerates
+- **Front Camera**: Preset to 720p at 30fps (optimal balance between quality and mobile thermal headroom).
+- **Simulcast Layers**: Published with 3 spatial layers (High: 720p, Medium: 360p, Low: 180p).
+
+### E. Connection Quality Monitoring
+- Real-time quality indicators rendered on each participant's tile:
+  - Uses `useConnectionQualityIndicator` from `@livekit/components-react`.
+  - Maps LiveKit's `ConnectionQuality` enum (`Excellent`, `Good`, `Poor`, `Lost`) to green/yellow/red status indicators.

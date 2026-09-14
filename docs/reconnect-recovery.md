@@ -1,105 +1,99 @@
-﻿# Reconnect & Snapshot Recovery Architecture — Loft
+# Reconnect & Snapshot Recovery Architecture — Loft
 
-## 1. Resilience Philosophy: Networks Fail Regularly
-
-In realtime mobile and web apps, network transitions (switching between 5G and WiFi, driving through a tunnel, laptop wake-from-sleep) are **standard operating conditions**, not exceptional anomalies.
-
-### Core Architectural Invariants
-1. **Snapshot Recovery Over Event Replay:** We do **not** maintain unbounded distributed replay logs. If a client drops packets during a disconnect, it recovers by receiving a fresh, authoritative `room.snapshot`.
-2. **Deterministic State Machine:** The client connection state must be modeled as a strict finite state machine (FSM) rather than an error-prone combination of disconnected booleans (`isReconnecting && isConnected`).
-3. **Thundering Herd Protection:** All client reconnection attempts must employ exponential backoff with randomized jitter to prevent server saturation during node restarts.
+This document specifies the client connection lifecycle, exponential backoff strategy, and authoritative snapshot state recovery for Loft.
 
 ---
 
-## 2. Formal Connection State Machine
+## 1. The Core Principle: Authoritative Snapshot Recovery
+
+**Cardinal Rule**: Following any network interruption, the client **never** attempts to replay historical event streams or reconcile missed delta events. Instead, the client fetches and applies a **fresh, authoritative room snapshot** (`room.snapshot`).
+
+### Why Snapshot Recovery Wins
+- **Bounded Memory**: The backend does not maintain sliding event buffers for disconnected clients ($O(1)$ memory per room).
+- **Zero Drift / Race-Free**: Replay buffers suffer from dropped packets, out-of-order execution, and state splits. Overwriting client state with an authoritative snapshot guarantees instant, 100% convergence.
+- **Fast Resync**: Applying a single snapshot replaces room details, participant lists, message history, and media timelines in $<50\text{ms}$.
+
+---
+
+## 2. Client Connection Finite State Machine (FSM)
 
 ```
-                  ┌──────────────────────────────┐
-                  │         DISCONNECTED         │
-                  └──────────────┬───────────────┘
-                                 │ connect()
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │          CONNECTING          │
-                  └──────────────┬───────────────┘
-                                 │ TCP / WS Upgraded
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │        AUTHENTICATING        │
-                  └──────────────┬───────────────┘
-                                 │ auth.success
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │          CONNECTED           │◄─────────────────────────┐
-                  └──────────────┬───────────────┘                          │
-                                 │ Network Drop / Socket EOF                │
-                                 ▼                                          │
-                  ┌──────────────────────────────┐                          │
-                  │         RECONNECTING         │ (Backoff + Jitter)       │
-                  └──────────────┬───────────────┘                          │
-                                 │ TCP Re-established & Authenticated       │
-                                 ▼                                          │
-                  ┌──────────────────────────────┐                          │
-                  │          RESYNCING           │ (Fetch room.snapshot)    │
-                  └──────────────┬───────────────┘                          │
-                                 │                                          │
-                  ┌──────────────┴──────────────┐                           │
-                  │ Snapshot received & applied ├───────────────────────────┘
-                  │ Version verified            │
-                  └─────────────────────────────┘
-                                 │ Max retries exceeded
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │            FAILED            │
-                  └──────────────────────────────┘
+                       [ User Navigates to Room ]
+                                   │
+                                   ▼
+                            ┌──────────────┐
+                            │  CONNECTING  │
+                            └──────┬───────┘
+                                   │ Socket open + Auth OK + Snapshot applied
+                                   ▼
+                            ┌──────────────┐
+                ┌──────────►│  CONNECTED   ├──────────┐
+                │           └──────┬───────┘          │
+   Snapshot OK  │                  │ Network drop     │ User clicks leave
+   Resync clean │                  ▼ (Socket close)   ▼
+        ┌───────┴──────┐    ┌──────────────┐   ┌──────────────┐
+        │  RESYNCING   │    │ RECONNECTING │   │ DISCONNECTED │
+        └───────▲──────┘    └──────┬───────┘   └──────────────┘
+                │ Socket open      │ Max retries exceeded (8)
+                └──────────────────┴──────────┐
+                                              ▼
+                                       ┌──────────────┐
+                                       │    FAILED    │
+                                       └──────────────┘
 ```
 
----
+### State Definitions
 
-## 3. Step-by-Step Reconnect Handshake
-
-When a client detects connection loss:
-
-1. **Phase 1: Transport Reconnect:**
-   - Client enters `RECONNECTING` state.
-   - Calculates backoff delay:
-     $$\text{Delay} = \min\left(10000, 500 \times 1.5^{\text{attempt}}\right) \times (1 \pm \text{jitter}_{0.2})$$
-   - Initiates fresh WebSocket handshake to `/ws`.
-
-2. **Phase 2: Authentication Handshake:**
-   - Sends `connection.auth` with current Supabase JWT (or cached guest token).
-   - If token expired, refreshes token via Supabase client before transmission.
-
-3. **Phase 3: Room Resubscription:**
-   - Sends `room.join` with target `room_id` and the client's last known `version`.
-
-4. **Phase 4: Snapshot Delivery & Reconciliation:**
-   - Go backend validates membership, generates fresh LiveKit grant token, and responds with full `room.snapshot`.
-   - Client updates `useRoomStore` with snapshot payload and sets `local_version = snapshot.version`.
-
-5. **Phase 5: Media Resync:**
-   - Client calculates server clock offset via ping/pong.
-   - Calculates canonical media position and performs a Tier 3 hard seek on the active player.
-
-6. **Phase 6: LiveKit Session Restoration:**
-   - Client checks LiveKit room state. If disconnected, reconnects using fresh LiveKit token received in snapshot.
+1. **`CONNECTING`**: Initial WebSocket handshake; sending `connection.auth`.
+2. **`CONNECTED`**: Authoritative `room.snapshot` received and applied; bidirectional heartbeats active.
+3. **`RECONNECTING`**: Socket disconnected unexpectedly; backoff timer running; attempting new connection.
+4. **`RESYNCING`**: TCP socket re-opened; auth token submitted; waiting for `room.snapshot` to replace stale state.
+5. **`DISCONNECTED`**: Intentional user departure; socket closed cleanly with code 1000.
+6. **`FAILED`**: Terminal state after 8 unsuccessful reconnect attempts; user presented with manual retry UI.
 
 ---
 
-## 4. Why Snapshot Recovery Beats Event Sourcing / Replay Buffers
+## 3. Exponential Backoff with Decorrelated Jitter
 
-| Metric | Snapshot Recovery (Loft) | Event Replay Buffers |
-| :--- | :--- | :--- |
-| **Server Memory Overhead** | **$O(1)$ per room:** Only the current canonical state is retained in RAM. | **$O(N)$ per room:** Requires keeping thousands of historical events in memory. |
-| **Edge Failure Handling** | Simple: Replace local state with server state. | Complex: Handling missing segments, ring buffer overflows, sequence gaps. |
-| **Recovery Latency** | Single roundtrip (`room.snapshot` payload $< 10$ KB). | Multiple roundtrips requesting batches of missed events. |
-| **Code Simplicity** | Clean, understandable, and testable by a single developer. | Prone to split-brain, out-of-order bugs, and memory leaks. |
+To prevent server stampedes when a network gateway or WiFi access point recovers, the client applies exponential backoff with randomized jitter (`frontend/src/lib/realtime.ts`):
+
+$$\text{BaseDelay} = \min(15000\text{ms}, 500\text{ms} \times 2^{\max(0, \text{retry} - 1)})$$
+$$\text{ActualDelay} = \text{BaseDelay} \times (0.75 + \text{random}() \times 0.5)$$
+
+```typescript
+export function reconnectDelay(retry: number, random = Math.random()): number {
+  const base = Math.min(15_000, 500 * 2 ** Math.max(0, retry - 1));
+  return base * (0.75 + random * 0.5); // Jitter range: 75% to 125% of base
+}
+```
+
+- **Max Retries**: 8 attempts over ~75 seconds before transitioning to `FAILED`.
+- **Duplicate Prevention**: If a client attempts to connect while an active session for the same user identity exists, the server returns `error: DUPLICATE_SESSION` and closes the new connection to prevent multi-tab state corruption.
 
 ---
 
-## 5. Reconnect Storm Defense
+## 4. Separation of WebSocket and LiveKit Reconnection
 
-When a Go backend node restarts or deploys:
-1. Upstream proxy (e.g. Caddy / Cloudflare / Envoy) distributes incoming connections across remaining nodes.
-2. Jitter ensures that 1,000 clients do not reconnect within the same 100ms window.
-3. The Go connection upgrade handler checks an active rate limiter (e.g., maximum 100 handshakes/sec per IP/subnet).
+WebSocket (control plane) and LiveKit (media plane) operate on completely independent network connections:
+
+| Layer | Connection Type | Reconnection Owner | Reconnection Behavior |
+| :--- | :--- | :--- | :--- |
+| **Control Plane** | WebSocket (`/ws`) | `RoomSocket` class | Reconnects via exponential backoff, refreshes Supabase JWT if expired, fetches `room.snapshot`. |
+| **Media Plane** | WebRTC (LiveKit SFU) | `@livekit/components-react` | LiveKit SDK handles ICE renegotiation, candidate gathering, and RTP track resumption independently. |
+
+- If LiveKit experiences transient packet loss while WebSocket remains healthy: Chat and media sync continue unaffected.
+- If WebSocket reconnects while LiveKit stays connected: The media dock continues streaming while chat/room state refreshes.
+
+---
+
+## 5. End-to-End Snapshot Replacement Sequence
+
+Upon transitioning from `RECONNECTING` to `RESYNCING`:
+1. **Auth Token Refresh**: If user is authenticated, the client acquires a fresh Supabase access token via `supabase.auth.getSession()` before connecting.
+2. **WebSocket Upgrade**: Socket opens; client sends `connection.auth { token, room_id }`.
+3. **Snapshot Reception**: Server responds with `room.snapshot`.
+4. **Atomic Store Replacement**:
+   - `useRoomStore.getState().applySnapshot(payload)`: Overwrites participants and room flags.
+   - `useChatStore.getState().replace(payload.messages)`: Resets recent message history.
+   - `useMusicStore.getState().replaceMedia(payload.media)`: Resets playback anchor and queue.
+5. **State Transition**: `RoomSocket` clears retry counters, resets deadlines, and fires `onState("CONNECTED")`.

@@ -1,63 +1,58 @@
 # Skill: Authentication, Authorization & Security Hardening
 
-## Trigger
-Use this skill whenever modifying authentication logic, token generation, permission evaluators, rate limiters, SSRF protections, CORS headers, WebSocket origin validation, or input sanitization.
+## WHEN TO USE THIS SKILL
+Use this skill whenever modifying token verification, guest identity signing, server-side permission evaluation, WebSocket origin validation, rate limiters, SSRF protection, or input sanitization.
 
-## Goals
-- Enforce the zero-trust client boundary across all HTTP and WebSocket endpoints.
-- Centralize authorization decisions in domain functions (`CanKick`, `CanControlMedia`).
-- Prevent Cross-Site WebSocket Hijacking (CSWSH), Server-Side Request Forgery (SSRF), and Injection attacks.
+## SOURCE OF TRUTH
+- **Permanent User Identity**: Supabase Auth (JWT). Verified via `backend/internal/auth/supabase.go`.
+- **Guest Identity**: HMAC-SHA256 tokens minted and verified via `backend/internal/auth/guest.go`.
+- **Domain Authorization**: Centralized domain functions in `backend/internal/domain/domain.go`.
 
-## Required reading
-- [security.md](file:///d:/git/Loft/docs/security.md)
-- [auth-and-permissions.md](file:///d:/git/Loft/docs/auth-and-permissions.md)
-- [system-boundaries.md](file:///d:/git/Loft/docs/system-boundaries.md)
+## ARCHITECTURAL BOUNDARIES
+- Zero-trust boundary: The client never declares roles or permissions.
+- Every privileged WebSocket command or REST endpoint evaluates server-side capabilities (`CanJoin`, `CanControlMedia`, `CanManageQueue`, `CanDeleteRoom`).
+- Sensitive tokens and secrets are **never** logged or echoed back to clients.
 
-## Source of truth
-- Authorization domain rules reside in `internal/permissions/evaluator.go`.
+## REQUIRED WORKFLOW
+1. **Verify Token Cryptographically**:
+   - For users: Verify Supabase JWT claims (`sub`, `iss`, `aud`, `exp`).
+   - For guests: Verify HMAC-SHA256 signature, expiration (12 hours), and matching room ID.
+2. **Evaluate Authorization Centralized**:
+   - Call domain evaluator functions in `internal/domain/` (e.g. `CanControlMedia(room, actor)`).
+   - Never write raw `if role == "host"` scattered in transport code.
+3. **Validate WebSocket Origin**:
+   - Check request `Origin` against `FRONTEND_ORIGINS`. Reject untrusted origins with `403 Forbidden`.
+4. **Sanitize Inputs & Prevent SSRF**:
+   - YouTube links must be HTTPS and parse strictly into valid 11-char IDs from `youtube.com` or `youtu.be`.
+   - Never fetch arbitrary user-submitted URLs from the Go backend.
+   - Truncate chat messages to $\le 2000$ runes; display names to $\le 48$ runes.
+5. **Enforce Rate Limits**:
+   - Connection attempts: 20 / min.
+   - Chat: 5 msgs / 3s.
+   - Reactions: 4 / 2s per user, 20 / 2s per room.
+   - Media commands: 10 / 10s. Queue: 10 / min.
 
-## Invariants
-- Never trust client-provided `user_id`, `role`, or `permissions` fields.
-- WebSocket handshakes must validate the `Origin` header against `ALLOWED_ORIGIN`.
-- User-submitted media links must be strictly validated against whitelisted hostnames and provider regexes.
-- Authorization checks must call centralized evaluator functions, never ad-hoc `role == "host"` checks in transport code.
+## IMPLEMENTATION RULES
+- Always use constant-time comparisons (`subtle.ConstantTimeCompare`) for cryptographic HMAC signatures.
+- Always use parameterized queries with `pgx`; never concatenate strings in SQL.
+- Redact tokens, passwords, and secrets from all `slog` calls.
 
-## Workflow
-1. For any new protected operation: define a domain evaluator method (e.g. `CanAssignModerator`).
-2. Call the evaluator in the service layer using verified actor credentials.
-3. Validate and sanitize input payloads (length limits, HTML escaping).
-4. Apply action-specific rate limiting via `internal/platform/redis/limiter.go`.
-5. Verify that error responses do not leak internal database errors or stack traces.
+## FAILURE CASES
+- **Invalid Origin**: Return `403 Forbidden` and abort WebSocket upgrade.
+- **Unauthorized Action**: Return `error` event with code `MEDIA_COMMAND_REJECTED` or `UNAUTHORIZED`.
+- **Rate Limit Hit**: Return `error` event with code `RATE_LIMITED` or HTTP 429.
 
-## Implementation rules
-- **WHAT TO DO:** Use parameterized queries, regex ID extractors, and constant-time HMAC comparisons (`subtle.ConstantTimeCompare`).
-- **WHAT NOT TO DO:** Never use raw string concatenation in queries or log raw authentication tokens.
-- **WHY:** Prevents SQL injection, timing attacks, and credential leakage in monitoring platforms.
-- **HOW TO VERIFY IT:** Run security unit tests and `govulncheck ./...`.
+## TEST REQUIREMENTS
+- Unit tests in `internal/auth/` verifying valid, expired, tampered, and wrong-room tokens.
+- Domain authorization tests in `internal/domain/domain_test.go` verifying capability isolation between hosts, members, and guests.
 
-## Failure cases
-- If rate limit is exceeded, return `429 Too Many Requests` with `Retry-After` header.
-- If origin validation fails, reject WebSocket upgrade immediately with `403 Forbidden`.
+## DO NOT
+- DO NOT trust role claims sent in WebSocket payloads.
+- DO NOT permit guest tokens issued for Room A to authenticate into Room B.
+- DO NOT perform outbound HTTP requests to user-supplied URLs (SSRF risk).
+- DO NOT log bearer tokens or API secrets.
 
-## Security considerations
-- All guest tokens must be room-scoped with strict expiration timestamps.
-- Media URL parser must discard the raw URL and retain only validated `{ provider, media_id }`.
-
-## Testing
-- Test that a regular member or guest cannot execute moderator or host actions.
-- Test SSRF protection against adversarial URLs (`http://169.254.169.254`, `http://localhost:5432`).
-- Test WebSocket connection rejection when `Origin: http://malicious-site.com`.
-
-## Verification
-- Security test suite passes.
-- No secrets or credentials found in git tracking or log outputs.
-
-## Common mistakes
-- Adding an `if role == "host"` check in an HTTP handler instead of calling `evaluator.CanChangeSettings()`.
-- Trusting guest tokens across different rooms.
-
-## Completion report
-Upon finishing changes, summarize:
-1. Authorization checks added or modified.
-2. Rate limits and input validation verified.
-3. Security unit and SSRF test results.
+## DONE WHEN
+- All privileged endpoints evaluate centralized domain functions.
+- Untrusted origins and tampered tokens are rejected with 401/403.
+- Rate limit buckets prevent command flooding.

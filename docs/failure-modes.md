@@ -1,92 +1,104 @@
-﻿# Failure Modes & Resilience Matrix — Loft
+# Failure Modes, Resilience & Graceful Degradation — Loft
 
-## 1. Overview & Resilience Philosophy
-
-Loft is engineered under the assumption that networks drop, nodes crash, and third-party dependencies experience outages.
-- **Fail Gracefully:** A failure in an auxiliary component (e.g. YouTube API or Redis) must **not** crash the entire room or prevent users from speaking or chatting.
-- **Durable Integrity First:** In any partial failure, the system refuses to report a persistent change as successful unless PostgreSQL has committed it.
+This document specifies the failure modes, detection mechanics, user impact, and recovery behaviors for Loft.
 
 ---
 
-## 2. Comprehensive Failure Modes Analysis
+## 1. Resilience Matrix Overview
 
-### 1. Go Process Hard Crash (`SIGKILL` / OOM)
-- **Impact:** Active WebSocket connections on that node terminate immediately.
-- **Detection:** Upstream reverse proxy (Caddy/Cloudflare) detects TCP drop; health check fails.
-- **Expected Behavior:** Clients detect socket closure and transition to `RECONNECTING`.
-- **Recovery:** Clients use backoff + jitter to reconnect to another healthy Go instance and request `room.snapshot`.
-- **User-Visible Behavior:** Subtle "Reconnecting..." badge appears for 1–2 seconds; audio/video in LiveKit continues uninterrupted.
-- **Data Integrity:** Ephemeral presence in Redis expires via 15s TTL; durable data in PostgreSQL is unaffected.
+```
++---------------------+-------------------+---------------------+--------------------+
+| FAILING SUBSYSTEM   | DETECTION METHOD  | USER IMPACT         | SYSTEM BEHAVIOR    |
++---------------------+-------------------+---------------------+--------------------+
+| PostgreSQL          | Ping / Query Err  | Cannot create rooms | Degrades to read;  |
+|                     |                   | or persist chat     | memory state runs  |
++---------------------+-------------------+---------------------+--------------------+
+| Redis               | Ping timeout      | Loss of cross-node  | Falls back to local|
+|                     |                   | fan-out             | in-memory Hub      |
++---------------------+-------------------+---------------------+--------------------+
+| LiveKit SFU         | ICE / Token Err   | Audio/video drops   | WS chat & media    |
+|                     |                   |                     | remain 100% active |
++---------------------+-------------------+---------------------+--------------------+
+| Supabase Auth       | JWKS fetch / 5xx  | Cannot login        | Guest tokens continue|
+|                     |                   |                     | working cleanly    |
++---------------------+-------------------+---------------------+--------------------+
+| YouTube Embed       | Iframe onError    | Video fails to load | Advance to next in |
+|                     |                   |                     | collaborative queue|
++---------------------+-------------------+---------------------+--------------------+
+| Vision Filter Crash | JS Error / Canvas | Video freezes/drops | Disables effects;  |
+|                     |                   |                     | raw camera fallback|
++---------------------+-------------------+---------------------+--------------------+
+| Client Slow Socket  | Outbound buffer   | Laggy user dropped  | Terminate slow peer|
+|                     | full (>64)        |                     | protect fast peers |
++---------------------+-------------------+---------------------+--------------------+
+```
 
-### 2. Redis Unavailable / Crashed
-- **Impact:** Multi-instance fan-out disabled; distributed rate limit counters and presence leases unavailable.
-- **Detection:** Redis ping health check fails; errors logged by `go-redis`.
-- **Expected Behavior:** Go backend falls back to local in-memory presence and in-memory rate limiting.
-- **Recovery:** Node attempts reconnection with exponential backoff; when Redis returns, state resynchronizes.
-- **User-Visible Behavior:** Users on the same Go node experience normal operation; cross-instance presence updates may be delayed.
-- **Data Integrity:** Zero durable loss. Redis contains no durable truth.
+---
 
-### 3. PostgreSQL Temporarily Unavailable
-- **Impact:** Cannot create new rooms, sign up new accounts, or archive chat messages.
-- **Detection:** `pgxpool.Ping()` fails; SQL queries return connection errors.
-- **Expected Behavior:** Active rooms continue in-memory (media sync, voice, video, screen share, ephemeral chat). Database writes fail with `503 SERVICE_UNAVAILABLE`.
-- **Recovery:** Chat batcher retains pending messages in bounded memory buffer until connection recovers.
-- **User-Visible Behavior:** Banner: "Database connectivity degraded. Message history may not save."
-- **Data Integrity:** No partial or corrupt records written.
+## 2. Detailed Failure Mode Analysis
 
-### 4. Supabase Auth Unavailable
-- **Impact:** New users cannot log in; existing users cannot refresh expired JWTs.
-- **Detection:** JWKS refresh fails; Supabase Auth HTTP API times out.
-- **Expected Behavior:** Guests continue joining via Go's local HMAC guest token generator. Existing validated sessions remain active until their token expiration timestamp.
-- **Recovery:** Cached JWKS public keys continue verifying unexpired tokens.
-- **User-Visible Behavior:** Error only when attempting fresh account login.
+### 1. PostgreSQL Unavailable / Database Pool Exhaustion
+- **Detection**: `pgxpool.Ping(ctx)` fails; queries return connection refused or context deadline exceeded.
+- **User Impact**: Room creation, user profile updates, and chat history queries fail with a friendly toast (*"Database temporarily unavailable"*).
+- **System Behavior**: Existing active in-memory rooms continue running in RAM. LiveKit audio/video and YouTube synchronization remain fully operational.
+- **Recovery**: Automatic reconnection via `pgxpool` when PostgreSQL comes back online.
+- **Data Integrity**: In-flight chat messages that cannot be persisted return `error: MESSAGE_SEND_FAILED` to the sender so the client knows to retry.
+- **Observability**: `slog.Error("postgres query failed", "error", err)`; alerts on `database_query_errors_total`.
 
-### 5. LiveKit SFU Unavailable
-- **Impact:** Voice, video, and screen sharing tracks cannot connect or drop.
-- **Detection:** Client LiveKit SDK triggers `Disconnected` event; backend token requests fail.
-- **Expected Behavior:** Application room remains online. Text chat, participant list, reactions, and synchronized YouTube playback continue over WebSocket.
-- **Recovery:** Client SDK attempts ICE restart and reconnection.
-- **User-Visible Behavior:** Call dock displays "Voice server reconnecting..."; shared media stage continues playing.
+### 2. Redis Cluster Outage
+- **Detection**: Background Redis ping times out ($>500\text{ms}$).
+- **User Impact**: In a multi-instance cluster, participants connected to different Go nodes stop receiving each other's messages. Participants on the same node experience zero disruption.
+- **System Behavior**: Circuit breaker trips. The Go backend logs an alert and automatically falls back to local in-memory presence and local rate limiting. **The Go process never crashes.**
+- **Recovery**: Redis client reconnects with exponential backoff and automatically resubscribes to active room channels.
+- **Data Integrity**: Zero permanent data lost (Redis holds only ephemeral state).
+- **Observability**: `slog.Error("redis unavailable, falling back to in-memory mode")`.
 
-### 6. Client Reconnect Storm (e.g. Node Deployment)
-- **Impact:** Hundreds of clients attempt simultaneous WebSocket handshakes.
-- **Detection:** Sharp spike in HTTP `/ws` upgrade rate metric.
-- **Expected Behavior:** Jittered client backoff spreads reconnection wave over 5–10 seconds. Ingress rate limiters protect the Go HTTP server from thread starvation.
-- **Recovery:** Connections admitted sequentially, authenticated, and served snapshots.
+### 3. LiveKit SFU Unavailable / WebRTC Disconnect
+- **Detection**: LiveKit client emits `ConnectionState.Disconnected` or `RoomEvent.Disconnected`.
+- **User Impact**: Video tiles display a reconnection spinner; microphone audio cuts out.
+- **System Behavior**: **Control Plane Isolation:** The Go WebSocket connection remains healthy. Participants can still chat, send reactions, and co-watch YouTube videos.
+- **Recovery**: LiveKit client SDK automatically attempts ICE restarts and WebRTC renegotiation.
+- **Data Integrity**: Complete state preserved.
+- **Observability**: `slog.Warn("livekit connection lost", "room_id", room.ID)`.
 
-### 7. Slow Consumer / Frozen Client Tab
-- **Impact:** One client ceases reading from its TCP socket (e.g. mobile browser backgrounded).
-- **Detection:** Client's outbound buffer channel (`sendChan`) saturates at 256 messages.
-- **Expected Behavior:** Non-blocking broadcast drops ephemeral reactions. If saturation persists > 5s, server forcibly terminates socket with code `1008`.
-- **Recovery:** Client reconnects upon regaining focus and recovers state via `room.snapshot`.
-- **User-Visible Behavior:** Backgrounded tab resyncs smoothly upon foregrounding.
+### 4. Supabase Auth / JWKS Unavailable
+- **Detection**: Public key verification fails or JWKS HTTP fetch times out.
+- **User Impact**: New users cannot log in with email/OAuth.
+- **System Behavior**: Cached JWKS keys verify existing JWT sessions. Unauthenticated users can still join rooms as Guests using Go-issued HMAC tokens.
+- **Recovery**: Automatic retry when Supabase JWKS endpoint recovers.
+- **Observability**: `slog.Error("supabase jwks fetch failed", "error", err)`.
 
-### 8. Host Disconnection & Reconnection
-- **Impact:** Room temporarily lacks an active host.
-- **Detection:** Host WebSocket closes; no sister connection found in presence map.
-- **Expected Behavior:** 15-second grace period timer starts. If host reconnects within 15s, grace timer is canceled. If timer expires, deterministic successor is elected (moderator first, then oldest member).
-- **Recovery:** Room state version increments; `room.host_transferred` broadcasted.
-- **Data Integrity:** Database updated in transaction `UPDATE rooms SET host_id = ...`.
+### 5. YouTube Embed Unavailable / Video Blocked
+- **Detection**: YouTube IFrame API fires `onError` (code 101/150: playback in embedded players disabled by owner).
+- **User Impact**: Player displays video unavailable banner.
+- **System Behavior**: The client reports the error to the Go server; the room authority advances to the next track in the collaborative queue (`queue.next`).
+- **Observability**: Logged client-side; metrics record `media_playback_failures_total`.
 
-### 9. Concurrent Host Transfer Attempts
-- **Impact:** Two moderators try to transfer host or take host status simultaneously.
-- **Detection:** Database optimistic lock on `version` or conditional update `WHERE host_id = $old_host`.
-- **Expected Behavior:** First transaction succeeds and commits. Second transaction matches 0 rows and returns `409 Conflict`.
-- **User-Visible Behavior:** Second user sees error: "Host was already reassigned."
+### 6. Go Backend Instance Crash (Node Failure)
+- **Detection**: Load balancer health checks (`/healthz`) fail.
+- **User Impact**: Connected WebSockets disconnect immediately.
+- **System Behavior**: Load balancer shifts traffic to healthy instances.
+- **Recovery**: Clients transition to `RECONNECTING` with exponential jitter, reconnect to an alternate Go instance, and fetch authoritative `room.snapshot`.
+- **Data Integrity**: Durable messages and room metadata are safe in PostgreSQL. Active media state resumes from last committed anchor.
 
-### 10. Stale / Out-of-Order Media Commands
-- **Impact:** Network delay causes an old `pause` command to arrive after another user's `play`.
-- **Detection:** In-memory `RoomActor` verifies command `expected_version == current_version`.
-- **Expected Behavior:** Stale command is rejected with `ERROR_STALE_VERSION` and dropped.
-- **Data Integrity:** Playback timeline remains coherent and locked to the latest authoritative state.
+### 7. Client-Side Video Filter Crash / WebAssembly Exception
+- **Detection**: `try ... catch` around `@mediapipe/tasks-vision` frame detection loop.
+- **User Impact**: Video effects momentarily stop.
+- **System Behavior**: Circuit breaker disables effects (`effectConfig.faceEffect = "none"`, `backgroundEffect = "none"`) and falls back immediately to raw camera stream. The call does not crash.
+- **Recovery**: User receives non-intrusive toast (*"Camera effects disabled to keep call smooth"*).
 
-### 11. Third-Party Media Provider Failure (e.g. YouTube Video Removed)
-- **Impact:** Client embedded iframe fails to load or triggers playback error code 150.
-- **Detection:** Client-side player emits `onError` event.
-- **Expected Behavior:** Client reports playback error to server; server advances queue to next track.
-- **User-Visible Behavior:** Toast: "Video unavailable, skipping to next track."
+### 8. Camera Permission Revoked Mid-Call
+- **Detection**: `navigator.mediaDevices` triggers track `ended` event; LiveKit emits `onMediaDeviceFailure`.
+- **User Impact**: Camera tile switches to avatar initials; audio continues streaming.
+- **System Behavior**: LiveKit unpublishes camera track; Go UI reflects camera off status.
 
-### 12. Browser Media Permission Denied
-- **Impact:** User clicks Mic / Camera / Screen Share, but browser denies permission.
-- **Detection:** `navigator.mediaDevices.getUserMedia` promise rejects with `NotAllowedError`.
-- **Expected Behavior:** UI resets toggle state immediately, suppresses crashes, and renders an accessible prompt explaining how to re-enable permissions in browser site settings.
+### 9. CPU Throttling / Device Overheating
+- **Detection**: Client render loop averages $>25\text{ms}$ per frame over 3 consecutive seconds.
+- **User Impact**: Video filter degrades gracefully (e.g. 30fps → 15fps → blur-only → off).
+- **System Behavior**: **Golden Rule Enforced:** Filter quality drops before camera or audio quality degrades.
+
+### 10. Saturated Client Outbound Socket (Slow Consumer)
+- **Detection**: WebSocket client `send` channel exceeds capacity (64 items).
+- **User Impact**: Saturated client is disconnected.
+- **System Behavior**: Server invokes `c.conn.CloseNow()` immediately. Fast clients in the room experience zero latency impact.
+- **Recovery**: Client attempts automatic reconnect with cleared buffers.

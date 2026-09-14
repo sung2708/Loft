@@ -63,6 +63,7 @@ export function RoomView() {
 }
 
 function Stage() {
+  const tr = useUIText();
   const media = useRoomSession();
   const reactions = useReactionStore((state) => state.reactions);
   useEffect(() => {
@@ -73,7 +74,19 @@ function Stage() {
   return (
     <div className="relative w-full h-full">
       {media.mediaConnected ? <MediaStage /> : <EmptyStage />}
-      {media.mediaError && <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-[#FF9500]/15 text-[#FF9500] text-xs">{media.mediaError}. Chat remains available.</div>}
+      {media.mediaError && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-[#FF9500]/15 border border-[#FF9500]/30 text-[#FF9500] text-xs z-50 flex items-center gap-2 max-w-[90vw] text-center shadow-lg backdrop-blur-md">
+          <span>{media.mediaError.replace(/\.+$/, "")}. {tr("Chat remains available.")}</span>
+          <button
+            type="button"
+            onClick={() => media.clearMediaError?.()}
+            className="ml-1 text-[#FF9500] hover:text-white transition-colors p-0.5 rounded-full hover:bg-white/10"
+            aria-label={tr("Close")}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 max-w-[90%] overflow-hidden">
         {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -24 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-lg" title={reaction.displayName}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-xs font-semibold">×{reaction.count}</span>}</motion.div>)}
       </div>

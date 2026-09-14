@@ -1,61 +1,57 @@
 # Skill: Redis Ephemeral Coordination & Pub/Sub
 
-## Trigger
-Use this skill whenever modifying Redis keys, presence TTL expiration, Pub/Sub channel subscriptions, distributed rate limit counters, or multi-instance event routing.
+## WHEN TO USE THIS SKILL
+Use this skill whenever modifying Redis keys, presence lease TTLs, Pub/Sub channel subscriptions, multi-instance event routing, or distributed rate limiting counters.
 
-## Goals
-- Maintain Redis strictly as an ephemeral coordination layer.
-- Enforce mandatory TTLs on all dynamic presence and rate-limiting keys.
-- Prevent Redis Pub/Sub from being treated as a durable event log.
-- Guarantee graceful fallback when Redis is absent or disconnected.
+## SOURCE OF TRUTH
+- **Ephemeral Presence & Rate Limits**: Redis keys with mandatory TTLs (`presence:room:*`, `ratelimit:*`).
+- **Durable User Data & Room State**: PostgreSQL (`profiles`, `rooms`, `messages`).
+- **Active Realtime Hub State**: Go In-Memory Maps (`state.clients`).
 
-## Required reading
-- [redis.md](file:///d:/git/Loft/docs/redis.md)
-- [presence.md](file:///d:/git/Loft/docs/presence.md)
-- [system-boundaries.md](file:///d:/git/Loft/docs/system-boundaries.md)
+## ARCHITECTURAL BOUNDARIES
+- Redis is strictly an **ephemeral accelerator and inter-node coordination bus**.
+- Redis is **never** used as a permanent database. If Redis is flushed (`FLUSHALL`), no permanent data is lost.
+- Redis Pub/Sub messages are fire-and-forget; never use Pub/Sub for historical replay or reliable event sourcing.
 
-## Source of truth
-- Ephemeral presence TTLs and distributed rate limit counters reside in Redis.
-- Durable business truth resides in PostgreSQL.
+## REQUIRED WORKFLOW
+1. **Key Naming & TTL Enforcement**:
+   - Follow strict namespace: `presence:room:<room_id>:<user_id>:<conn_id>`.
+   - Always set mandatory TTLs (15s for presence leases, 60s for rate limits).
+2. **Multi-Instance Pub/Sub Fan-Out**:
+   - Wrap inter-node messages in `InterNodeEnvelope` containing `origin_instance_id`.
+   - Publish to channel `room:<room_id>:events`.
+3. **Loop Prevention on Ingestion**:
+   - When receiving a Pub/Sub message, check `packet.OriginInstanceID == h.instanceID`.
+   - If true, **discard immediately** to prevent recursive re-broadcast loops.
+   - If false, broadcast strictly to local WebSocket clients subscribing to that `room_id`.
+4. **Subscription Lifecycle**:
+   - Subscribe to Redis channel when first local client joins a room.
+   - Unsubscribe when last local client leaves.
+5. **Handle Disconnection & Fallback**:
+   - If `REDIS_URL` is empty, run in single-node mode using in-memory channels.
+   - If Redis becomes unreachable, log structured alert and degrade to local in-memory operation without crashing the Go process.
 
-## Invariants
-- **ZERO DURABLE DATA IN REDIS:** If Redis is wiped, no permanent data is lost.
-- Every presence key must have a strict TTL (15 seconds).
-- Redis Pub/Sub messages are fire-and-forget; never assume guaranteed delivery or durable replay.
-- The Go backend must cleanly fall back to in-memory channels and local presence if `REDIS_URL` is omitted.
+## IMPLEMENTATION RULES
+- Always pass a bounded context (`context.WithTimeout(ctx, 500*time.Millisecond)`) to Redis operations.
+- Never write large room snapshot blobs to Redis keys.
+- Never execute Redis network commands while holding Go state mutexes.
 
-## Workflow
-1. When storing ephemeral presence: use `SETEX presence:room:<id>:<user>:<conn> 15 <json>`.
-2. When publishing cross-instance events: publish typed envelope to channel `room:<room_id>:events`.
-3. In `RoomHub`, subscribe to Redis channel and forward inbound events to local room connections.
-4. Ensure all Redis calls pass `ctx` with bounded timeout (e.g. 500ms).
+## FAILURE CASES
+- **Redis Crash**: Circuit breaker trips; Go server logs `slog.Error("redis unavailable, operating in degraded mode")` and continues serving local clients. Reconnects automatically with backoff.
+- **Heartbeat Expiration**: If a participant drops, the 15s TTL reaps their presence key automatically.
 
-## Implementation rules
-- **WHAT TO DO:** Set explicit TTLs on every single write (`SETEX` or pipeline with `EXPIRE`).
-- **WHAT NOT TO DO:** Never write unbounded keys without TTLs; never store permanent room records in Redis.
-- **WHY:** Unbounded keys cause memory bloat and eventual Redis OOM crashes.
-- **HOW TO VERIFY IT:** Run `redis-cli TTL <key>` in test environment and assert expiration.
+## TEST REQUIREMENTS
+- Test presence key auto-expiration after 15 seconds.
+- Multi-instance test: verify messages published from Instance 1 reach Instance 2 and discard loopbacks.
+- Degraded mode test: verify Go backend continues operating when Redis is killed.
 
-## Failure cases
-- If Redis returns connection refused, trip the fallback circuit breaker, log a warning, and route room events locally in-memory.
+## DO NOT
+- DO NOT store permanent user, message, or room records in Redis.
+- DO NOT use unbounded keys without TTLs.
+- DO NOT execute Redis Pub/Sub commands inside Go mutex critical sections.
+- DO NOT rely on Redis Pub/Sub for event replay after client reconnection.
 
-## Security considerations
-- Use Redis AUTH / TLS when connecting to managed Redis in production.
-- Sanitize room ID and user ID strings in key names to prevent key injection.
-
-## Testing
-- Integration test with real Redis: verify presence key expires automatically after 15 seconds.
-- Test Pub/Sub fan-out between two simulated Go server instances.
-
-## Verification
-- Ephemeral presence disappears upon timeout.
-- Backend boots and passes test suite even when Redis is stopped.
-
-## Common mistakes
-- Relying on Redis Pub/Sub for historical event replay (Pub/Sub does not buffer history; use `room.snapshot`).
-
-## Completion report
-Upon finishing changes, summarize:
-1. Redis keys and TTLs configured.
-2. Pub/Sub channels and subscriber loops.
-3. Fallback behavior verified when Redis is disconnected.
+## DONE WHEN
+- Cross-instance room events route cleanly via Redis Pub/Sub.
+- Re-broadcast loops are 100% prevented by instance ID checks.
+- Backend degrades to local in-memory mode seamlessly if Redis drops.

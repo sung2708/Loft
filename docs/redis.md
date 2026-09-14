@@ -1,72 +1,89 @@
-﻿# Redis Architecture & Ephemeral State Design — Loft
+# Redis Architecture & Ephemeral Distributed State — Loft
 
-## 1. Redis Purpose & Explicit Non-Goals
-
-Redis serves as an ephemeral coordination accelerator and cross-instance communication bus.
-- **What Redis IS For:**
-  - Fast presence key expiration via TTLs.
-  - Inter-node message broadcasting via Redis Pub/Sub.
-  - Sliding-window rate-limiting counters.
-  - Distributed lock leases for leader election during host failover.
-- **What Redis IS NOT For:**
-  - Durable user or room storage.
-  - Permanent chat history archive.
-  - Event sourcing or audit log storage.
-
-> **Absolute Rule:** If a Redis cluster is flushed (`FLUSHALL`) or restarted, the platform must continue functioning without data loss. Only temporary presence and active rate limits will reset.
+This document specifies the purpose, data structures, key conventions, and failure handling for Redis in Loft.
 
 ---
 
-## 2. Key Namespaces & Expiration Policies
+## 1. Concrete Purpose & Non-Negotiable Boundaries
 
-All Redis keys follow a strict hierarchical namespace with mandatory TTLs:
+Redis is introduced in **MVP 2** for one explicit reason: **to enable multiple Go backend instances to coordinate realtime room state and presence without relying on fragile inter-node HTTP meshes or saturating PostgreSQL connection pools.**
 
-| Key Pattern | Data Structure | TTL | Purpose |
-| :--- | :--- | :--- | :--- |
-| `presence:room:<room_id>:<user_id>:<conn_id>` | String (JSON) | 15 Seconds | Ephemeral presence lease refreshed by client heartbeats. |
-| `ratelimit:<action>:<identity>` | String (Integer) | 60 Seconds | Sliding window counter for rate limit enforcement. |
-| `lease:room:failover:<room_id>` | String (InstanceID) | 5 Seconds | Mutex lock to ensure only one node conducts host election. |
-| `cache:user:profile:<user_id>` | String (JSON) | 5 Minutes | Read-through cache for user profile metadata. |
+### What Redis IS Used For:
+1. **Cross-Instance Room Event Bus**: Redis Pub/Sub channels (`room:<room_id>:events`) fan out realtime mutations across all Go monolithic instances.
+2. **Ephemeral Presence Leases**: Key expiration (15-second TTL) automatically reaps stale participant records when heartbeats cease.
+3. **Distributed Rate Limiting**: Centralized sliding-window counters prevent abuse across multiple backend instances.
+4. **Short-Lived Leases**: Coordination locks for host failover and room cleanup.
+
+### What Redis IS NEVER Used For:
+1. **Never a Durable Database**: User profiles, room metadata, durable memberships, and chat messages belong **exclusively in PostgreSQL**.
+2. **Never Giant Snapshot Blobs**: Redis does not store multi-megabyte room snapshots. Active state is managed in Go memory and synchronized via delta events over Pub/Sub.
+
+> **Absolute Invariant**: If Redis is flushed (`FLUSHALL`) or crashes completely, **zero durable user data is lost**. Only temporary presence leases and rate limit counters reset.
 
 ---
 
-## 3. Redis Pub/Sub Architecture & Inherent Limitations
+## 2. Key Namespaces, TTL Strategy & Data Structures
 
-In a multi-node Go deployment, WebSocket connections to the same room may land on different Go instances. Redis Pub/Sub acts as the inter-node fan-out fabric:
+All Redis keys adhere to a strict hierarchical namespace with mandatory TTLs:
+
+| Key Pattern | Redis Type | TTL | Purpose | Failure / Eviction Consequence |
+| :--- | :--- | :---: | :--- | :--- |
+| `presence:room:<room_id>:<user_id>:<conn_id>` | String (JSON) | **15s** | Active participant presence lease refreshed every 10s by client heartbeat. | Participant drops from presence list after 15s of silence. |
+| `ratelimit:<action>:<identity>` | String (Int) | **60s** | Distributed sliding-window request counter. | Rate limits reset to 0; harmless in development or failover. |
+| `lease:room:<room_id>:cleanup` | String (InstanceID)| **30s** | Coordination lease to ensure only one instance executes room DB eviction. | If lease expires, another instance may safely clean up idle room. |
+| `channel:room:<room_id>:events` | Pub/Sub | N/A | Inter-node message bus distributing room events. | Delivered instantly to active subscribers; not stored. |
+
+---
+
+## 3. Redis Pub/Sub Architecture & Re-Broadcast Loop Prevention
+
+When a room has participants connected to different backend instances:
 
 ```
- Node 1 (Receives Chat)              Redis Broker              Node 2 (Connected Client)
-       │                                  │                               │
-       │── PUBLISH room:<id>:events ─────►│                               │
-       │   { type: "chat.message", ... }  │── DELIVER to subscribers ────►│
-       │                                  │                               │── Writes to client socket
+[ Client A on Instance 1 ]                   [ Client B on Instance 2 ]
+            │                                             │
+            ▼ (WS: chat.send)                             │
+    [ Go Instance 1 ]                                     │
+            │                                             │
+            ├─► 1. Save to PostgreSQL                     │
+            ├─► 2. Local WS Broadcast (Client A)          │
+            ▼                                             │
+   [ REDIS PUB/SUB ]                                      │
+   Channel: room:<id>:events                              │
+   Payload: { "origin_instance_id": "inst_1", ... }        │
+            │                                             │
+            └──────────────► [ Go Instance 2 ]            │
+                             │ (origin_instance_id != self)
+                             └─► Local WS Broadcast ──────┘
 ```
 
-### Critical Pub/Sub Limitations (Must-Know Invariants)
-1. **Fire-and-Forget Delivery:** Redis Pub/Sub does **not** persist messages. If a Go node is momentarily disconnected or restarts, messages published during that window are permanently dropped by the broker.
-2. **No Replay or Backlog:** Unlike Kafka or Redis Streams, Pub/Sub does not support offset replay.
-3. **Architectural Consequence:** We **never** rely on Pub/Sub as the authoritative transport for critical state recovery. If an event is missed, clients resynchronize using Go's authoritative `room.snapshot`.
+### Loop Prevention Invariant
+Every event published to Redis Pub/Sub includes the sender's `origin_instance_id`. When a Go instance receives a Pub/Sub packet:
+- If `origin_instance_id == current_instance_id`: **Discard immediately** (the instance already delivered the event to its local clients).
+- If `origin_instance_id != current_instance_id`: Fan out to local WebSocket clients subscribing to that `room_id`.
 
 ---
 
-## 4. Single-Node vs. Multi-Instance Transition
+## 4. Single-Node vs Multi-Instance Mode
 
-Loft is intentionally designed to run seamlessly in two modes:
+To preserve Loft's world-class developer experience, the backend operates seamlessly with or without Redis:
 
-### Mode 1: Local Development / Single-Node (Zero Redis Dependency)
-- If `REDIS_URL` is empty or disabled, the Go monolith falls back automatically to **in-memory room fan-out channels** and in-memory rate limiters (`golang.org/x/time/rate`).
-- Developers can clone the repository and run the full backend locally without installing or launching Redis.
-
-### Mode 2: Multi-Instance Cluster
-- Enabled when `REDIS_URL` is configured.
-- The `RoomHub` subscribes to Redis channels and publishes state updates across the cluster.
+1. **Single-Node Mode (`REDIS_URL` empty)**:
+   - Go backend uses standard in-memory maps and channels (`golang.org/x/time/rate`).
+   - Zero Redis installation required for local frontend/backend development.
+2. **Clustered Mode (`REDIS_URL` configured)**:
+   - Go backend connects via `go-redis/v9`.
+   - Automatically subscribes to active room channels upon first local participant join; unsubscribes when last local participant leaves.
 
 ---
 
-## 5. Redis Disconnection & Degradation Handling
+## 5. Redis Outage & Graceful Degradation Handling
 
-If Redis becomes unreachable in production:
-1. **Health Check Detection:** The background Redis ping check fails and trips the circuit breaker.
-2. **Local Fallback:** The instance logs an alert (`slog.Error("redis unavailable, operating in degraded mode")`) and temporarily falls back to local in-memory presence tracking and local rate limiting.
-3. **No Process Panic:** The Go backend continues serving existing connections and HTTP traffic; it does not panic or crash.
-4. **Auto-Reconnection:** The `go-redis` client automatically reconnects with exponential backoff once the Redis service recovers.
+If Redis becomes unreachable in a clustered production environment:
+1. **Detection**: Redis client health ping detects connection timeout ($<500\text{ms}$).
+2. **Circuit Breaker & Logging**: Logs structured warning (`slog.Error("redis unavailable, operating in degraded mode")`).
+3. **Graceful Local Fallback**:
+   - The Go backend falls back to local in-memory rate limiting and in-memory presence tracking for its own connected clients.
+   - Cross-instance broadcast pauses, but clients connected to the same instance continue chatting and syncing media normally.
+4. **No Process Panics**: The Go process **never panics or crashes** due to Redis outages.
+5. **Automatic Reconnection**: The Redis client retries connection with exponential backoff and resubscribes to active room channels automatically once Redis recovers.

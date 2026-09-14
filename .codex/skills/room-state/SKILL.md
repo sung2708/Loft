@@ -1,65 +1,56 @@
 # Skill: Canonical Room State & Lifecycle Management
 
-## Trigger
-Use this skill whenever modifying the in-memory `RoomActor`, room versioning logic, membership rosters, snapshot serialization, host transfer, or host failover grace period timers.
+## WHEN TO USE THIS SKILL
+Use this skill whenever modifying in-memory room state structures, monotonic state versioning, participant membership maps, room snapshot serialization, room admission caps, or room eviction timers.
 
-## Goals
-- Guarantee monotonic increment of `room.version` on authoritative mutations.
-- Enforce race-safe host failover with deterministic successor election.
-- Provide clean, complete `room.snapshot` generation for reconnecting clients.
+## SOURCE OF TRUTH
+- **Durable Metadata & Messages**: PostgreSQL (`rooms`, `profiles`, `messages`).
+- **Active Ephemeral Room & Playback Authority**: Go In-Memory Hub (`roomState` in `backend/internal/realtime/hub.go`).
+- **Distributed Presence**: Redis key leases (`presence:room:<room_id>:*`).
+- **Client Presentation State**: Client Zustand stores (`useRoomStore`, `useChatStore`, `useMusicStore`).
 
-## Required reading
-- [room-state.md](file:///d:/git/Loft/docs/room-state.md)
-- [reconnect-recovery.md](file:///d:/git/Loft/docs/reconnect-recovery.md)
-- [concurrency.md](file:///d:/git/Loft/docs/concurrency.md)
+## ARCHITECTURAL BOUNDARIES
+- Active room state is held in Go memory under `Hub.mu (sync.RWMutex)`.
+- Mutations increment monotonic sequence numbers (`m.Version++`).
+- Snapshot recovery overwrites client-local state upon reconnect.
+- Database and network calls are strictly prohibited inside lock critical sections.
 
-## Source of truth
-- In-memory active room authority belongs to the Go `RoomActor`.
-- Durable metadata belongs to PostgreSQL `rooms` table.
+## REQUIRED WORKFLOW
+1. **Acquire Mutex**:
+   - Acquire `h.mu.Lock()` for writes or `h.mu.RLock()` for reads.
+2. **Validate State & Version**:
+   - Verify `command.ExpectedVersion == state.media.Version` to guard against concurrent split-brain mutations.
+   - Return `errMediaStale` on mismatch.
+3. **Execute In-Memory Mutation**:
+   - Mutate `roomState` or `mediaState`.
+   - Bump monotonic version (`m.Version++`).
+   - Create detached snapshot copy by value (`state.media.snapshot()`).
+4. **Release Mutex**:
+   - Call `h.mu.Unlock()` or `h.mu.RUnlock()`.
+5. **Non-Blocking Fan-Out**:
+   - Broadcast serialized event to local client channels and Redis Pub/Sub outside the lock.
 
-## Invariants
-- `room.version` increments by 1 on every state-changing mutation; it must never decrement or skip.
-- Never perform database calls or network I/O while holding `RoomActor.mu`.
-- Host failover must observe a 15-second grace period before triggering successor election.
-- Successor election order is strictly deterministic: oldest active Moderator -> oldest active Member.
+## IMPLEMENTATION RULES
+- **Return Copies by Value**: Always create deep or value copies (`snapshot()`) of internal state slices/structs before releasing the lock. Never leak internal pointers.
+- **Short Critical Sections**: Keep lock hold time strictly sub-millisecond ($<50\mu\text{s}$).
+- **Eviction Timer**: When last participant leaves, schedule clean memory eviction after 10 minutes (`time.AfterFunc(10 * time.Minute, ...)`). If a user rejoins before timeout, cancel the eviction timer.
 
-## Workflow
-1. Locate target state mutation method in `internal/rooms/state.go`.
-2. Acquire `r.mu.Lock()`.
-3. Check preconditions and `expected_version` (if provided by client).
-4. Apply in-memory mutation and increment `r.version++`.
-5. Capture snapshot copy by value.
-6. Release lock (`r.mu.Unlock()`).
-7. Broadcast the corresponding typed event to subscribers outside the lock.
-8. If mutation requires durability (e.g. host transfer), write to PostgreSQL asynchronously or via service transaction.
+## FAILURE CASES
+- **Stale Version Conflict**: Return typed error `MEDIA_COMMAND_REJECTED` with message `"media state changed; retry"`.
+- **Duplicate Session**: If same user ID connects from a second tab, return `error: DUPLICATE_SESSION` and reject join to prevent state thrashing.
+- **Room Full**: If active participants reach `max_participants` (default 12), reject admission with `error: ROOM_FULL`.
 
-## Implementation rules
-- **WHAT TO DO:** Return state copies by value from lock-protected methods.
-- **WHAT NOT TO DO:** Never pass internal mutable state pointers outside the `RoomActor`.
-- **WHY:** Exposing pointers allows callers to read or mutate state without holding the lock, causing silent data races.
-- **HOW TO VERIFY IT:** Run `go test -race ./internal/rooms/...`.
+## TEST REQUIREMENTS
+- Concurrency test: `go test -race ./internal/realtime/...`.
+- Verify monotonic version increases by exactly 1 on each valid mutation.
+- Test snapshot deserialization in frontend Zustand store tests (`useRoomStore.test.ts`).
 
-## Failure cases
-- If host disconnects, start a 15-second cancellation timer. If host reconnects within 15s, cancel timer. If timer fires, elect new host and persist to PostgreSQL.
+## DO NOT
+- DO NOT perform SQL queries or Redis I/O while holding `Hub.mu`.
+- DO NOT allow client commands to overwrite state without checking `expected_version`.
+- DO NOT leak mutable internal pointers outside the lock scope.
 
-## Security considerations
-- Only authorized actors can trigger state mutations; verify permissions before acquiring the write lock.
-
-## Testing
-- Unit test monotonic version increments under rapid mutations.
-- Test concurrent host reassignment commands to ensure only one succeeds.
-- Test graceful eviction of empty rooms from memory after 10 minutes of inactivity.
-
-## Verification
-- Room state tests pass cleanly with `-race`.
-- `room.snapshot` contains valid JSON matching `RoomSnapshotPayload`.
-
-## Common mistakes
-- Updating PostgreSQL while holding `RoomActor.mu.Lock()`, risking database pool deadlock.
-- Reassigning host immediately upon transient socket close instead of waiting for the grace period.
-
-## Completion report
-Upon finishing changes, summarize:
-1. State mutation and versioning behavior verified.
-2. Grace period and failover timers validated.
-3. Race detector test output.
+## DONE WHEN
+- State transitions are race-free and pass with `-race`.
+- `room.snapshot` delivers complete, valid state to joining clients.
+- Empty rooms are evicted cleanly after the 10-minute grace period.

@@ -1,120 +1,84 @@
-# Testing Strategy & Chaos Verification — Loft
+# Testing Strategy & Quality Assurance — Loft
 
-## 1. The Realtime Testing Pyramid
+This document specifies the testing methodology, automated test suites, and mandatory real-browser verification matrices for **Loft MVP 2**.
 
-Testing a realtime distributed system requires verifying that state transitions remain sound under concurrent load, network drops, and corrupted payloads.
+---
+
+## 1. Automated vs Real-Browser Testing Boundary
+
+Realtime WebRTC and client-side computer vision cannot be fully validated through headless synthetic scripts alone. Loft strictly distinguishes what must be automated from what requires real physical device testing:
 
 ```
-                  / \
-                 / E2E\           (5% - Full Handshake & Resync Flow)
-                /------\
-               /  Race  \         (15% - `go test -race ./...` under concurrency)
-              /----------\
-             / Integration\       (30% - PostgreSQL & Redis with real containers)
-            /--------------\
-           /   Unit Tests   \     (50% - Math, Permissions, Codecs, State Machines)
-          /------------------\
++────────────────────────────────────────+────────────────────────────────────────+
+|       AUTOMATED TEST SUITES            |      MANDATORY REAL-BROWSER TESTS      |
+|    (CI/CD Blocking, Headless)          |    (Physical Webcams & Mobile Devices) |
++────────────────────────────────────────+────────────────────────────────────────+
+| • Go unit & concurrency race tests     | • Camera mirroring orientation check   |
+| • PostgreSQL relational integration    | • MediaPipe face filter anchor tracking|
+| • Redis Pub/Sub multi-node forwarding  | • Background blur edge feathering      |
+| • Realtime protocol envelope validation| • LiveKit adaptive layer switching     |
+| • Playback calculation & drift math    | • Device switching (front/rear camera) |
+| • Queue permutation & version conflict | • Audio/video lip-sync under CPU load  |
+| • Frontend Zustand store logic (Vitest)| • Mobile browser thermal/battery test  |
++────────────────────────────────────────+────────────────────────────────────────+
 ```
 
 ---
 
-## 2. Unit Testing Strategy
+## 2. Automated Test Matrix
 
-Unit tests must execute in milliseconds without external network dependencies.
-- **Domain Permission Testing:** Test all permutations of `CanKick`, `CanBan`, `CanControlMedia`, and `CanShareScreen` for every role (Host, Moderator, Member, Guest).
-- **Media Position Math:** Test `base_position_ms + (now - started_at)` across edge cases (paused status, zero base position, negative drift).
-- **Protocol Envelopes & Codecs:** Validate that malformed JSON, oversized payloads (>64KB), and unsupported protocol versions return clean errors rather than panics.
-- **SSRF URL Parser:** Verify regex extraction against various YouTube, Spotify, and SoundCloud URL variants, plus adversarial inputs (`http://169.254.169.254/latest/meta-data`).
+### A. Backend Unit & Race Tests (`go test -race ./...`)
+- **Realtime Hub Tests (`internal/realtime/hub_test.go`)**:
+  - Validates authentication handshake, admission limits, snapshot delivery.
+  - Slow consumer test: fills client buffer to 64 frames; verifies socket is closed immediately and fast peers are unhindered.
+  - Reaction rate limit test: sends 25 rapid reactions; verifies room-level rate cap (20 / 2s).
+- **Media Engine Tests (`internal/realtime/media_test.go`)**:
+  - Tests canonical position formula across `PLAYING` and `PAUSED` states.
+  - Stale version guard: verifies mutations with mismatched `expected_version` fail with `errMediaStale`.
+  - Queue permutation test: verifies invalid or duplicate track IDs in `queue.reorder` return `errInvalidMedia`.
+- **Domain Authorization Tests (`internal/domain/domain_test.go`)**:
+  - Exhaustive capability checks for `CanJoin`, `CanControlMedia`, `CanManageQueue`, `CanDeleteRoom`.
 
----
+### B. Integration Tests
+- **PostgreSQL Tests**: Executes migrations against test database; validates room cascade deletions and message ordering.
+- **Redis Multi-Instance Integration**: Boots two test Go hubs subscribed to Redis Pub/Sub; verifies event published to Hub 1 is delivered to mock client on Hub 2, while checking loop-prevention discard.
 
-## 3. Concurrency & Race-Sensitive Testing
-
-Concurrency bugs are release-blocking. All concurrent components are verified using Go's race detector:
-
-```bash
-go test -race -v -count=10 ./internal/...
-```
-
-### Mandatory Race Test Cases:
-1. **Concurrent Media State Mutations:** 50 goroutines simultaneously issuing `MutateMedia` on the same `RoomActor`.
-2. **Simultaneous Joins & Leaves:** Goroutines adding and removing subscribers from a room while messages are actively being broadcast.
-3. **Slow Consumer Write Channel Saturation:** Simulating full outbound channels while the broadcaster pushes events.
-
----
-
-## 4. Integration Testing with Real Containers
-
-We do **not** mock the database or Redis in integration tests. We run tests against real PostgreSQL and Redis instances (e.g. via Docker Compose or `testcontainers-go`):
-
-- **Migration Tests:** Verifies all sequential migration files apply cleanly forward and can rollback (`.down.sql`).
-- **Database Transaction Guarantees:** Asserts that host transfer atomically updates both the `rooms` row and `room_memberships` rows.
-- **Redis TTL Key Expiration:** Asserts that presence keys automatically disappear after their TTL expires.
+### C. Frontend Unit & Store Tests (`pnpm test` / Vitest)
+- `mediaClock.test.ts`: Verifies NTP clock offset calculation and drift determination.
+- `stageLayout.test.ts`: Tests responsive grid column/row derivations.
+- `useMusicStore.test.ts`, `useReactionStore.test.ts`: Tests Zustand store mutations and snapshot replacements.
 
 ---
 
-## 5. Lightweight Chaos & Failure Injection
+## 3. Mandatory Real-Browser Quality Verification Matrix
 
-To ensure resilience, tests inject deterministic failures at subsystem boundaries:
+The following tests **must** be executed on physical hardware (laptop webcam + mobile device) before cutting an MVP 2 release:
 
-| Injected Failure | Verification Criterion |
-| :--- | :--- |
-| **Postgres Query Timeout / Kill** | In-memory room operations continue; user receives clear `503` error when requesting history. |
-| **Redis Connection Loss** | System logs degraded mode warning, falls back to local memory presence, and reconnects cleanly. |
-| **Out-of-Order WS Events** | Event with `sequence < current_sequence` or stale `expected_version` is rejected with `ERROR_STALE_VERSION`. |
-| **Duplicate Event Delivery** | Duplicate `queue.add` with identical `idempotency_key` returns the existing item without adding a duplicate. |
-| **Sudden Socket Reset Mid-Command** | Server recovers goroutines cleanly without leaking channel memory. |
+| Test Case | Device & Browser | Action | Expected Physical Result | Pass/Fail Gate |
+| :--- | :--- | :--- | :--- | :---: |
+| **Mirroring Correctness** | Chrome on macOS / Windows | Enable front camera. Hold up text (e.g. printed page or logo). | Local self-view is **mirrored** (feels natural). Remote peer sees **unmirrored** text (readable left-to-right). | **Release Blocking** |
+| **Rear Camera Orientation** | Safari on iOS / Chrome Android | Switch to rear (`environment`) camera. | Local preview and remote published view are both **unmirrored**. | **Release Blocking** |
+| **Screen Share Non-Mirror** | Chrome Desktop | Share an IDE code window or document tab. | Remote participants see crisp, **unmirrored** code. Never flipped. | **Release Blocking** |
+| **Face Filter Tracking** | Chrome Desktop | Select "Sunglasses" or "Bunny Ears". Tilt head $\pm 45^\circ$. | Accessories track eyes/forehead smoothly without jitter or popping off. | Visual Signoff |
+| **Background Blur Feathering** | Edge / Safari Desktop | Enable "Blur" effect. Move hand across frame. | Edges feather smoothly; fingers do not aggressively clip in and out. | Visual Signoff |
+| **Degradation Under Load** | Older Laptop or Mobile | Run CPU stress test while filter is active. | Filter FPS drops to 15fps or blur-only, but **audio remains crystal clear**. | **Release Blocking** |
+| **Zero Remount on Toggle** | Chrome Desktop | Toggle filter ON/OFF 5 times rapidly. | Participant video switches in-place; React stage does not flicker or remount. | **Release Blocking** |
 
 ---
 
-## 6. Continuous Integration (CI) Pipeline
+## 4. Continuous Integration (CI) Verification Commands
 
-GitHub Actions CI runs the following strict validation matrix on every PR:
+```powershell
+# 1. Run backend tests with race detector
+cd backend
+go test -race -v ./...
 
-```yaml
-name: CI Pipeline
-on: [push, pull_request]
+# 2. Run backend linter
+golangci-lint run
 
-jobs:
-  lint-and-test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: loft_test
-          POSTGRES_PASSWORD: test
-        ports: ['5432:5432']
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      # Go Validation
-      - name: Go Format & Vet
-        run: |
-          test -z $(gofmt -l .)
-          go vet ./...
-      - name: Go Race Tests
-        run: go test -race -v ./...
-        env:
-          TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/loft_test?sslmode=disable
-          TEST_REDIS_URL: redis://localhost:6379
-
-      # Frontend Validation
-      - name: Frontend Typecheck & Lint
-        working-directory: ./frontend
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm lint
-          pnpm typecheck
-          pnpm build
+# 3. Run frontend tests and typechecks
+cd ../frontend
+pnpm test
+pnpm lint
+pnpm exec tsc --noEmit
 ```

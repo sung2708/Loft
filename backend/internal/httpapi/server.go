@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -35,6 +36,7 @@ type RoomDeletionGuard interface {
 	BeginDelete(roomID string) bool
 	FinishDelete(roomID string, deleted bool)
 }
+type metricsProvider interface{ PrometheusMetrics() string }
 
 type roomPreview struct {
 	ID              string `json:"id"`
@@ -87,6 +89,12 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 			r.Delete("/rooms/{roomID}", s.deleteRoom)
 		})
 	})
+	if metrics, ok := ws.(metricsProvider); ok {
+		r.Get("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+			_, _ = fmt.Fprint(w, metrics.PrometheusMetrics())
+		})
+	}
 	return r
 }
 

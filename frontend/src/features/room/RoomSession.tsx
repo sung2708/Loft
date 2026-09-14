@@ -20,7 +20,7 @@ import {
   useTracks,
   VideoTrack,
 } from "@livekit/components-react";
-import { Track, ConnectionState } from "livekit-client";
+import { Track, ConnectionState, ConnectionQuality } from "livekit-client";
 import { motion } from "framer-motion";
 import { MicOff } from "lucide-react";
 import { api } from "@/lib/api";
@@ -37,6 +37,11 @@ import { RoomView } from "./RoomView";
 import { deriveStageLayout } from "./stageLayout";
 import { translateUI, useUIText } from "@/lib/i18n/uiText";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
+import {
+  formatDeviceFailure,
+  formatMediaError,
+  isSecureMediaContext,
+} from "./mediaErrors";
 
 const currentText = (english: string) => translateUI(useI18nStore.getState().locale, english);
 
@@ -62,6 +67,7 @@ interface SessionValue {
   ) => boolean;
   leave: () => void;
   mediaError: string | null;
+  clearMediaError: () => void;
   micEnabled: boolean;
   cameraEnabled: boolean;
   screenEnabled: boolean;
@@ -77,6 +83,7 @@ const SessionContext = createContext<SessionValue>({
   sendCommand: () => false,
   leave: () => undefined,
   mediaError: null,
+  clearMediaError: () => undefined,
   micEnabled: false,
   cameraEnabled: false,
   screenEnabled: false,
@@ -118,9 +125,9 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
             mediaRequested = true;
             void api.liveKitToken(credential.roomId, currentCredential)
               .then(({ token }) => { if (!disposed) setLiveKitToken(token); })
-              .catch((error: Error) => {
+              .catch(() => {
                 mediaRequested = false;
-                if (!disposed) setMediaError(error.message);
+                if (!disposed) setMediaError(currentText("Unable to connect to media server."));
               });
           }
         } else if (event.type === "participant.joined")
@@ -179,7 +186,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     return sent;
   }, []);
   const leave = useCallback(() => {
-    socketRef.current?.close();
+    socketRef.current?.close(true);
     window.location.assign("/");
   }, []);
 
@@ -191,9 +198,10 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         connect
         audio={false}
         video={false}
-        onError={(error) => setMediaError(error.message)}
+        options={{ adaptiveStream: true, dynacast: true }}
+        onError={(error) => setMediaError(formatMediaError(error, "general"))}
         onMediaDeviceFailure={(failure) =>
-          setMediaError(`${currentText("Device unavailable:")} ${failure}`)
+          setMediaError(formatDeviceFailure(failure))
         }
       >
         <LiveMediaContext
@@ -213,6 +221,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     sendCommand,
     leave,
     mediaError,
+    clearMediaError: () => setMediaError(null),
     micEnabled: false,
     cameraEnabled: false,
     screenEnabled: false,
@@ -245,20 +254,38 @@ function LiveMediaContext({
   const connectionState = useConnectionState();
   const liveRoom = useRoomContext();
   const initialized = useRef(false);
+  const isTogglingMic = useRef(false);
+  const isTogglingCamera = useRef(false);
+  const isTogglingScreen = useRef(false);
+
   useEffect(() => {
     if (initialized.current || connectionState !== ConnectionState.Connected) return;
     initialized.current = true;
+    if (!isSecureMediaContext()) {
+      sessionStorage.removeItem("loft.room.media");
+      return;
+    }
     try {
       const preferences = JSON.parse(
         sessionStorage.getItem("loft.room.media") ?? "{}",
       ) as { mic?: boolean; camera?: boolean };
-      const report = (error: unknown) => setMediaError(error instanceof Error ? error.message : currentText("Device unavailable:"));
-      if (preferences.mic) void localParticipant.setMicrophoneEnabled(true).catch(report);
-      if (preferences.camera) void localParticipant.setCameraEnabled(true).catch(report);
+      if (preferences.mic) {
+        void localParticipant.setMicrophoneEnabled(true).catch((error) => {
+          sessionStorage.removeItem("loft.room.media");
+          setMediaError(formatMediaError(error, "mic"));
+        });
+      }
+      if (preferences.camera) {
+        void localParticipant.setCameraEnabled(true).catch((error) => {
+          sessionStorage.removeItem("loft.room.media");
+          setMediaError(formatMediaError(error, "camera"));
+        });
+      }
     } catch {
       /* use safe media defaults */
     }
   }, [localParticipant, connectionState, setMediaError]);
+
   const value = useMemo<SessionValue>(
     () => ({
       mediaConnected: connectionState === ConnectionState.Connected,
@@ -266,39 +293,77 @@ function LiveMediaContext({
       sendCommand,
       leave: () => { void liveRoom.disconnect().then(leave, leave); },
       mediaError,
+      clearMediaError: () => setMediaError(null),
       micEnabled: isMicrophoneEnabled,
       cameraEnabled: isCameraEnabled,
       screenEnabled: isScreenShareEnabled,
       toggleMic: async () => {
+        if (isTogglingMic.current) return;
+        isTogglingMic.current = true;
         try {
+          if (!isMicrophoneEnabled && !isSecureMediaContext()) {
+            setMediaError(
+              formatMediaError(
+                new DOMException("Insecure context", "SecurityError"),
+                "mic",
+              ),
+            );
+            return;
+          }
           await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
           setMediaError(null);
         } catch (error) {
-          setMediaError(
-            error instanceof Error ? error.message : currentText("Microphone unavailable"),
-          );
+          setMediaError(formatMediaError(error, "mic"));
+        } finally {
+          isTogglingMic.current = false;
         }
       },
       toggleCamera: async () => {
+        if (isTogglingCamera.current) return;
+        isTogglingCamera.current = true;
         try {
+          if (!isCameraEnabled && !isSecureMediaContext()) {
+            setMediaError(
+              formatMediaError(
+                new DOMException("Insecure context", "SecurityError"),
+                "camera",
+              ),
+            );
+            return;
+          }
           await localParticipant.setCameraEnabled(!isCameraEnabled);
           setMediaError(null);
         } catch (error) {
-          setMediaError(
-            error instanceof Error ? error.message : currentText("Camera unavailable"),
-          );
+          setMediaError(formatMediaError(error, "camera"));
+        } finally {
+          isTogglingCamera.current = false;
         }
       },
       toggleScreen: async () => {
+        if (isTogglingScreen.current) return;
+        isTogglingScreen.current = true;
         try {
-          await localParticipant.setScreenShareEnabled(!isScreenShareEnabled);
+          if (!isScreenShareEnabled && !isSecureMediaContext()) {
+            setMediaError(
+              formatMediaError(
+                new DOMException("Insecure context", "SecurityError"),
+                "screen",
+              ),
+            );
+            return;
+          }
+          await localParticipant.setScreenShareEnabled(!isScreenShareEnabled, {
+            audio: true,
+            contentHint: "detail",
+            resolution: { width: 1920, height: 1080, frameRate: 15 },
+          }, {
+            degradationPreference: "maintain-resolution",
+          });
           setMediaError(null);
         } catch (error) {
-          setMediaError(
-            error instanceof Error
-              ? error.message
-              : currentText("Screen sharing unavailable"),
-          );
+          setMediaError(formatMediaError(error, "screen"));
+        } finally {
+          isTogglingScreen.current = false;
         }
       },
     }),
@@ -360,6 +425,8 @@ export function MediaStage() {
     const p = mediaParticipants.find((item) => item.identity === identity);
     return p ? !p.isMicrophoneEnabled : true;
   };
+  const qualityFor = (identity: string) =>
+    mediaParticipants.find((item) => item.identity === identity)?.connectionQuality ?? ConnectionQuality.Unknown;
   const layout = deriveStageLayout(
     participants.length,
     Boolean(screen),
@@ -393,6 +460,7 @@ export function MediaStage() {
                 compact
                 speaking={isSpeaking(participant.livekit_identity)}
                 muted={isMuted(participant.livekit_identity)}
+                quality={qualityFor(participant.livekit_identity)}
                 camera={camera}
               />
             );
@@ -419,6 +487,7 @@ export function MediaStage() {
               solo={layout.mode === "solo"}
               speaking={isSpeaking(participant.livekit_identity)}
               muted={isMuted(participant.livekit_identity)}
+              quality={qualityFor(participant.livekit_identity)}
               camera={cameraFor(participant.livekit_identity)}
             />
           ))}
@@ -435,6 +504,7 @@ function ParticipantMediaTile({
   solo = false,
   speaking,
   muted = false,
+  quality,
   camera,
 }: {
   name: string;
@@ -443,6 +513,7 @@ function ParticipantMediaTile({
   solo?: boolean;
   speaking: boolean;
   muted?: boolean;
+  quality: ConnectionQuality;
   camera: TrackReference | undefined;
 }) {
   const tr = useUIText();
@@ -455,7 +526,10 @@ function ParticipantMediaTile({
       className={`${compact ? "w-32 h-20 shrink-0" : "w-full h-full min-w-0 min-h-0"} rounded-2xl overflow-hidden bg-[var(--bg-loft-card)] shadow-lg relative border-2 transition-shadow duration-150 ${speaking ? "border-[#34c759] speaking-glow" : "border-transparent"}`}
     >
       {camera ? (
-        <VideoTrack trackRef={camera} className="w-full h-full object-cover" />
+        <VideoTrack
+          trackRef={camera}
+          className={`w-full h-full object-cover ${isFrontCameraSelfView(camera) ? "-scale-x-100" : ""}`}
+        />
       ) : (
         <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-[#0066CC]/10">
           {avatarUrl && !avatarFailed ? (
@@ -502,10 +576,18 @@ function ParticipantMediaTile({
             </span>
           )}
           <span className="truncate">{name}</span>
+          <span aria-label={`Connection quality: ${quality}`} className={`w-2 h-2 rounded-full ${quality === ConnectionQuality.Excellent ? "bg-[#34c759]" : quality === ConnectionQuality.Good ? "bg-[#ff9500]" : quality === ConnectionQuality.Poor ? "bg-[#ff3b30]" : "bg-white/40"}`} />
         </div>
       )}
     </motion.div>
   );
+}
+
+// Mirroring is presentation-only: it never changes the published camera track.
+// Screen-share is rendered elsewhere and therefore can never be flipped.
+function isFrontCameraSelfView(camera: TrackReference) {
+  if (!camera.participant.isLocal || camera.source !== Track.Source.Camera) return false;
+  return camera.publication?.track?.mediaStreamTrack.getSettings().facingMode !== "environment";
 }
 
 export function EmptyStage() {

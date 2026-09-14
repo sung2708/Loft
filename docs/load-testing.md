@@ -1,107 +1,91 @@
-﻿# Load Testing & Performance Benchmarking — Loft
+# Load Testing & Performance Benchmarking — Loft
 
-## 1. Load Testing Philosophy
-
-Realtime systems fail in ways that traditional request-response REST APIs never do:
-- Saturated client TCP buffers causing head-of-line blocking.
-- Broadcast fan-out explosions ($O(N^2)$ message amplification).
-- Concurrency contention on synchronized room state locks.
-- Reconnect storms exhausting file descriptors and CPU handshakes.
-
-A system is not validated merely by running a synthetic HTTP benchmark; it must be stressed with realistic concurrent user patterns.
+This document specifies realistic multi-user load testing profiles, benchmark scenarios, target metric thresholds, and profiling procedures for **Loft MVP 2**.
 
 ---
 
-## 2. Progressive Load Profiles
+## 1. Realistic MVP 2 Scale Profiles
 
-All benchmarks must document the exact hardware, Go runtime version, and network topology:
+Loft is engineered for high-concurrency social rooms without premature enterprise complexity. Load profiles are scaled to validate the product's actual operational limits:
 
-| Profile | Concurrent WS | Rooms | Typical Room Topology | Target Environment |
-| :--- | :--- | :--- | :--- | :--- |
-| **Profile A (Dev)** | 50 | 5 | 10 users / room | Local laptop (1 node, local Redis/DB) |
-| **Profile B (Staging)** | 200 | 20 | 10 users / room | Staging cluster (2 Go nodes, Redis, Postgres) |
-| **Profile C (Target)** | 500 | 25 | 20 users / room | Production baseline |
-| **Profile D (Stress)** | 1,000+ | 10 | 100 users / room (Large Stage) | Breakpoint stress test (Slow-consumer analysis) |
+| Profile | Concurrent WS | Active Rooms | Typical Room Topology | Target Environment |
+| :--- | :---: | :---: | :--- | :--- |
+| **Profile A (Dev)** | **10** | 1 | 10 users / room | Local development machine (Single Go node) |
+| **Profile B (Standard)**| **25** | 2 | 12 users / room | Staging server (1 Go node + Redis) |
+| **Profile C (Target)** | **50** | 5 | 10 users / room | Production baseline (2 Go nodes + Redis) |
+| **Profile D (Stress)** | **100** | 2 | 50 users / room (Large Stage) | Breakpoint stress & slow consumer analysis |
 
 ---
 
-## 3. Concrete Load Test Scenarios
+## 2. Benchmark Scenarios
 
-### Scenario 1: Reconnect Storm (Node Recovery)
-- **Pattern:** 500 active WebSocket connections receive a sudden disconnect (simulating node crash), then attempt reconnecting over a 3-second window.
-- **Verification Criteria:**
-  - Jitter prevents HTTP upgrade starvation.
-  - Zero goroutine leaks.
-  - 100% of clients successfully recover state via `room.snapshot`.
-  - Max connection establishment latency $P_{95} < 1000\text{ms}$.
+### Scenario 1: Join & Leave Bursts
+- **Pattern**: 25 clients connect simultaneously within 500ms, perform handshake authentication, receive `room.snapshot`, and 10 clients disconnect after 5 seconds.
+- **Verification Criteria**:
+  - Zero authentication timeouts.
+  - Snapshot delivery latency $P_{95} < 50\text{ms}$.
+  - Connection teardown cleanly frees memory and reaps goroutines.
 
-### Scenario 2: High-Frequency Reaction & Chat Burst (Fan-Out Stress)
-- **Pattern:** In a 50-participant room, 20 users generate 5 reactions/second and 2 chat messages/second simultaneously for 60 seconds.
-- **Fan-Out Math:**
-  $$\text{Broadcast Rate} = 20 \times (5 + 2) \times 50 = 7,000 \text{ msgs/sec}$$
-- **Verification Criteria:**
-  - Non-blocking broadcast buffers absorb bursts without increasing room lock latency ($< 1\text{ms}$).
-  - Ephemeral reactions are safely dropped if client buffers saturate; critical chat messages and room state are preserved.
+### Scenario 2: Chat Fan-Out & Reaction Burst
+- **Pattern**: In a 50-participant room, 10 simulated users each send 2 chat messages/sec and 5 reactions/sec continuously for 60 seconds.
+- **Broadcast Math**:
+  $$\text{Total Events/sec} = 10 \times (2 + 5) = 70 \text{ in/sec} \implies \text{Fan-Out} = 70 \times 50 = 3,500 \text{ frames/sec}$$
+- **Verification Criteria**:
+  - Broadcast loop execution latency $P_{95} < 2\text{ms}$.
+  - Zero lock contention on room state mutex.
+  - Ephemeral reactions drop gracefully if any buffer fills; critical chat messages are 100% delivered.
 
-### Scenario 3: Media Control Contention (Play/Pause Race)
-- **Pattern:** 10 clients concurrently issue `media.play`, `media.pause`, and `media.seek` commands with varying `expected_version` values.
-- **Verification Criteria:**
-  - In-memory `RoomActor` processes mutations strictly sequentially.
-  - Exactly one command increments the version; stale commands are cleanly rejected with `409 / ERROR_STALE_VERSION`.
-  - Zero split-brain states; all clients converge to identical playback offset.
+### Scenario 3: Media Control Contention (Race Guard)
+- **Pattern**: 10 users concurrently issue `media.play`, `media.pause`, and `media.seek` commands with varying `expected_version` values.
+- **Verification Criteria**:
+  - Server serializes mutations deterministically.
+  - Stale commands are rejected with `409 / MEDIA_COMMAND_REJECTED`.
+  - Exactly one version increment per valid command; all 50 clients converge to identical playback state.
 
 ### Scenario 4: Slow Consumer Injection
-- **Pattern:** In a 50-user room, 5 simulated clients stop reading from their TCP sockets (simulating suspended mobile browsers).
-- **Verification Criteria:**
-  - The remaining 45 fast clients experience **zero** latency degradation.
-  - Saturated slow clients are dropped after the 5-second buffer timeout.
-  - Reaping slow connections frees associated memory and goroutines.
+- **Pattern**: In a 50-client room, 5 mock clients stop reading from their TCP sockets (simulating backgrounded mobile devices).
+- **Verification Criteria**:
+  - Saturated clients fill their 64-frame buffer and are disconnected immediately (`CloseNow`).
+  - The remaining 45 healthy clients experience **zero** latency spike or packet loss.
+
+### Scenario 5: Reconnect Storm (Node Recovery)
+- **Pattern**: 50 active connections drop abruptly and attempt reconnecting over a 3-second window.
+- **Verification Criteria**:
+  - Exponential jitter distributes connection attempts.
+  - 100% of reconnecting clients recover room state via snapshot within 1.5 seconds.
+  - Zero duplicate session conflicts.
+
+### Scenario 6: Cross-Instance Redis Pub/Sub Fan-Out
+- **Pattern**: 2 Go instances connected to Redis; Room X has 25 clients on Instance 1 and 25 clients on Instance 2.
+- **Verification Criteria**:
+  - Messages published on Instance 1 reach clients on Instance 2 with inter-node latency $<10\text{ms}$.
+  - Zero duplicate echo loops (verified by checking `origin_instance_id`).
 
 ---
 
-## 4. Benchmark Scripting with k6 & Go Test Harness
+## 3. Measured System Metrics & Pass/Fail Thresholds
 
-A dedicated Go load testing harness (`loadtest/main.go`) or `k6` script (`loadtest/ws_room_test.js`) simulates multi-user room scenarios:
+| Metric | Measurement Tool | Pass Threshold | Fail Threshold |
+| :--- | :--- | :---: | :---: |
+| **Broadcast Fan-Out Latency** | Prometheus `realtime_broadcast_duration_seconds` | $P_{95} < 5\text{ms}$ | $P_{95} > 25\text{ms}$ |
+| **WebSocket Snapshot Delivery**| Client Roundtrip Benchmark | $P_{95} < 50\text{ms}$ | $P_{95} > 200\text{ms}$ |
+| **Backend Memory Consumption** | Go `pprof` heap profile | $< 150\text{MB}$ for 100 conns | $> 350\text{MB}$ (Leak) |
+| **Goroutine Count Stability** | Go `pprof` goroutines | Bounded ($\sim 2$ per conn) | Unbounded growth |
+| **Slow Consumer Reaping** | Server log event timestamps | Disconnect in $<50\text{ms}$ | Blocking broadcast loop |
+| **Data Race Violations** | `go test -race ./...` | **0 races** | $> 0$ races |
 
-```javascript
-// Example k6 WebSocket test scenario excerpt
-import ws from 'k6/ws';
-import { check } from 'k6';
+---
 
-export const options = {
-  stages: [
-    { duration: '30s', target: 200 }, // Ramp-up
-    { duration: '2m', target: 200 },  // Sustained load
-    { duration: '30s', target: 0 },   // Ramp-down
-  ],
-};
+## 4. Benchmark Execution Command Reference
 
-export default function () {
-  const url = 'ws://localhost:8080/ws';
-  const res = ws.connect(url, {}, function (socket) {
-    socket.on('open', () => {
-      // 1. Authenticate
-      socket.send(JSON.stringify({ type: 'connection.auth', payload: { token: 'guest_...' } }));
-    });
-    socket.on('message', (data) => {
-      const msg = JSON.parse(data);
-      if (msg.type === 'connection.authenticated') {
-        // 2. Join room
-        socket.send(JSON.stringify({ type: 'room.join', payload: { room_id: 'test_room' } }));
-      }
-    });
-  });
-  check(res, { 'status is 101': (r) => r && r.status === 101 });
-}
+```powershell
+# 1. Run race-detector unit benchmarks
+go test -race -bench=. ./internal/realtime/...
+
+# 2. Inspect memory and goroutines with pprof
+go tool pprof http://localhost:8080/debug/pprof/heap
+go tool pprof http://localhost:8080/debug/pprof/goroutine
+
+# 3. Execute k6 WebSocket load test
+k6 run --vus 50 --duration 2m loadtest/k6_room_burst.js
 ```
-
----
-
-## 5. Metrics to Record During Runs
-
-After executing a load test profile, record and commit the run sheet:
-- **Hardware:** CPU cores, RAM, OS, Docker specs.
-- **Throughput:** Inbound msgs/sec, Outbound msgs/sec.
-- **Latency Percentiles:** $P_{50}, P_{90}, P_{95}, P_{99}$ for room joins and media commands.
-- **Runtime Health:** Peak heap allocations (`alloc_bytes`), Goroutine count, GC pause duration (`gc_pause_ns`).
-- **Failures:** Disconnect count, HTTP error rate, slow client drops.

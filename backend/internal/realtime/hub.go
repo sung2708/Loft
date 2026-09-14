@@ -3,12 +3,14 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -55,6 +57,12 @@ type reactionEvent struct {
 	DisplayName  string `json:"display_name"`
 	Emoji        string `json:"emoji"`
 }
+type roomLockPayload struct {
+	Locked bool `json:"locked"`
+}
+type kickPayload struct {
+	ConnectionID string `json:"connection_id"`
+}
 type snapshotPayload struct {
 	Room         domain.Room          `json:"room"`
 	Self         domain.Participant   `json:"self"`
@@ -77,6 +85,11 @@ type client struct {
 	send           chan []byte
 	chatTokens     chan struct{}
 	reactionTokens chan struct{}
+	explicitLeave  bool
+	disconnected   bool
+	isReconnect    bool
+	generation     uint64
+	graceTimer     *time.Timer
 }
 
 type roomState struct {
@@ -86,24 +99,38 @@ type roomState struct {
 	evict         *time.Timer
 	mediaTimer    *time.Timer
 	reactionTimes []time.Time
+	locked        bool
 }
 
 type Hub struct {
-	closing         bool
-	handlers        sync.WaitGroup
-	cancels         map[string]context.CancelFunc
-	idleTimeout     time.Duration
-	mu              sync.RWMutex
-	rooms           map[string]*roomState
-	deleting        map[string]struct{}
-	store           domain.Store
-	guests          *auth.GuestTokens
-	users           *auth.SupabaseVerifier
-	origins         map[string]struct{}
-	logger          *slog.Logger
-	connectionLimit *ratelimit.Limiter
-	mediaLimit      *ratelimit.Limiter
-	queueLimit      *ratelimit.Limiter
+	closing               bool
+	handlers              sync.WaitGroup
+	cancels               map[string]context.CancelFunc
+	idleTimeout           time.Duration
+	disconnectGracePeriod time.Duration
+	mu                    sync.RWMutex
+	rooms                 map[string]*roomState
+	deleting              map[string]struct{}
+	store                 domain.Store
+	guests                *auth.GuestTokens
+	users                 *auth.SupabaseVerifier
+	origins               map[string]struct{}
+	logger                *slog.Logger
+	connectionLimit       *ratelimit.Limiter
+	mediaLimit            *ratelimit.Limiter
+	queueLimit            *ratelimit.Limiter
+	bus                   roomBus
+	connectionsAccepted   atomic.Uint64
+	broadcasts            atomic.Uint64
+	slowConsumers         atomic.Uint64
+}
+
+type roomBus interface {
+	Publish(context.Context, string, []byte) error
+}
+type presenceBus interface {
+	RefreshPresence(context.Context, string, string, string) error
+	ClearPresence(context.Context, string, string, string) error
 }
 
 func New(store domain.Store, guests *auth.GuestTokens, users *auth.SupabaseVerifier, origins []string, logger *slog.Logger) *Hub {
@@ -111,7 +138,59 @@ func New(store domain.Store, guests *auth.GuestTokens, users *auth.SupabaseVerif
 	for _, origin := range origins {
 		allowed[origin] = struct{}{}
 	}
-	return &Hub{cancels: make(map[string]context.CancelFunc), idleTimeout: 60 * time.Second, rooms: make(map[string]*roomState), deleting: make(map[string]struct{}), store: store, guests: guests, users: users, origins: allowed, logger: logger, connectionLimit: ratelimit.New(20, time.Minute, 10), mediaLimit: ratelimit.New(10, 10*time.Second, 10), queueLimit: ratelimit.New(10, time.Minute, 10)}
+	return &Hub{
+		cancels:               make(map[string]context.CancelFunc),
+		idleTimeout:           30 * time.Second,
+		disconnectGracePeriod: 15 * time.Second,
+		rooms:                 make(map[string]*roomState),
+		deleting:              make(map[string]struct{}),
+		store:                 store,
+		guests:                guests,
+		users:                 users,
+		origins:               allowed,
+		logger:                logger,
+		connectionLimit:       ratelimit.New(20, time.Minute, 10),
+		mediaLimit:            ratelimit.New(10, 10*time.Second, 10),
+		queueLimit:            ratelimit.New(10, time.Minute, 10),
+	}
+}
+
+func (h *Hub) SetDisconnectGracePeriod(d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.disconnectGracePeriod = d
+}
+
+func (h *Hub) SetIdleTimeout(d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.idleTimeout = d
+}
+
+// SetBus attaches optional inter-node fan-out. It is intentionally optional so
+// a credential-free local MVP deployment retains its existing single-node mode.
+func (h *Hub) SetBus(bus roomBus) { h.mu.Lock(); h.bus = bus; h.mu.Unlock() }
+
+func (h *Hub) PrometheusMetrics() string {
+	return fmt.Sprintf("loft_realtime_connections_accepted_total %d\nloft_realtime_broadcasts_total %d\nloft_realtime_slow_consumers_total %d\n", h.connectionsAccepted.Load(), h.broadcasts.Load(), h.slowConsumers.Load())
+}
+
+// DeliverRemote is called by Redis after origin filtering. It reconciles the
+// replicated media snapshot before local fan-out, and never republishes it.
+func (h *Hub) DeliverRemote(roomID string, data []byte) {
+	var envelope Envelope
+	if json.Unmarshal(data, &envelope) == nil && envelope.Type == "media.state" {
+		var incoming mediaState
+		if json.Unmarshal(envelope.Payload, &incoming) == nil {
+			h.mu.Lock()
+			if state := h.rooms[roomID]; state != nil && incoming.Version > state.media.Version {
+				state.media = incoming.snapshot()
+				h.scheduleMediaEnd(roomID, state)
+			}
+			h.mu.Unlock()
+		}
+	}
+	h.broadcastLocal(roomID, data, "")
 }
 
 // Shutdown rejects new handlers, cancels all existing handlers (including auth),
@@ -129,6 +208,11 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 		}
 		if room.mediaTimer != nil {
 			room.mediaTimer.Stop()
+		}
+		for _, c := range room.clients {
+			if c.graceTimer != nil {
+				c.graceTimer.Stop()
+			}
 		}
 	}
 	h.mu.Unlock()
@@ -164,11 +248,18 @@ func (h *Hub) FinishDelete(roomID string, deleted bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if deleted {
-		if state := h.rooms[roomID]; state != nil && state.evict != nil {
-			state.evict.Stop()
-		}
-		if state := h.rooms[roomID]; state != nil && state.mediaTimer != nil {
-			state.mediaTimer.Stop()
+		if state := h.rooms[roomID]; state != nil {
+			if state.evict != nil {
+				state.evict.Stop()
+			}
+			if state.mediaTimer != nil {
+				state.mediaTimer.Stop()
+			}
+			for _, c := range state.clients {
+				if c.graceTimer != nil {
+					c.graceTimer.Stop()
+				}
+			}
 		}
 		delete(h.rooms, roomID)
 	}
@@ -243,7 +334,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		stop()
 		return
 	}
+	h.connectionsAccepted.Add(1)
 	defer h.remove(c)
+	defer h.clearPresence(c)
+	h.refreshPresence(ctx, c)
 
 	writeDone := make(chan error, 1)
 	var pumps sync.WaitGroup
@@ -253,8 +347,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.enqueue(c, event("room.snapshot", room.ID, snapshotPayload{Room: room, Self: c.participant, Participants: participants, Messages: messages, Media: media})) {
 		return
 	}
-	h.broadcast(room.ID, event("participant.joined", room.ID, c.participant), c.id)
-	h.logger.Info("websocket joined", "connection_id", c.id, "room_id", room.ID, "identity_type", identity.Type)
+	if !c.isReconnect {
+		h.broadcast(room.ID, event("participant.joined", room.ID, c.participant), c.id)
+		h.logger.Info("websocket joined", "connection_id", c.id, "room_id", room.ID, "identity_type", identity.Type)
+	} else {
+		h.logger.Info("websocket reconnected", "connection_id", c.id, "room_id", room.ID, "identity_type", identity.Type)
+	}
 
 	readDone := make(chan error, 1)
 	pumps.Add(1)
@@ -305,10 +403,51 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			continue
 		}
 		switch envelope.Type {
+		case "room.leave":
+			c.explicitLeave = true
+			_ = c.conn.Close(websocket.StatusNormalClosure, "left room")
+			return nil
+		case "room.lock":
+			var payload roomLockPayload
+			if json.Unmarshal(envelope.Payload, &payload) != nil {
+				h.sendError(c, "INVALID_PAYLOAD", "Invalid room lock payload")
+				continue
+			}
+			h.mu.Lock()
+			state := h.rooms[c.roomID]
+			allowed := state != nil && domain.CanChangeSettings(state.room, c.identity)
+			if allowed {
+				state.locked = payload.Locked
+			}
+			h.mu.Unlock()
+			if !allowed {
+				h.sendError(c, "ROOM_COMMAND_REJECTED", "room permission denied")
+				continue
+			}
+			h.broadcast(c.roomID, event("room.locked", c.roomID, payload), "")
+		case "participant.kick":
+			var payload kickPayload
+			if json.Unmarshal(envelope.Payload, &payload) != nil || payload.ConnectionID == "" {
+				h.sendError(c, "INVALID_PAYLOAD", "Invalid participant target")
+				continue
+			}
+			h.mu.RLock()
+			state := h.rooms[c.roomID]
+			var target *client
+			if state != nil && domain.CanKick(state.room, c.identity) {
+				target = state.clients[payload.ConnectionID]
+			}
+			h.mu.RUnlock()
+			if target == nil || target == c {
+				h.sendError(c, "ROOM_COMMAND_REJECTED", "participant cannot be removed")
+				continue
+			}
+			_ = target.conn.CloseNow()
 		case "connection.ping":
 			var ping pingPayload
 			_ = json.Unmarshal(envelope.Payload, &ping)
 			h.enqueue(c, event("connection.pong", c.roomID, pongPayload{ping.ClientTime, time.Now().UnixMilli()}))
+			h.refreshPresence(ctx, c)
 		case "chat.send":
 			select {
 			case c.chatTokens <- struct{}{}:
@@ -391,6 +530,36 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 	}
 }
 
+func (h *Hub) refreshPresence(parent context.Context, c *client) {
+	h.mu.RLock()
+	bus := h.bus
+	h.mu.RUnlock()
+	presence, ok := bus.(presenceBus)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 500*time.Millisecond)
+	defer cancel()
+	if err := presence.RefreshPresence(ctx, c.roomID, c.identity.LiveKitIdentity(), c.id); err != nil {
+		h.logger.Warn("redis presence refresh failed; local presence continues", "room_id", c.roomID, "error", err)
+	}
+}
+
+func (h *Hub) clearPresence(c *client) {
+	h.mu.RLock()
+	bus := h.bus
+	h.mu.RUnlock()
+	presence, ok := bus.(presenceBus)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := presence.ClearPresence(ctx, c.roomID, c.identity.LiveKitIdentity(), c.id); err != nil {
+		h.logger.Warn("redis presence clear failed", "room_id", c.roomID, "error", err)
+	}
+}
+
 func (h *Hub) writePump(ctx context.Context, c *client) error {
 	for {
 		select {
@@ -426,23 +595,44 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 		state = &roomState{clients: make(map[string]*client), room: room, media: mediaState{Queue: []youtubeTrack{}, Status: "IDLE"}}
 		h.rooms[c.roomID] = state
 	}
+	if state.locked && c.identity.Type == domain.IdentityGuest {
+		c.joinError = "ROOM_LOCKED"
+		return nil, mediaState{}, false
+	}
+	var reconnectedFrom *client
 	for _, existing := range state.clients {
 		if existing.identity.ID == c.identity.ID && existing.identity.Type == c.identity.Type {
-			c.joinError = "DUPLICATE_SESSION"
-			return nil, mediaState{}, false
+			if !existing.disconnected {
+				c.joinError = "DUPLICATE_SESSION"
+				return nil, mediaState{}, false
+			}
+			reconnectedFrom = existing
+			break
 		}
 	}
 	limit := room.MaxParticipants
 	if limit <= 0 {
 		limit = 12
 	}
-	if len(state.clients) >= limit {
+	if len(state.clients) >= limit && reconnectedFrom == nil {
 		c.joinError = "ROOM_FULL"
 		return nil, mediaState{}, false
 	}
 	if state.evict != nil {
 		state.evict.Stop()
 		state.evict = nil
+	}
+	if reconnectedFrom != nil {
+		c.isReconnect = true
+		if reconnectedFrom.graceTimer != nil {
+			reconnectedFrom.graceTimer.Stop()
+			reconnectedFrom.graceTimer = nil
+		}
+		reconnectedFrom.generation++
+		delete(state.clients, reconnectedFrom.id)
+		c.participant.ConnectionID = reconnectedFrom.participant.ConnectionID
+		c.participant.JoinedAt = reconnectedFrom.participant.JoinedAt
+		c.participant.Role = reconnectedFrom.participant.Role
 	}
 	state.clients[c.id] = c
 	participants := make([]domain.Participant, 0, len(state.clients))
@@ -490,8 +680,23 @@ func (h *Hub) scheduleMediaEnd(roomID string, state *roomState) {
 func (h *Hub) remove(c *client) {
 	h.mu.Lock()
 	state := h.rooms[c.roomID]
-	if state != nil {
+	if state == nil {
+		h.mu.Unlock()
+		return
+	}
+
+	existing, ok := state.clients[c.id]
+	if !ok || existing != c {
+		h.mu.Unlock()
+		return
+	}
+
+	if c.explicitLeave || h.closing || h.disconnectGracePeriod <= 0 {
 		delete(state.clients, c.id)
+		if c.graceTimer != nil {
+			c.graceTimer.Stop()
+			c.graceTimer = nil
+		}
 		if len(state.clients) == 0 && !h.closing {
 			state.evict = time.AfterFunc(10*time.Minute, func() {
 				h.mu.Lock()
@@ -504,12 +709,53 @@ func (h *Hub) remove(c *client) {
 				h.mu.Unlock()
 			})
 		}
+		h.mu.Unlock()
+		h.broadcast(c.roomID, event("participant.left", c.roomID, struct {
+			ConnectionID string `json:"connection_id"`
+		}{c.participant.ConnectionID}), c.id)
+		h.logger.Info("websocket left (explicit)", "connection_id", c.id, "participant_conn_id", c.participant.ConnectionID, "room_id", c.roomID)
+		return
 	}
+
+	c.disconnected = true
+	c.generation++
+	gen := c.generation
+	if c.graceTimer != nil {
+		c.graceTimer.Stop()
+	}
+
+	roomID := c.roomID
+	participantConnID := c.participant.ConnectionID
+	c.graceTimer = time.AfterFunc(h.disconnectGracePeriod, func() {
+		var leftData []byte
+		h.mu.Lock()
+		if !h.closing && h.rooms[roomID] == state && state.clients[c.id] == c && c.generation == gen && c.disconnected {
+			delete(state.clients, c.id)
+			if len(state.clients) == 0 && !h.closing {
+				state.evict = time.AfterFunc(10*time.Minute, func() {
+					h.mu.Lock()
+					if h.rooms[roomID] == state && len(state.clients) == 0 {
+						if state.mediaTimer != nil {
+							state.mediaTimer.Stop()
+						}
+						delete(h.rooms, roomID)
+					}
+					h.mu.Unlock()
+				})
+			}
+			leftData = event("participant.left", roomID, struct {
+				ConnectionID string `json:"connection_id"`
+			}{participantConnID})
+		}
+		h.mu.Unlock()
+
+		if leftData != nil {
+			h.broadcast(roomID, leftData, "")
+			h.logger.Info("websocket left (grace period expired)", "connection_id", c.id, "participant_conn_id", participantConnID, "room_id", roomID)
+		}
+	})
 	h.mu.Unlock()
-	h.broadcast(c.roomID, event("participant.left", c.roomID, struct {
-		ConnectionID string `json:"connection_id"`
-	}{c.id}), c.id)
-	h.logger.Info("websocket left", "connection_id", c.id, "room_id", c.roomID)
+	h.logger.Info("websocket disconnected (grace period started)", "connection_id", c.id, "room_id", c.roomID, "grace_period", h.disconnectGracePeriod)
 }
 
 func validReaction(emoji string) bool {
@@ -521,12 +767,27 @@ func validReaction(emoji string) bool {
 }
 
 func (h *Hub) broadcast(roomID string, data []byte, exclude string) {
+	h.broadcasts.Add(1)
+	h.broadcastLocal(roomID, data, exclude)
+	h.mu.RLock()
+	bus := h.bus
+	h.mu.RUnlock()
+	if bus != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		if err := bus.Publish(ctx, roomID, data); err != nil {
+			h.logger.Warn("redis publish failed; delivered locally", "room_id", roomID, "error", err)
+		}
+		cancel()
+	}
+}
+
+func (h *Hub) broadcastLocal(roomID string, data []byte, exclude string) {
 	h.mu.RLock()
 	state := h.rooms[roomID]
 	clients := make([]*client, 0)
 	if state != nil {
 		for id, c := range state.clients {
-			if id != exclude {
+			if id != exclude && !c.disconnected {
 				clients = append(clients, c)
 			}
 		}
@@ -534,6 +795,7 @@ func (h *Hub) broadcast(roomID string, data []byte, exclude string) {
 	h.mu.RUnlock()
 	for _, c := range clients {
 		if !h.enqueue(c, data) {
+			h.slowConsumers.Add(1)
 			// A saturated peer may never read/acknowledge a close frame.
 			// Do not wait for its handshake in the room broadcast path.
 			_ = c.conn.CloseNow()
@@ -542,18 +804,7 @@ func (h *Hub) broadcast(roomID string, data []byte, exclude string) {
 }
 
 func (h *Hub) broadcastEphemeral(roomID string, data []byte) {
-	h.mu.RLock()
-	state := h.rooms[roomID]
-	clients := make([]*client, 0)
-	if state != nil {
-		for _, c := range state.clients {
-			clients = append(clients, c)
-		}
-	}
-	h.mu.RUnlock()
-	for _, c := range clients {
-		h.enqueue(c, data)
-	}
+	h.broadcast(roomID, data, "")
 }
 
 func (s *roomState) allowReaction(now time.Time) bool {

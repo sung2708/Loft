@@ -1,57 +1,55 @@
 # Skill: Observability, Metrics & Structured Logging
 
-## Trigger
-Use this skill whenever adding or modifying structured logs, Prometheus metrics, telemetry collectors, request tracing context, or pprof profiling endpoints.
+## WHEN TO USE THIS SKILL
+Use this skill whenever adding or modifying structured logs, domain metrics, latency timers, error counters, request tracing context, or telemetry collectors.
 
-## Goals
-- Maintain consistent JSON structured logging via `slog`.
-- Instrument latency, throughput, and error rates using Prometheus metrics.
-- Prevent high-cardinality memory leaks in Prometheus metric collectors.
+## SOURCE OF TRUTH
+- **Structured Logger**: Standard library `log/slog`.
+- **Metrics Specifications**: [observability.md](file:///d:/git/Loft/docs/observability.md).
 
-## Required reading
-- [observability.md](file:///d:/git/Loft/docs/observability.md)
-- [security.md](file:///d:/git/Loft/docs/security.md)
+## ARCHITECTURAL BOUNDARIES
+- All logs are formatted as JSON using `slog`. Plaintext formatting (`fmt.Println`, `log.Printf`) is strictly prohibited.
+- **Zero High-Cardinality Labels**: Dynamic UUIDs (`room_id`, `user_id`, `event_id`, `connection_id`) belong in **logs only**, never as Prometheus metric labels.
+- Security boundary: Authentication tokens, passwords, and secrets are strictly redacted.
 
-## Source of truth
-- Metric registrations reside in `internal/platform/telemetry/metrics.go`.
-- Logger wrapper resides in `internal/platform/logger/logger.go`.
+## REQUIRED WORKFLOW
+1. **Inject Structured Correlation Context**:
+   - Every log call must include relevant contextual dimensions:
+     ```go
+     h.logger.Info("websocket joined",
+         "request_id", reqID,
+         "room_id", room.ID,
+         "connection_id", c.id,
+         "participant_id", identity.LiveKitIdentity(),
+         "instance_id", h.instanceID,
+     )
+     ```
+2. **Instrument Low-Cardinality Metrics**:
+   - Use fixed, low-cardinality labels only (`method`, `status_code`, `event_family`, `identity_type`).
+   - Observe durations using `prometheus.NewTimer()`.
+3. **Audit Log Payloads**:
+   - Ensure error messages and payload dumps do not leak Supabase JWTs or guest tokens.
 
-## Invariants
-- **ZERO HIGH-CARDINALITY LABELS:** Never use `room_id`, `user_id`, `event_id`, or `ip_address` as Prometheus metric labels.
-- All logs must be structured JSON containing `request_id` or `connection_id` when available.
-- Secrets, tokens, and passwords must be automatically redacted before outputting logs.
+## IMPLEMENTATION RULES
+- **No Vanity Metrics**: Every registered metric must answer an actionable operational question (e.g. slow client drop rate, broadcast latency, DB error rate).
+- **Log Levels**:
+  - `INFO`: Normal lifecycle events (joins, leaves, room created).
+  - `WARN`: Degradations (slow client dropped, rate limit hit, tier step-down).
+  - `ERROR`: System failures (database error, Redis disconnect, unhandled panic).
 
-## Workflow
-1. For logging: use `logger.InfoContext(ctx, "message", "key", value)`.
-2. For metrics: select an existing metric from `internal/platform/telemetry` or define a new vector with low-cardinality labels (e.g. `status_code`, `event_family`).
-3. Increment counter or observe duration using `defer prometheus.NewTimer(...).ObserveDuration()`.
-4. Verify `/metrics` endpoint formats the new metric correctly.
+## FAILURE CASES
+- If Prometheus collector fails or metric registry panics: Catch and log error. Telemetry must never crash business logic.
 
-## Implementation rules
-- **WHAT TO DO:** Use histogram buckets tailored to domain latency expectations (<50ms for broadcasts).
-- **WHAT NOT TO DO:** Never use `fmt.Println` or unstructured `log.Printf`.
-- **WHY:** Unstructured logs cannot be indexed, filtered, or correlated in centralized logging systems (Datadog, Loki).
-- **HOW TO VERIFY IT:** Scrape `GET /metrics` and inspect output format.
+## TEST REQUIREMENTS
+- Unit test verifying logger outputs valid JSON with expected keys.
+- Metric test verifying label values belong to bounded enum sets.
 
-## Failure cases
-- If metric collector fails or histogram observation encounters an unexpected label value, the application must not panic or disrupt request handling.
+## DO NOT
+- DO NOT use dynamic UUIDs (`room_id`, `user_id`, `event_id`) as Prometheus metric labels.
+- DO NOT log Bearer tokens, passwords, or guest HMAC secrets.
+- DO NOT use unstructured log statements in production packages.
 
-## Security considerations
-- Audit log keys against `redactedKeys` list to prevent JWT or secret leaks.
-
-## Testing
-- Unit test that context logger extracts correlation IDs correctly.
-- Test that metric increment functions correctly adjust Prometheus counter values.
-
-## Verification
-- `curl http://localhost:8080/metrics` returns valid Prometheus exposition text.
-- Log output parses as valid JSON with required correlation fields.
-
-## Common mistakes
-- Adding a metric label like `room_id` to `room_broadcast_duration_seconds`, causing Prometheus memory to balloon after thousands of rooms are created.
-
-## Completion report
-Upon finishing changes, summarize:
-1. Metrics or log fields added.
-2. Cardinality verification confirmed (zero dynamic UUID labels).
-3. Secret redaction verified.
+## DONE WHEN
+- All logs parse as valid JSON carrying `room_id` and `connection_id` context.
+- Metric vectors maintain bounded cardinality.
+- Zero secrets are leaked in logs.
