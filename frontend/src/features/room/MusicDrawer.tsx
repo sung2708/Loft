@@ -144,6 +144,46 @@ export function MusicDrawer({
     };
   }, [media, clockOffset, activated, volume, canControl, session.sendCommand]);
 
+  // The IFrame API invokes this global callback as soon as its script finishes
+  // evaluating. Register it before Next's Script callback runs so we cannot
+  // miss that one-shot signal on a fast connection.
+  useEffect(() => {
+    if (window.YT?.Player) {
+      setApiReady(true);
+      return;
+    }
+
+    const previousCallback = window.onYouTubeIframeAPIReady;
+    const markReady = () => setApiReady(true);
+    const callback = () => {
+      previousCallback?.();
+      markReady();
+    };
+    window.onYouTubeIframeAPIReady = callback;
+
+    // The callback can have fired before this component mounted (for example,
+    // when navigating back to a room). Polling briefly covers that case while
+    // still stopping as soon as the API is available.
+    const readinessCheck = window.setInterval(() => {
+      if (window.YT?.Player) {
+        markReady();
+        window.clearInterval(readinessCheck);
+      }
+    }, 100);
+    const stopReadinessCheck = window.setTimeout(
+      () => window.clearInterval(readinessCheck),
+      10_000,
+    );
+
+    return () => {
+      window.clearInterval(readinessCheck);
+      window.clearTimeout(stopReadinessCheck);
+      if (window.onYouTubeIframeAPIReady === callback) {
+        window.onYouTubeIframeAPIReady = previousCallback;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (
       pendingVersion.current !== null &&
@@ -571,7 +611,6 @@ export function MusicDrawer({
         strategy="afterInteractive"
         onReady={() => {
           if (window.YT?.Player) setApiReady(true);
-          else window.onYouTubeIframeAPIReady = () => setApiReady(true);
         }}
       />
 
