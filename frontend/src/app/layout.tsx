@@ -11,9 +11,23 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Loft — The Digital Social Hangout",
-  description:
-    "Realtime social hangout platform where friends talk, watch, listen, and co-work in synchronized rooms.",
+  title: {
+    default: "Loft — We’re here together.",
+    template: "%s · Loft",
+  },
+  description: "A shared space to talk, watch, listen, and hang out together.",
+  applicationName: "Loft",
+  openGraph: {
+    title: "Loft — We’re here together.",
+    description: "A shared space to talk, watch, listen, and hang out together.",
+    siteName: "Loft",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Loft — We’re here together.",
+    description: "A shared space to talk, watch, listen, and hang out together.",
+  },
 };
 
 export default function RootLayout({
