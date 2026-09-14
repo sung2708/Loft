@@ -36,9 +36,9 @@ Every packet transmitted over the WebSocket connection uses the strict JSON enve
 - **Authorization**: Public
 - **Payload**:
   ```json
-  { "token": "<supabase_jwt_or_guest_token>", "room_id": "<room_uuid>" }
+  { "token": "<supabase_jwt_or_guest_token>", "room_id": "<room_uuid>", "tab_session_id": "<browser_tab_uuid>" }
   ```
-- **Validation**: Token must verify via `GuestTokens.Verify` or `SupabaseVerifier.Verify`. Room must exist and admit user/guest.
+- **Validation**: Token must verify via `GuestTokens.Verify` or `SupabaseVerifier.Verify`. Room must exist and admit user/guest. `tab_session_id` persists through a browser reload and lets the server replace the prior connection from that same tab.
 - **Source of Truth**: Supabase Auth / Go Guest HMAC.
 - **Idempotency**: Sent once immediately upon WebSocket connect.
 - **Version Implication**: None.

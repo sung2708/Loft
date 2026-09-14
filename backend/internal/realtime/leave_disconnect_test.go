@@ -19,6 +19,10 @@ import (
 )
 
 func dialRealtimeClient(t *testing.T, ctx context.Context, serverURL, token, roomID string) (*websocket.Conn, Envelope) {
+	return dialRealtimeClientWithTab(t, ctx, serverURL, token, roomID, "")
+}
+
+func dialRealtimeClientWithTab(t *testing.T, ctx context.Context, serverURL, token, roomID, tabSessionID string) (*websocket.Conn, Envelope) {
 	t.Helper()
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(serverURL, "http"), &websocket.DialOptions{
 		HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}},
@@ -26,7 +30,7 @@ func dialRealtimeClient(t *testing.T, ctx context.Context, serverURL, token, roo
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
-	payload, _ := json.Marshal(authPayload{Token: token, RoomID: roomID})
+	payload, _ := json.Marshal(authPayload{Token: token, RoomID: roomID, TabSessionID: tabSessionID})
 	if err := wsjson.Write(ctx, conn, Envelope{Type: "connection.auth", Version: 1, Payload: payload}); err != nil {
 		_ = conn.CloseNow()
 		t.Fatalf("write auth: %v", err)
@@ -315,6 +319,40 @@ func TestDuplicateTabRejectionWhileActive(t *testing.T) {
 	var pong Envelope
 	if err := wsjson.Read(ctx, connA1, &pong); err != nil || pong.Type != "connection.pong" {
 		t.Fatalf("first tab failed pong: %v", err)
+	}
+}
+
+func TestReloadSessionReplacesActiveConnection(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), AllowGuests: true, MaxParticipants: 10}
+	guests := auth.NewGuestTokens("12345678901234567890123456789012", time.Hour)
+	token, _, _, _ := guests.Issue(room.ID, "Alice")
+	hub := New(&realtimeStore{room: room}, guests, nil, []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := httptest.NewServer(hub)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tabSessionID := uuid.NewString()
+	first, firstSnapshot := dialRealtimeClientWithTab(t, ctx, server.URL, token, room.ID, tabSessionID)
+	defer first.CloseNow()
+	second, secondSnapshot := dialRealtimeClientWithTab(t, ctx, server.URL, token, room.ID, tabSessionID)
+	defer second.CloseNow()
+
+	if firstSnapshot.Type != "room.snapshot" || secondSnapshot.Type != "room.snapshot" {
+		t.Fatalf("reload did not receive a snapshot: first=%s second=%s", firstSnapshot.Type, secondSnapshot.Type)
+	}
+	var firstState, secondState snapshotPayload
+	_ = json.Unmarshal(firstSnapshot.Payload, &firstState)
+	_ = json.Unmarshal(secondSnapshot.Payload, &secondState)
+	if secondState.Self.ConnectionID != firstState.Self.ConnectionID {
+		t.Fatalf("reload changed participant connection id: got %s, want %s", secondState.Self.ConnectionID, firstState.Self.ConnectionID)
+	}
+
+	hub.mu.RLock()
+	count := len(hub.rooms[room.ID].clients)
+	hub.mu.RUnlock()
+	if count != 1 {
+		t.Fatalf("expected exactly one active client after reload, got %d", count)
 	}
 }
 

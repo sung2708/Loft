@@ -68,7 +68,7 @@ export function reconnectDelay(retry: number, random = Math.random()): number {
 ```
 
 - **Max Retries**: 8 attempts over ~75 seconds before transitioning to `FAILED`.
-- **Duplicate Prevention**: If a client attempts to connect while an active session for the same user identity exists, the server returns `error: DUPLICATE_SESSION` and closes the new connection to prevent multi-tab state corruption.
+- **Duplicate Prevention**: A reload retains its per-tab session ID, so its new connection atomically replaces the prior active connection. A different tab has a different ID and receives `error: DUPLICATE_SESSION`, preventing multi-tab state corruption.
 
 ---
 

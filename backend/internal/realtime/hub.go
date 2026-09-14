@@ -36,8 +36,9 @@ type Envelope struct {
 }
 
 type authPayload struct {
-	Token  string `json:"token"`
-	RoomID string `json:"room_id"`
+	Token        string `json:"token"`
+	RoomID       string `json:"room_id"`
+	TabSessionID string `json:"tab_session_id"`
 }
 type pingPayload struct {
 	ClientTime int64 `json:"client_time"`
@@ -78,6 +79,7 @@ type errorPayload struct {
 type client struct {
 	joinError      string
 	id             string
+	tabSessionID   string
 	roomID         string
 	identity       domain.Identity
 	participant    domain.Participant
@@ -90,6 +92,7 @@ type client struct {
 	isReconnect    bool
 	generation     uint64
 	graceTimer     *time.Timer
+	replaced       *client
 }
 
 type roomState struct {
@@ -305,7 +308,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(maxEventBytes)
 	defer conn.CloseNow()
 
-	identity, room, err := h.authenticate(ctx, conn)
+	identity, room, tabSessionID, err := h.authenticate(ctx, conn)
 	if err != nil {
 		_ = conn.Close(websocket.StatusPolicyViolation, "authentication failed")
 		return
@@ -323,7 +326,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		role = "host"
 	}
 	c := &client{
-		id: uuid.NewString(), roomID: room.ID, identity: identity, conn: conn, send: make(chan []byte, outboundCapacity), chatTokens: make(chan struct{}, 5), reactionTokens: make(chan struct{}, 4),
+		id: uuid.NewString(), tabSessionID: tabSessionID, roomID: room.ID, identity: identity, conn: conn, send: make(chan []byte, outboundCapacity), chatTokens: make(chan struct{}, 5), reactionTokens: make(chan struct{}, 4),
 		participant: domain.Participant{ConnectionID: "", IdentityID: identity.ID, IdentityType: identity.Type, DisplayName: identity.DisplayName, AvatarURL: identity.AvatarURL, Role: role, LiveKitIdentity: identity.LiveKitIdentity(), JoinedAt: time.Now().UTC()},
 	}
 	c.participant.ConnectionID = c.id
@@ -333,6 +336,9 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Write(writeCtx, websocket.MessageText, event("error", room.ID, errorPayload{c.joinError, "Room admission denied"}))
 		stop()
 		return
+	}
+	if c.replaced != nil {
+		_ = c.replaced.conn.CloseNow()
 	}
 	h.connectionsAccepted.Add(1)
 	defer h.remove(c)
@@ -364,29 +370,29 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Hub) authenticate(ctx context.Context, conn *websocket.Conn) (domain.Identity, domain.Room, error) {
+func (h *Hub) authenticate(ctx context.Context, conn *websocket.Conn) (domain.Identity, domain.Room, string, error) {
 	authCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	var envelope Envelope
 	if err := wsjson.Read(authCtx, conn, &envelope); err != nil || envelope.Type != "connection.auth" || envelope.Version != protocolVersion {
-		return domain.Identity{}, domain.Room{}, domain.ErrUnauthorized
+		return domain.Identity{}, domain.Room{}, "", domain.ErrUnauthorized
 	}
 	var payload authPayload
 	if err := json.Unmarshal(envelope.Payload, &payload); err != nil || payload.Token == "" || payload.RoomID == "" {
-		return domain.Identity{}, domain.Room{}, domain.ErrUnauthorized
+		return domain.Identity{}, domain.Room{}, "", domain.ErrUnauthorized
 	}
 	identity, err := h.guests.Verify(payload.Token)
 	if err != nil {
 		identity, err = h.users.Verify(authCtx, payload.Token)
 	}
 	if err != nil {
-		return domain.Identity{}, domain.Room{}, err
+		return domain.Identity{}, domain.Room{}, "", err
 	}
 	room, err := h.store.GetRoom(authCtx, payload.RoomID)
 	if err != nil || !domain.CanJoin(room, identity) {
-		return domain.Identity{}, domain.Room{}, domain.ErrUnauthorized
+		return domain.Identity{}, domain.Room{}, "", domain.ErrUnauthorized
 	}
-	return identity, room, nil
+	return identity, room, payload.TabSessionID, nil
 }
 
 func (h *Hub) readPump(ctx context.Context, c *client) error {
@@ -603,8 +609,10 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 	for _, existing := range state.clients {
 		if existing.identity.ID == c.identity.ID && existing.identity.Type == c.identity.Type {
 			if !existing.disconnected {
-				c.joinError = "DUPLICATE_SESSION"
-				return nil, mediaState{}, false
+				if c.tabSessionID == "" || c.tabSessionID != existing.tabSessionID {
+					c.joinError = "DUPLICATE_SESSION"
+					return nil, mediaState{}, false
+				}
 			}
 			reconnectedFrom = existing
 			break
@@ -630,6 +638,9 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 		}
 		reconnectedFrom.generation++
 		delete(state.clients, reconnectedFrom.id)
+		if !reconnectedFrom.disconnected {
+			c.replaced = reconnectedFrom
+		}
 		c.participant.ConnectionID = reconnectedFrom.participant.ConnectionID
 		c.participant.JoinedAt = reconnectedFrom.participant.JoinedAt
 		c.participant.Role = reconnectedFrom.participant.Role

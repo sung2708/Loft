@@ -12,6 +12,20 @@ export function reconnectDelay(retry: number, random = Math.random()) {
   return base * (0.75 + random * 0.5);
 }
 
+function tabSessionID(roomId: string): string {
+  const key = `loft.room.tab-session.${roomId}`;
+  const navigation = performance.getEntriesByType("navigation")[0] as
+    | PerformanceNavigationTiming
+    | undefined;
+  const isReload = navigation?.type === "reload";
+  const saved = isReload ? sessionStorage.getItem(key) : null;
+  if (saved) return saved;
+
+  const id = crypto.randomUUID();
+  sessionStorage.setItem(key, id);
+  return id;
+}
+
 export class RoomSocket {
   private socket: WebSocket | null = null;
   private stopped = false;
@@ -23,10 +37,13 @@ export class RoomSocket {
   private deadline: ReturnType<typeof setTimeout> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private readonly tabSessionId: string;
   constructor(
     private credential: RoomCredential,
     private readonly callbacks: Callbacks,
-  ) {}
+  ) {
+    this.tabSessionId = tabSessionID(credential.roomId);
+  }
 
   async connect() {
     if (this.stopped) return;
@@ -57,6 +74,7 @@ export class RoomSocket {
           payload: {
             token: this.credential.token,
             room_id: this.credential.roomId,
+            tab_session_id: this.tabSessionId,
           },
         }),
       );
