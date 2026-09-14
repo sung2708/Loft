@@ -1,0 +1,19 @@
+import type { SVGProps } from "react";
+
+/** The Gather mark from loft-logo/logo-icon.svg, shared by all in-app brand placements. */
+export function LoftMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 100 100"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <path d="M36 15C40 10 46 8 51 12L65 22C70 26 70 32 65 36L55 44C52 46 48 46 45 44L34 36C29 32 30 25 36 15Z" />
+      <path d="M17 48C15 42 19 36 25 36L38 37C42 37 45 39 47 43L50 53C51 57 50 60 47 63L36 73C30 78 23 76 20 69L17 48Z" />
+      <path d="M59 48C62 44 66 43 70 44L80 49C87 52 88 60 83 66L70 80C65 85 57 83 54 77L49 66C47 62 48 59 51 56L59 48Z" />
+    </svg>
+  );
+}

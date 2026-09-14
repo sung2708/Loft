@@ -1,0 +1,63 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/joho/godotenv"
+
+	"loft/backend/internal/auth"
+	"loft/backend/internal/config"
+	"loft/backend/internal/httpapi"
+	"loft/backend/internal/livekit"
+	"loft/backend/internal/realtime"
+	"loft/backend/internal/store"
+)
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if err := godotenv.Load(".env"); err != nil && !os.IsNotExist(err) {
+		logger.Error("invalid .env file")
+		os.Exit(1)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	database, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("database initialization failed", "error", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+	users := auth.NewSupabaseVerifier(cfg.SupabaseURL, cfg.SupabaseAudience, cfg.SupabaseJWTSecret)
+	guests := auth.NewGuestTokens(cfg.GuestTokenSecret, cfg.GuestTokenTTL)
+	liveKitService := livekit.New(cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
+	hub := realtime.New(database, guests, users, cfg.FrontendOrigins, logger)
+	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, logger, hub)
+	server := &http.Server{Addr: cfg.Address, Handler: api.Routes(hub), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	go func() {
+		logger.Info("Loft API listening", "address", cfg.Address)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("server failed", "error", err)
+			stop()
+		}
+	}()
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+	if err := hub.Shutdown(shutdownCtx); err != nil {
+		logger.Error("websocket shutdown failed", "error", err)
+	}
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful shutdown failed", "error", err)
+	}
+}

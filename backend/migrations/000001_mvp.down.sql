@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS room_members;
+DROP TABLE IF EXISTS rooms;
+DROP TABLE IF EXISTS profiles;
+DROP TYPE IF EXISTS room_role;
+DROP TYPE IF EXISTS identity_type;

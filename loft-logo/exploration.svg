@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" ><title>Loft five concept exploration</title><rect width="1200" height="360" fill="#FFFFFF"/><rect x="36" y="40" width="214" height="266" rx="10" fill="#F6F7F8"/><g transform="translate(78 75) scale(1.3)"><g fill="currentColor" color="#000000">
+      <path d="M17 27C17 20 24 16 30 19L42 27C47 31 49 36 49 43V57C49 64 47 69 42 73L30 81C24 84 17 80 17 73V27Z"/>
+      <path d="M83 27C83 20 76 16 70 19L58 27C53 31 51 36 51 43V57C51 64 53 69 58 73L70 81C76 84 83 80 83 73V27Z"/>
+    </g></g><text x="58" y="247" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600" fill="#000000">01  CONVERGE</text><rect x="271" y="40" width="214" height="266" rx="10" fill="#F6F7F8"/><g transform="translate(313 75) scale(1.3)"><g fill="currentColor" color="#000000">
+      <path d="M32 19C41 14 53 13 64 17" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round"/>
+      <path d="M79 37C84 48 82 61 73 70" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round"/>
+      <path d="M56 81C43 85 30 79 23 68" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round"/>
+    </g></g><text x="293" y="247" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600" fill="#000000">02  ORBIT</text><rect x="506" y="40" width="214" height="266" rx="10" fill="#F6F7F8"/><g transform="translate(548 75) scale(1.3)"><g fill="currentColor" color="#000000">
+      <path d="M15 57C15 51 20 47 26 48C42 52 56 49 66 37C70 32 77 32 81 36C86 41 84 48 80 53C65 72 46 77 21 69C17 68 15 63 15 57Z"/>
+      <path d="M31 25C31 21 35 18 39 18C47 19 55 17 62 13C67 10 73 12 75 17C77 22 75 27 70 30C59 37 46 39 36 35C33 34 31 30 31 25Z"/>
+    </g></g><text x="528" y="247" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600" fill="#000000">03  ECHO</text><rect x="741" y="40" width="214" height="266" rx="10" fill="#F6F7F8"/><g transform="translate(783 75) scale(1.3)"><g fill="currentColor" color="#000000">
+      <path d="M17 29C17 23 22 18 28 18H54C62 18 68 24 68 32V48C68 55 62 61 54 61H28C22 61 17 56 17 50V29Z"/>
+      <path d="M32 52C32 45 38 39 45 39H72C78 39 83 44 83 50V71C83 77 78 82 72 82H46C38 82 32 76 32 68V52Z"/>
+    </g></g><text x="763" y="247" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600" fill="#000000">04  OVERLAP</text><rect x="976" y="40" width="214" height="266" rx="10" fill="#F6F7F8"/><g transform="translate(1018 75) scale(1.3)"><g fill="currentColor" color="#000000">
+      <path d="M36 15C40 10 46 8 51 12L65 22C70 26 70 32 65 36L55 44C52 46 48 46 45 44L34 36C29 32 30 25 36 15Z"/>
+      <path d="M17 48C15 42 19 36 25 36L38 37C42 37 45 39 47 43L50 53C51 57 50 60 47 63L36 73C30 78 23 76 20 69L17 48Z"/>
+      <path d="M59 48C62 44 66 43 70 44L80 49C87 52 88 60 83 66L70 80C65 85 57 83 54 77L49 66C47 62 48 59 51 56L59 48Z"/>
+    </g></g><text x="998" y="247" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600" fill="#000000">05  GATHER</text></svg>
