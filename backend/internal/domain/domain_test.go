@@ -35,6 +35,16 @@ func TestGuestScope(t *testing.T) {
 	}
 }
 
+func TestRoomAccessOwnership(t *testing.T) {
+	room := Room{ID: "room-1", OwnerID: "owner"}
+	if !CanManageRoomAccess(room, Identity{Type: IdentityUser, ID: "owner"}) {
+		t.Fatal("owner cannot manage room access")
+	}
+	if CanManageRoomAccess(room, Identity{Type: IdentityUser, ID: "other"}) || CanManageRoomAccess(room, Identity{Type: IdentityGuest, ID: "owner"}) {
+		t.Fatal("non-owner can manage room access")
+	}
+}
+
 func TestDeleteRoomPermission(t *testing.T) {
 	room := Room{OwnerID: "owner"}
 	if !CanDeleteRoom(room, Identity{Type: IdentityUser, ID: "owner"}) {

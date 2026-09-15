@@ -46,6 +46,11 @@ To avoid database bottlenecks while ensuring zero data loss and deterministic sy
 | **Media Tracks** | Audio, camera, screen-share tracks, mute states | **LiveKit SFU** | `@livekit/components-react` | Ephemeral WebRTC session. Closed on disconnect. |
 | **UI & Preferences**| Active drawer, camera effects, volume slider, draft messages | **Client Zustand** | `sessionStorage` / `localStorage` | Never transmitted to or stored on server. |
 
+Persistent room access policy (`allow_guests`, `password_required`, `is_locked`, and `version`) is
+durable PostgreSQL state. A password verifier is server-only and is never placed in snapshots or
+client payloads. Presence, reconnect sessions, and in-memory eviction remain ephemeral; an empty
+room or browser disconnect never deletes durable room metadata.
+
 ---
 
 ## 3. Canonical Room State Struct (Go Backend)

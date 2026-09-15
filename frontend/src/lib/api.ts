@@ -61,7 +61,7 @@ export const api = {
     ),
   room: (id: string) =>
     request<ApiRoomPreview>(`/api/v1/rooms/${encodeURIComponent(id)}`),
-  createGuest: (id: string, displayName: string) =>
+  createGuest: (id: string, displayName: string, password = "") =>
     request<{
       token: string;
       guest_id: string;
@@ -69,7 +69,7 @@ export const api = {
       room_id: string;
     }>(`/api/v1/rooms/${encodeURIComponent(id)}/guest-session`, {
       method: "POST",
-      body: JSON.stringify({ display_name: displayName }),
+      body: JSON.stringify({ display_name: displayName, password }),
     }),
   me: (token: string) => request<ApiIdentity>("/api/v1/users/me", {}, token),
   rooms: (token: string) =>
@@ -85,6 +85,8 @@ export const api = {
     ),
   deleteRoom: (token: string, id: string) =>
     request<void>(`/api/v1/rooms/${encodeURIComponent(id)}`, { method: "DELETE" }, token),
+  updateRoom: (token: string, id: string, input: { expected_version: number; name: string; allow_guests: boolean; password_enabled: boolean; password?: string; locked: boolean }) =>
+    request<ApiRoom>(`/api/v1/rooms/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }, token),
   messages: (id: string, credential: RoomCredential) =>
     request<{ messages: ApiMessage[] }>(
       `/api/v1/rooms/${encodeURIComponent(id)}/messages`,

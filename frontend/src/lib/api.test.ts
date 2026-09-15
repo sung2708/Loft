@@ -27,3 +27,16 @@ describe("delete room API", () => {
     }
   });
 });
+
+describe("room access API", () => {
+  it("sends versioned owner settings without exposing response secrets", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "room", password_required: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.updateRoom("owner-token", "room", { expected_version: 2, name: "Coding", allow_guests: true, password_enabled: true, password: "secret", locked: false });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/v1/rooms/room");
+    expect(init.method).toBe("PATCH");
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer owner-token");
+    expect(JSON.parse(String(init.body))).toMatchObject({ expected_version: 2, password: "secret" });
+  });
+});

@@ -81,4 +81,16 @@ describe("room socket recovery", () => {
     expect(onState).toHaveBeenLastCalledWith("FAILED", "You were removed from this room");
     expect(socket.send("chat.send", {})).toBe(false);
   });
+
+  it("delivers safe access policy events while preserving snapshot reconnect", async () => {
+    const onEvent = vi.fn();
+    const socket = new RoomSocket(credential, { onEvent, onState: vi.fn() });
+    await socket.connect();
+    const active = TestSocket.instances[0];
+    active.onopen?.();
+    active.receive("room.snapshot", { room: { password_required: true, is_locked: false, version: 3 } });
+    active.receive("room.access_changed", { password_required: true, is_locked: true, version: 4 });
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "room.access_changed" }));
+    socket.close();
+  });
 });

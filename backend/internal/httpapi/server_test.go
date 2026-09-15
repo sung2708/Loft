@@ -166,6 +166,24 @@ func TestGuestSessionRejectsLockedRoom(t *testing.T) {
 	}
 }
 
+func TestGuestSessionRejectsInvalidRoomPassword(t *testing.T) {
+	const roomID = "58bb9fe4-79bc-41c7-9d63-61c04815b668"
+	verifier, err := auth.HashRoomPassword("correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{room: domain.Room{ID: roomID, AllowGuests: true, PasswordRequired: true, PasswordVerifier: verifier}}
+	secret := "12345678901234567890123456789012"
+	server := New(store, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/rooms/"+roomID+"/guest-session", strings.NewReader(`{"display_name":"Guest","password":"wrong"}`))
+	request.RemoteAddr = "127.0.0.1:1005"
+	result := httptest.NewRecorder()
+	server.Routes(http.NotFoundHandler()).ServeHTTP(result, request)
+	if result.Code != http.StatusForbidden || !strings.Contains(result.Body.String(), `"code":"INVALID_ROOM_PASSWORD"`) {
+		t.Fatalf("invalid password was not rejected: %d %s", result.Code, result.Body.String())
+	}
+}
+
 func TestWebSocketRouteDoesNotInheritHTTPTimeout(t *testing.T) {
 	secret := "12345678901234567890123456789012"
 	server := New(new(fakeStore), auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))

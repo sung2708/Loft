@@ -38,15 +38,25 @@ type Identity struct {
 func (i Identity) LiveKitIdentity() string { return string(i.Type) + ":" + i.ID }
 
 type Room struct {
-	ID              string    `json:"id"`
-	Slug            string    `json:"slug"`
-	Name            string    `json:"name"`
-	OwnerID         string    `json:"owner_id"`
-	AllowGuests     bool      `json:"allow_guests"`
-	MaxParticipants int       `json:"max_participants"`
-	IsLocked        bool      `json:"is_locked"`
-	Version         int64     `json:"version"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	Slug             string    `json:"slug"`
+	Name             string    `json:"name"`
+	OwnerID          string    `json:"owner_id"`
+	AllowGuests      bool      `json:"allow_guests"`
+	MaxParticipants  int       `json:"max_participants"`
+	IsLocked         bool      `json:"is_locked"`
+	Version          int64     `json:"version"`
+	PasswordRequired bool      `json:"password_required"`
+	PasswordVerifier string    `json:"-"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type RoomAccessUpdate struct {
+	Name            string
+	AllowGuests     bool
+	PasswordEnabled bool
+	Password        string
+	Locked          bool
 }
 
 // GovernanceStore persists room admission rules. Realtime authority keeps a
@@ -55,6 +65,10 @@ type GovernanceStore interface {
 	SetRoomLocked(context.Context, string, string, int64, bool) (Room, error)
 	BanIdentity(context.Context, string, string, Identity) error
 	IsBanned(context.Context, string, Identity) (bool, error)
+}
+
+type RoomAccessStore interface {
+	UpdateRoomAccess(context.Context, string, string, int64, RoomAccessUpdate) (Room, error)
 }
 
 type Participant struct {
@@ -146,6 +160,10 @@ func ValidateMessage(value string) (string, error) {
 
 func CanJoin(room Room, identity Identity) bool {
 	return identity.Type == IdentityUser || (identity.Type == IdentityGuest && room.AllowGuests && identity.RoomID == room.ID)
+}
+
+func CanManageRoomAccess(room Room, identity Identity) bool {
+	return identity.Type == IdentityUser && identity.ID != "" && identity.ID == room.OwnerID
 }
 
 func CanControlMedia(room Room, identity Identity) bool {

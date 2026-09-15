@@ -38,7 +38,7 @@ func TestReleaseMigrationInIsolatedSchema(t *testing.T) {
 	if _, err := tx.Exec(ctx, "SET LOCAL search_path TO "+schema+", public, extensions"); err != nil {
 		t.Fatal("cannot set isolated search path")
 	}
-	for _, name := range []string{"000001_mvp.up.sql", "000002_governance.up.sql", "000003_short_room_codes.up.sql"} {
+	for _, name := range []string{"000001_mvp.up.sql", "000002_governance.up.sql", "000003_short_room_codes.up.sql", "000004_room_access.up.sql"} {
 		migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))
 		if err != nil {
 			t.Fatal(err)

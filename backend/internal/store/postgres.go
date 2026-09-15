@@ -56,8 +56,8 @@ func (p *Postgres) createRoom(ctx context.Context, params domain.CreateRoomParam
 	defer func() { _ = tx.Rollback(ctx) }()
 	var room domain.Room
 	err = tx.QueryRow(ctx, `INSERT INTO rooms (name, owner_id, allow_guests)
-		VALUES ($1, $2, $3) RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, created_at`,
-		params.Name, params.Owner.ID, params.AllowGuests).Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.CreatedAt)
+		VALUES ($1, $2, $3) RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, created_at`,
+		params.Name, params.Owner.ID, params.AllowGuests).Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.CreatedAt)
 	if err != nil {
 		return domain.Room{}, err
 	}
@@ -77,9 +77,9 @@ func isUniqueViolation(err error) bool {
 
 func (p *Postgres) GetRoom(ctx context.Context, identifier string) (domain.Room, error) {
 	var room domain.Room
-	err := p.pool.QueryRow(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, created_at
+	err := p.pool.QueryRow(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, password_verifier, created_at
 		FROM rooms WHERE id::text = $1 OR short_code = $1 OR invite_code = $1`, identifier).Scan(
-		&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.CreatedAt)
+		&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.PasswordVerifier, &room.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Room{}, domain.ErrNotFound
 	}
@@ -87,7 +87,7 @@ func (p *Postgres) GetRoom(ctx context.Context, identifier string) (domain.Room,
 }
 
 func (p *Postgres) ListOwnedRooms(ctx context.Context, userID string) ([]domain.Room, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, created_at
+	rows, err := p.pool.Query(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, created_at
 		FROM rooms WHERE owner_id = $1 ORDER BY updated_at DESC LIMIT 50`, userID)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func (p *Postgres) ListOwnedRooms(ctx context.Context, userID string) ([]domain.
 	rooms := make([]domain.Room, 0)
 	for rows.Next() {
 		var room domain.Room
-		if err := rows.Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.CreatedAt); err != nil {
+		if err := rows.Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.CreatedAt); err != nil {
 			return nil, err
 		}
 		rooms = append(rooms, room)
@@ -108,8 +108,26 @@ func (p *Postgres) SetRoomLocked(ctx context.Context, roomID, ownerID string, ex
 	var room domain.Room
 	err := p.pool.QueryRow(ctx, `UPDATE rooms SET is_locked = $4, version = version + 1, updated_at = NOW()
 		WHERE id = $1::uuid AND owner_id = $2::uuid AND version = $3
-		RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, created_at`,
-		roomID, ownerID, expectedVersion, locked).Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.CreatedAt)
+		RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, created_at`,
+		roomID, ownerID, expectedVersion, locked).Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Room{}, domain.ErrConflict
+	}
+	return room, err
+}
+
+func (p *Postgres) UpdateRoomAccess(ctx context.Context, roomID, ownerID string, expectedVersion int64, update domain.RoomAccessUpdate) (domain.Room, error) {
+	var room domain.Room
+	var verifier *string
+	if update.PasswordEnabled {
+		verifier = &update.Password
+	}
+	err := p.pool.QueryRow(ctx, `UPDATE rooms SET name=$4, allow_guests=$5, is_locked=$6,
+		password_required=$7, password_verifier=$8, version=version+1, updated_at=NOW()
+		WHERE id=$1::uuid AND owner_id=$2::uuid AND version=$3
+		RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, created_at`,
+		roomID, ownerID, expectedVersion, update.Name, update.AllowGuests, update.Locked, update.PasswordEnabled, verifier).
+		Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Room{}, domain.ErrConflict
 	}

@@ -24,18 +24,19 @@ import (
 )
 
 type Server struct {
-	store        domain.Store
-	deletion     RoomDeletionGuard
-	users        *auth.SupabaseVerifier
-	guests       *auth.GuestTokens
-	livekit      *livekit.TokenService
-	lookupLimit  *ratelimit.Limiter
-	guestLimit   *ratelimit.Limiter
-	roomLimit    *ratelimit.Limiter
-	origins      map[string]struct{}
-	logger       *slog.Logger
-	httpRequests atomic.Uint64
-	httpDuration telemetry.DurationHistogram
+	store         domain.Store
+	deletion      RoomDeletionGuard
+	users         *auth.SupabaseVerifier
+	guests        *auth.GuestTokens
+	livekit       *livekit.TokenService
+	lookupLimit   *ratelimit.Limiter
+	guestLimit    *ratelimit.Limiter
+	passwordLimit *ratelimit.Limiter
+	roomLimit     *ratelimit.Limiter
+	origins       map[string]struct{}
+	logger        *slog.Logger
+	httpRequests  atomic.Uint64
+	httpDuration  telemetry.DurationHistogram
 }
 
 type RoomDeletionGuard interface {
@@ -48,16 +49,17 @@ type mediaAdmissionGuard interface {
 type metricsProvider interface{ PrometheusMetrics() string }
 
 type roomPreview struct {
-	ID              string `json:"id"`
-	Slug            string `json:"slug"`
-	Name            string `json:"name"`
-	AllowGuests     bool   `json:"allow_guests"`
-	MaxParticipants int    `json:"max_participants"`
-	IsLocked        bool   `json:"is_locked"`
+	ID               string `json:"id"`
+	Slug             string `json:"slug"`
+	Name             string `json:"name"`
+	AllowGuests      bool   `json:"allow_guests"`
+	MaxParticipants  int    `json:"max_participants"`
+	IsLocked         bool   `json:"is_locked"`
+	PasswordRequired bool   `json:"password_required"`
 }
 
 func preview(room domain.Room) roomPreview {
-	return roomPreview{ID: room.ID, Slug: room.Slug, Name: room.Name, AllowGuests: room.AllowGuests, MaxParticipants: room.MaxParticipants, IsLocked: room.IsLocked}
+	return roomPreview{ID: room.ID, Slug: room.Slug, Name: room.Name, AllowGuests: room.AllowGuests, MaxParticipants: room.MaxParticipants, IsLocked: room.IsLocked, PasswordRequired: room.PasswordRequired}
 }
 
 func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTokens, livekitService *livekit.TokenService, origins []string, logger *slog.Logger, deletion ...RoomDeletionGuard) *Server {
@@ -73,7 +75,7 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		guard = deletion[0]
 	}
 	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger}
+		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger}
 }
 
 // ConfigureDistributedRateLimits shares abuse budgets across backend nodes.
@@ -81,6 +83,7 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
 	s.lookupLimit.SetDistributed("room_lookup", remote)
 	s.guestLimit.SetDistributed("guest_session", remote)
+	s.passwordLimit.SetDistributed("room_password", remote)
 	s.roomLimit.SetDistributed("room_create", remote)
 }
 
@@ -102,6 +105,7 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 			r.Get("/rooms/resolve", s.resolveRoom)
 			r.Get("/rooms/{roomID}", s.getRoom)
 			r.Post("/rooms/{roomID}/guest-session", s.guestSession)
+			r.Patch("/rooms/{roomID}", s.updateRoom)
 			r.Get("/rooms/{roomID}/messages", s.messages)
 			r.Post("/rooms/{roomID}/livekit-token", s.liveKitToken)
 			r.Get("/users/me", s.me)
@@ -252,6 +256,7 @@ func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		DisplayName string `json:"display_name"`
+		Password    string `json:"password"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -261,12 +266,87 @@ func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_DISPLAY_NAME", "Display name must be 2–48 characters")
 		return
 	}
+	if room.PasswordRequired {
+		if !s.passwordLimit.AllowContext(r.Context(), clientIP(r)+":"+room.ID) {
+			writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Please wait a moment before trying again")
+			return
+		}
+		if !auth.VerifyRoomPassword(input.Password, room.PasswordVerifier) {
+			writeError(w, http.StatusForbidden, "INVALID_ROOM_PASSWORD", "That password doesn't look right. Try again.")
+			return
+		}
+	}
 	token, identity, expiresAt, err := s.guests.Issue(room.ID, name)
 	if err != nil {
 		s.internal(w, r, "issue guest token", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "guest_id": identity.ID, "display_name": name, "room_id": room.ID, "expires_at": expiresAt})
+}
+
+func (s *Server) updateRoom(w http.ResponseWriter, r *http.Request) {
+	identity, err := s.authenticatedUser(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+	accessStore, ok := s.store.(domain.RoomAccessStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room settings are temporarily unavailable")
+		return
+	}
+	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "This room isn't available.")
+		return
+	}
+	if err != nil {
+		s.internal(w, r, "get room for update", err)
+		return
+	}
+	if !domain.CanManageRoomAccess(room, identity) {
+		writeError(w, http.StatusForbidden, "ROOM_ACCESS_DENIED", "You cannot change this room's settings")
+		return
+	}
+	var input struct {
+		ExpectedVersion int64  `json:"expected_version"`
+		Name            string `json:"name"`
+		AllowGuests     bool   `json:"allow_guests"`
+		PasswordEnabled bool   `json:"password_enabled"`
+		Password        string `json:"password"`
+		Locked          bool   `json:"locked"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	name, err := domain.ValidateRoomName(input.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ROOM_NAME", "Room name must be 2–80 characters")
+		return
+	}
+	verifier := ""
+	if input.PasswordEnabled {
+		if strings.TrimSpace(input.Password) == "" && room.PasswordRequired {
+			verifier = room.PasswordVerifier
+		} else {
+			verifier, err = auth.HashRoomPassword(input.Password)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_ROOM_PASSWORD", "Room password must be at least 4 characters")
+				return
+			}
+		}
+	}
+	updated, err := accessStore.UpdateRoomAccess(r.Context(), room.ID, identity.ID, input.ExpectedVersion, domain.RoomAccessUpdate{Name: name, AllowGuests: input.AllowGuests, PasswordEnabled: input.PasswordEnabled, Password: verifier, Locked: input.Locked})
+	if errors.Is(err, domain.ErrConflict) {
+		writeError(w, http.StatusConflict, "ROOM_VERSION_CONFLICT", "Room settings changed. Refresh and try again.")
+		return
+	}
+	if err != nil {
+		s.internal(w, r, "update room access", err)
+		return
+	}
+	s.logger.Info("room access changed", "request_id", middleware.GetReqID(r.Context()), "room_id", room.ID, "password_required", updated.PasswordRequired, "locked", updated.IsLocked)
+	writeJSON(w, http.StatusOK, preview(updated))
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {

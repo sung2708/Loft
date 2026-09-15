@@ -99,4 +99,8 @@ var redactedKeys = map[string]bool{
     "authorization": true, "livekit_token": true,
 }
 ```
+
+Room passwords are accepted only during the server-side guest admission flow. They are stored only
+as a one-way verifier, never included in invite URLs, room previews, snapshots, logs, or metrics.
+Failed password attempts use bounded temporary rate limits and return generic user-facing errors.
 Any logged attribute matching these keys is replaced with `"[REDACTED]"`.
