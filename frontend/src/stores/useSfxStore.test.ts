@@ -8,12 +8,12 @@ describe("SFX preferences", () => {
       getItem() { return stored; },
       setItem(_key: string, value: string) { stored = value; },
     });
-    useSfxStore.setState({ soundEffectsEnabled: true, roomSoundsEnabled: true, volume: 60, hydrated: false });
+    useSfxStore.setState({ soundEffectsEnabled: true, roomSoundsEnabled: true, volume: 80, hydrated: false });
   });
 
   it("uses safe defaults and clamps volume", () => {
     useSfxStore.getState().hydrate();
-    expect(useSfxStore.getState()).toMatchObject({ soundEffectsEnabled: true, roomSoundsEnabled: true, volume: 60 });
+    expect(useSfxStore.getState()).toMatchObject({ soundEffectsEnabled: true, roomSoundsEnabled: true, volume: 80 });
     useSfxStore.getState().setVolume(140);
     expect(useSfxStore.getState().volume).toBe(100);
   });

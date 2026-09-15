@@ -10,21 +10,21 @@ export type SfxCue =
 type SfxCategory = "ui" | "room";
 
 export const sfxManifest: Record<SfxCue, { src: string; category: SfxCategory; gain: number }> = {
-  mute: { src: "/sfx/mute.wav", category: "ui", gain: 0.5 },
-  unmute: { src: "/sfx/unmute.wav", category: "ui", gain: 0.5 },
-  "camera-on": { src: "/sfx/cam-on.wav", category: "ui", gain: 0.45 },
-  "camera-off": { src: "/sfx/cam-off.wav", category: "ui", gain: 0.45 },
-  "screen-start": { src: "/sfx/screen-start.wav", category: "ui", gain: 0.45 },
-  "screen-end": { src: "/sfx/screen-end.wav", category: "ui", gain: 0.45 },
-  error: { src: "/sfx/error.wav", category: "ui", gain: 0.35 },
-  "room-enter": { src: "/sfx/room-enter.wav", category: "room", gain: 0.4 },
-  "participant-join": { src: "/sfx/participant-join.wav", category: "room", gain: 0.35 },
-  "participant-leave": { src: "/sfx/participant-leave.wav", category: "room", gain: 0.3 },
-  reconnect: { src: "/sfx/reconnect.wav", category: "room", gain: 0.35 },
-  disconnect: { src: "/sfx/disconnect.wav", category: "room", gain: 0.3 },
-  "remove-from-room": { src: "/sfx/remove-from-room.wav", category: "room", gain: 0.35 },
-  "host-transfer": { src: "/sfx/host-transfer.wav", category: "room", gain: 0.3 },
-  "raise-hand": { src: "/sfx/raise-hand.wav", category: "room", gain: 0.3 },
+  mute: { src: "/sfx/mute.wav", category: "ui", gain: 0.9 },
+  unmute: { src: "/sfx/unmute.wav", category: "ui", gain: 0.9 },
+  "camera-on": { src: "/sfx/cam-on.wav", category: "ui", gain: 0.85 },
+  "camera-off": { src: "/sfx/cam-off.wav", category: "ui", gain: 0.85 },
+  "screen-start": { src: "/sfx/screen-start.wav", category: "ui", gain: 0.85 },
+  "screen-end": { src: "/sfx/screen-end.wav", category: "ui", gain: 0.85 },
+  error: { src: "/sfx/error.wav", category: "ui", gain: 0.8 },
+  "room-enter": { src: "/sfx/room-enter.wav", category: "room", gain: 0.85 },
+  "participant-join": { src: "/sfx/participant-join.wav", category: "room", gain: 0.8 },
+  "participant-leave": { src: "/sfx/participant-leave.wav", category: "room", gain: 0.75 },
+  reconnect: { src: "/sfx/reconnect.wav", category: "room", gain: 0.8 },
+  disconnect: { src: "/sfx/disconnect.wav", category: "room", gain: 0.75 },
+  "remove-from-room": { src: "/sfx/remove-from-room.wav", category: "room", gain: 0.8 },
+  "host-transfer": { src: "/sfx/host-transfer.wav", category: "room", gain: 0.8 },
+  "raise-hand": { src: "/sfx/raise-hand.wav", category: "room", gain: 0.8 },
 };
 
 type AudioLike = {

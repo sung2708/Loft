@@ -105,7 +105,7 @@ export function MusicDrawer({
   const [url, setUrl] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [activated, setActivated] = useState(false);
-  const [volume, setVolume] = useState(60);
+  const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [duration, setDuration] = useState(0);

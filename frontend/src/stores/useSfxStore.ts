@@ -21,7 +21,7 @@ interface SfxState extends SfxPreferences {
 const defaults: SfxPreferences = {
   soundEffectsEnabled: true,
   roomSoundsEnabled: true,
-  volume: 60,
+  volume: 80,
 };
 
 const clampVolume = (value: number) =>
