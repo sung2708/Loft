@@ -40,6 +40,7 @@ export default function RoomJoinPage() {
   );
   const [room, setRoom] = useState<ApiRoomPreview | null>(null);
   const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hasSession, setHasSession] = useState(false);
 
@@ -80,7 +81,7 @@ export default function RoomJoinPage() {
     setJoinStep("connecting");
     setError(null);
     try {
-      const guest = await api.createGuest(room.id, name || l("Guest", "Khách"));
+      const guest = await api.createGuest(room.id, name || l("Guest", "Khách"), password);
       saveCredential(room.id, {
         token: guest.token,
         type: "guest",
@@ -250,7 +251,7 @@ export default function RoomJoinPage() {
                   <span className="text-xs sm:text-sm text-[var(--text-loft-primary)] flex items-center gap-1.5">
                     {l("Host identity", "Danh tính chủ phòng")}{" "}
                     <span className="font-semibold text-[#0066CC]">
-                      {l("verified by Loft", "được Loft xác minh")}
+                      {l("verified by Mingly", "được Mingly xác minh")}
                     </span>
                     <BadgeCheck className="w-4 h-4 text-[#0066CC]" />
                   </span>
@@ -331,6 +332,18 @@ export default function RoomJoinPage() {
                   className="w-full h-11 px-3.5 rounded-xl bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] outline-none focus:border-[#0066CC] text-sm"
                 />
               )}
+              {room?.password_required && (
+                <input
+                  type="password"
+                  value={password}
+                  maxLength={256}
+                  autoComplete="current-password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder={l("Room password", "Mật khẩu phòng")}
+                  aria-label={l("Room password", "Mật khẩu phòng")}
+                  className="w-full h-11 px-3.5 rounded-xl bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] outline-none focus:border-[#0066CC] text-sm"
+                />
+              )}
               {error && (
                 <p role="alert" className="text-xs text-[#FF3B30]">
                   {tr(error)}
@@ -401,7 +414,9 @@ export default function RoomJoinPage() {
 
               {/* Micro Helper Note */}
               <p className="text-center text-xs text-[var(--text-loft-muted)] pt-1">
-                {l("No password or signup required. You can choose your avatar and name next.", "Không cần mật khẩu hay đăng ký. Bạn có thể chọn ảnh đại diện và tên sau.")}
+                {room?.password_required
+                  ? l("Enter the room password to join. No account is required.", "Nhập mật khẩu phòng để tham gia. Không cần tài khoản.")
+                  : l("No password or signup required. You can choose your avatar and name next.", "Không cần mật khẩu hay đăng ký. Bạn có thể chọn ảnh đại diện và tên sau.")}
               </p>
             </div>
           </motion.div>
@@ -434,7 +449,7 @@ export default function RoomJoinPage() {
       <footer className="w-full bg-[var(--bg-loft-base)]/90 backdrop-blur-md py-2.5 border-t border-[var(--border-loft)]">
         <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-between text-[var(--text-loft-muted)] text-[11px] gap-1">
           <span>
-            {l("Loft • Realtime audio, video & screen share", "Loft • Đồng bộ âm thanh và hình ảnh trực tiếp")}
+            {l("Mingly • Realtime audio, video & screen share", "Mingly • Đồng bộ âm thanh và hình ảnh trực tiếp")}
           </span>
           <span>{l("v2.4 • Clean presence", "v2.4 • Kết nối tự nhiên")}</span>
         </div>

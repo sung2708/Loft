@@ -40,9 +40,22 @@ All configuration is parsed from environment variables at startup:
 | `LIVEKIT_URL` | LiveKit server WebRTC endpoint | No for chat-only local mode; required for media | `wss://loft.livekit.cloud` |
 | `LIVEKIT_API_KEY` | LiveKit server API key | Required for media | `APIKeyABC123` |
 | `LIVEKIT_API_SECRET` | LiveKit server API secret (Never sent to client) | Required for media | `SecretKeyXYZ789` |
-| `FRONTEND_ORIGINS` | Strict CORS and WebSocket origin allowlist | No | `https://loft.app` |
-| `NEXT_PUBLIC_SITE_URL` | Public frontend origin used for canonical and social link metadata | Yes for production previews | `https://loft.app` |
+| `FRONTEND_ORIGINS` | Strict CORS and WebSocket origin allowlist | No | `https://mingly.site,https://www.mingly.site` |
 | `INSTANCE_ID` | Stable per-node ID for Redis origin guards | No | `loft-prod-1` |
+| `NEXT_PUBLIC_SITE_URL` | Public frontend origin used for canonical and social link metadata | Yes for production previews | `https://mingly.site` |
+
+The legacy Vercel hostname `loft-amber.vercel.app` is redirected at the Vercel
+edge to `https://mingly.site` with a permanent redirect. The redirect matches
+that exact host only, preserves the request path and query string, and does not
+affect Vercel preview hosts or local development.
+
+For the production Render service, set the backend environment variable to:
+
+```text
+FRONTEND_ORIGINS=https://mingly.site,https://www.mingly.site
+```
+
+Restart or redeploy the Render service after changing this value.
 
 ### Social link previews
 

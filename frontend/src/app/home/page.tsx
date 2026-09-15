@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, LogOut, Users, X, Sparkles, Trash2 } from "lucide-react";
+import { Plus, LogOut, Users, X, Sparkles, Trash2, Settings2 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
@@ -9,6 +9,7 @@ import type { ApiIdentity, ApiRoom } from "@/types/api";
 import { LoftMark } from "@/components/brand/LoftMark";
 import { DeleteRoomDialog } from "@/components/room/DeleteRoomDialog";
 import { useUIText } from "@/lib/i18n/uiText";
+import { RoomSettings } from "@/components/room/RoomSettings";
 
 export default function HomePage() {
   const tr = useUIText();
@@ -21,6 +22,8 @@ export default function HomePage() {
   const [deletingRoom, setDeletingRoom] = useState<ApiRoom | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [settingsRoom, setSettingsRoom] = useState<ApiRoom | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -29,6 +32,7 @@ export default function HomePage() {
         location.replace("/");
         return;
       }
+      setAccessToken(session.access_token);
       try {
         const [me, list] = await Promise.all([
           api.me(session.access_token),
@@ -89,7 +93,7 @@ export default function HomePage() {
       <nav className="h-16 max-w-5xl mx-auto px-5 flex items-center justify-between border-b border-[var(--border-loft)]">
         <a href="/" className="text-lg flex items-center gap-2">
           <LoftMark className="w-8 h-8 shrink-0 text-[var(--brand-mark)]" />
-          <span className="loft-wordmark">Loft</span>
+          <span className="loft-wordmark">Mingly</span>
         </a>
         <div className="flex items-center gap-3">
           <button
@@ -143,11 +147,14 @@ export default function HomePage() {
                 <button type="button" onClick={() => { setError(null); setDeletingRoom(room); }} aria-label={`${locale === "vi" ? "Xóa phòng" : "Delete room"} ${room.name}`} title={locale === "vi" ? "Xóa phòng" : "Delete room"} className="w-9 h-9 rounded-lg flex items-center justify-center text-[var(--text-loft-muted)] hover:text-[#FF3B30] hover:bg-[#FF3B30]/10 focus-visible:outline-2 focus-visible:outline-[#FF3B30]">
                   <Trash2 className="w-4 h-4" />
                 </button>
+                <button type="button" onClick={() => setSettingsRoom(room)} aria-label={`${locale === "vi" ? "Cài đặt" : "Settings"} ${room.name}`} title={locale === "vi" ? "Cài đặt" : "Settings"} className="w-9 h-9 rounded-lg flex items-center justify-center text-[var(--text-loft-muted)] hover:text-[#0066CC] hover:bg-[#0066CC]/10 focus-visible:outline-2 focus-visible:outline-[#0066CC]"><Settings2 className="w-4 h-4" /></button>
               </div>
               <a href={`/room/${room.slug}`} className="block mt-4 rounded-lg focus-visible:outline-2 focus-visible:outline-[#0066CC]">
                 <h3 className="font-semibold">{room.name}</h3>
                 <p className="text-xs text-[var(--text-loft-muted)] mt-1">
                   {room.allow_guests ? t.lobby.guestAccessEnabled : t.lobby.signInRequired}
+                  {room.password_required && <span className="ml-2">· {locale === "vi" ? "Có mật khẩu" : "Password protected"}</span>}
+                  {room.is_locked && <span className="ml-2 text-amber-500">· {locale === "vi" ? "Đã khóa" : "Locked"}</span>}
                 </p>
               </a>
             </div>
@@ -162,6 +169,7 @@ export default function HomePage() {
         </div>
 
         <DeleteRoomDialog room={deletingRoom} locale={locale} pending={deleting} error={error} onCancel={() => { setDeletingRoom(null); setError(null); }} onConfirm={() => void remove()} />
+        {settingsRoom && accessToken && <RoomSettings room={settingsRoom} token={accessToken} locale={locale} onCancel={() => setSettingsRoom(null)} onSaved={(updated) => { setRooms(current => current.map(item => item.id === updated.id ? updated : item)); setSettingsRoom(null); }} />}
 
         {/* Modal: Create a Room with beautiful Shadcn Switch */}
         {creating && (

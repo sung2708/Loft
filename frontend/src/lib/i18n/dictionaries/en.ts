@@ -37,7 +37,7 @@ export const en: TranslationDictionary = {
     featureWebRTC: "Realtime audio & video",
     featureSessions: "Temporary sessions",
     featureNoInstall: "No install needed",
-    footerText: "Loft • Realtime hangouts for friends",
+    footerText: "Mingly • Realtime hangouts for friends",
     footerVersion: "v2.4 • Clean presence",
     roomsHostBadge: "Hosted by you",
   },

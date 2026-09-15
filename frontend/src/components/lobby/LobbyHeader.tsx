@@ -99,7 +99,7 @@ export const LobbyHeader: React.FC = () => {
         <Link href="/" className="flex items-center gap-2.5 group">
           <LoftMark className="w-8 h-8 shrink-0 text-[var(--brand-mark)] transition-transform group-hover:scale-105" />
           <span className="loft-wordmark text-lg text-[var(--text-loft-primary)] select-none">
-            Loft
+            Mingly
           </span>
           <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-loft-muted)] bg-[var(--border-loft)] px-2 py-0.5 rounded-full ml-1 select-none">
             Lobby

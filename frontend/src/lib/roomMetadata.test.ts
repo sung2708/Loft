@@ -20,25 +20,24 @@ describe("shared room metadata", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/v1/rooms/late-night");
-    expect(metadata.title).toEqual({ absolute: "Late Night · Loft" });
-    expect(metadata.description).toContain("shared space");
-    expect(metadata.openGraph?.title).toBe("Late Night · Loft");
-    expect(metadata.description).toBe("Late Night · Loft — a shared space to talk, watch, listen, and hang out together.");
+    expect(metadata.title).toEqual({ absolute: "Late Night · Mingly" });
+    expect(metadata.openGraph?.title).toBe("Late Night · Mingly");
+    expect(metadata.description).toBe("Room late-night on Mingly — Better when we’re together.");
     expect(metadata.twitter).toMatchObject({ card: "summary_large_image" });
-    expect(JSON.stringify(metadata)).not.toContain("late-night");
+    expect(JSON.stringify(metadata)).toContain("late-night");
     expect(metadata.twitter?.description).toBe(metadata.description);
   });
 
   it("uses generic metadata when the room cannot be resolved", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("API unavailable")));
     const metadata = await generateRoomMetadata("late-night");
-    expect(metadata.title).toEqual({ absolute: "Loft — We’re here together." });
+    expect(metadata.title).toEqual({ absolute: "Mingly — Better when we’re together." });
     expect(metadata.description).not.toContain("late-night");
   });
 
   it("falls back to the public ID when the room name is blank", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "K7M-4Q2", name: "  ", allow_guests: true }) }));
-    expect((await generateRoomMetadata("K7M-4Q2")).title).toEqual({ absolute: "Room K7M-4Q2 · Loft" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "private-id", slug: "K7M-4Q2", name: "  ", allow_guests: true }) }));
+    expect((await generateRoomMetadata("K7M-4Q2")).title).toEqual({ absolute: "Room K7M-4Q2 · Mingly" });
   });
 
   it.each([false, undefined])("does not expose rooms without explicit guest access (%s)", async (allow_guests) => {
@@ -51,7 +50,7 @@ describe("shared room metadata", () => {
     for (const sensitive of ["private-id", "Private name", "invite-secret", "supabase-user", "guest-token", "media-token"]) {
       expect(JSON.stringify(metadata)).not.toContain(sensitive);
     }
-    expect(metadata.openGraph?.title).toBe("Loft — We’re here together.");
+    expect(metadata.openGraph?.title).toBe("Mingly — Better when we’re together.");
   });
 
   it("rejects invalid identifiers before requesting the API", async () => {

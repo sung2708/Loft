@@ -37,7 +37,7 @@ export const vi: TranslationDictionary = {
     featureWebRTC: "Kết nối tức thì",
     featureSessions: "Phiên tạm thời",
     featureNoInstall: "Không cần cài đặt",
-    footerText: "Loft • Đồng bộ âm thanh và hình ảnh trực tiếp",
+    footerText: "Mingly • Đồng bộ âm thanh và hình ảnh trực tiếp",
     footerVersion: "v2.4 • Kết nối tự nhiên",
     roomsHostBadge: "Bạn làm chủ",
   },

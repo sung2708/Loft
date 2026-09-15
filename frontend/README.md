@@ -1,4 +1,4 @@
-# Loft frontend
+# Mingly frontend
 
 Next.js 16 App Router client for Loft MVP 1. See the repository [README](../README.md) for architecture, environment setup, migrations, external Supabase/Google/LiveKit configuration, and verification commands.
 

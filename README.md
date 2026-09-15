@@ -1,6 +1,6 @@
-# Loft MVP 2
+# Mingly MVP 2
 
-Loft is a realtime social room for small groups (2–12 people): guest invite joins, optional Google identity, persistent host-owned rooms, voice/video/screen sharing, presence, durable chat, and synchronized YouTube playback. Product goal: **we’re here together**.
+Mingly is a shared space to talk, watch, listen, and hang out with your people. It supports small-group guest invite joins, optional Google identity, persistent host-owned rooms, voice/video/screen sharing, presence, durable chat, and synchronized YouTube playback. Product goal: **Better when we’re together.**
 
 ## MVP 2 scope
 
@@ -46,7 +46,7 @@ Requirements: Node 24+, pnpm 11+, Go 1.26+, Supabase project, and LiveKit Cloud 
 
 1. Copy `frontend/.env.example` to `frontend/.env.local` and set public values.
 2. Copy `backend/.env.example` to `backend/.env` and set server values. `go run ./cmd/server` loads this file when run from `backend`; exported shell variables take precedence.
-3. Apply `backend/migrations/000001_mvp.up.sql`, `backend/migrations/000002_governance.up.sql`, and `backend/migrations/000003_short_room_codes.up.sql` through Supabase SQL Editor or your migration runner.
+3. Apply `backend/migrations/000001_mvp.up.sql`, `backend/migrations/000002_governance.up.sql`, `backend/migrations/000003_short_room_codes.up.sql`, and `backend/migrations/000004_room_access.up.sql` through Supabase SQL Editor or your migration runner.
 4. Start backend:
 
    ```powershell
@@ -114,6 +114,8 @@ go build ./...
 - 32 KiB HTTP and 16 KiB WebSocket payload limits; 2,000-rune chat limit
 - Parameterized SQL, bounded DB pool, distributed rate limits for connections, guest/room/chat/reaction/media operations
 - Structured logs without access, guest, or LiveKit tokens
+- Persistent room passwords are one-way verified before guest credentials are issued; password
+  material is never placed in invite URLs, previews, snapshots, logs, or metrics.
 - React text rendering only; user chat is never inserted as HTML
 
 ## Manual acceptance

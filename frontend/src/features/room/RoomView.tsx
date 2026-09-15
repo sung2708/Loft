@@ -108,7 +108,7 @@ function RoomLoading() {
       <div className="glass-card rounded-3xl p-8 text-center max-w-sm">
         <div className="w-10 h-10 rounded-full border-2 border-[#0066CC]/20 border-t-[#0066CC] animate-spin mx-auto mb-4" />
         <h2 className="font-semibold">
-          {tr(state === "FAILED" ? "Couldn’t join room" : "Opening your Loft…")}
+          {tr(state === "FAILED" ? "Couldn’t join room" : "Opening your Mingly room…")}
         </h2>
         <p className="text-sm text-[var(--text-loft-secondary)] mt-2">
           {tr(error ?? "Syncing current room state.")}
@@ -161,12 +161,12 @@ function RoomHeader() {
   return (
     <header className="h-14 px-3 sm:px-5 flex items-center justify-between gap-3 z-50 border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] backdrop-blur-xl">
       <div className="flex items-center gap-2.5 min-w-0">
-        <a href="/" aria-label={tr("Loft home")} className="shrink-0">
+        <a href="/" aria-label={tr("Mingly home")} className="shrink-0">
           <LoftMark className="w-8 h-8 text-[var(--brand-mark)]" />
         </a>
         <div className="min-w-0">
           <div className="text-sm font-semibold truncate">
-            {room?.name ?? "Loft"}
+            {room?.name ?? "Mingly"}
           </div>
           <div className="text-[10px] text-[var(--text-loft-muted)]">
             {count} {tr("present")} ·{" "}

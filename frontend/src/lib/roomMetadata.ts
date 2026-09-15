@@ -2,20 +2,20 @@ import type { Metadata } from "next";
 import type { ApiRoomPreview } from "@/types/api";
 
 const fallback: Metadata = {
-  title: { absolute: "Loft — We’re here together." },
-  description: "A shared space to talk, watch, listen, and hang out together.",
+  title: { absolute: "Mingly — Better when we’re together." },
+  description: "A shared space to talk, watch, listen, and hang out with your people.",
   robots: { index: false, follow: false },
   openGraph: {
-    title: "Loft — We’re here together.",
-    description: "A shared space to talk, watch, listen, and hang out together.",
-    siteName: "Loft",
+    title: "Mingly — Better when we’re together.",
+    description: "A shared space to talk, watch, listen, and hang out with your people.",
+    siteName: "Mingly",
     type: "website",
-    images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Loft" }],
+    images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Mingly" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Loft — We’re here together.",
-    description: "A shared space to talk, watch, listen, and hang out together.",
+    title: "Mingly — Better when we’re together.",
+    description: "A shared space to talk, watch, listen, and hang out with your people.",
     images: ["/apple-icon.png"],
   },
 };
@@ -23,7 +23,7 @@ const fallback: Metadata = {
 function isRoomPreview(value: unknown): value is ApiRoomPreview {
   if (!value || typeof value !== "object") return false;
   const room = value as Record<string, unknown>;
-  return typeof room.id === "string" && /^[a-zA-Z0-9-]{3,64}$/.test(room.id) &&
+  return typeof room.id === "string" && typeof room.slug === "string" && /^[a-zA-Z0-9-]{3,64}$/.test(room.slug) &&
     typeof room.name === "string" && typeof room.allow_guests === "boolean";
 }
 
@@ -42,8 +42,9 @@ export async function generateRoomMetadata(identifier: string): Promise<Metadata
 
     // id is the public room identifier exposed by the unauthenticated preview;
     // slug is the short invite code used by /join/{code} and /room/{code}.
-    const title = `${data.name.trim() || `Room ${data.id}`} · Loft`;
-    const description = `${title} — a shared space to talk, watch, listen, and hang out together.`;
+    const publicRoomId = data.slug;
+    const title = `${data.name.trim() || `Room ${publicRoomId}`} · Mingly`;
+    const description = `Room ${publicRoomId} on Mingly — Better when we’re together.`;
     return {
       title: { absolute: title },
       description,
@@ -51,8 +52,8 @@ export async function generateRoomMetadata(identifier: string): Promise<Metadata
         title,
         description,
         type: "website",
-        siteName: "Loft",
-        images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Loft" }],
+        siteName: "Mingly",
+        images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Mingly" }],
       },
       twitter: {
         card: "summary_large_image",

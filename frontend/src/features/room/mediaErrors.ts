@@ -89,7 +89,7 @@ export function extractErrorDetails(error: unknown): NormalizedMediaError {
 }
 
 /**
- * Maps DOMException and runtime media errors into clean, human-readable Loft-style messages.
+ * Maps DOMException and runtime media errors into clean, human-readable Mingly messages.
  * Never leaks raw browser error strings like "The request is not allowed by the user agent...".
  */
 export function formatMediaError(error: unknown, kind: MediaKind): string {

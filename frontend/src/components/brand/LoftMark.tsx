@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-/** The Gather mark from loft-logo/logo-icon.svg, shared by all in-app brand placements. */
+/** The shared geometric mark used by Mingly's in-app brand placements. */
 export function LoftMark(props: SVGProps<SVGSVGElement>) {
   return (
     <svg

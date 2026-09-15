@@ -1,13 +1,19 @@
 import { useI18nStore } from "./useTranslation";
 
 const vietnamese: Record<string, string> = {
+  "Enter the room password to join.": "Nhập mật khẩu phòng để tham gia.",
+  "That password doesn't look right. Try again.": "Mật khẩu chưa đúng. Hãy thử lại.",
+  "Please wait a moment before trying again": "Vui lòng chờ một chút rồi thử lại.",
+  "Room settings changed. Refresh and try again.": "Cài đặt phòng đã thay đổi. Hãy tải lại và thử lại.",
+  "You cannot change this room's settings": "Bạn không thể thay đổi cài đặt phòng này.",
+  "Room settings are temporarily unavailable": "Cài đặt phòng tạm thời chưa khả dụng.",
   "Room is full. Try again after someone leaves.": "Phòng đã đầy. Hãy thử lại khi có người rời phòng.",
   "This room is open in another tab. Close that tab to join here.": "Bạn đang ở phòng này trong tab khác. Đóng tab đó để vào tại đây.",
   "Couldn’t join room": "Không thể vào phòng",
-  "Opening your Loft…": "Đang mở phòng Loft…",
+  "Opening your Mingly room…": "Đang mở phòng Mingly…",
   "Syncing current room state.": "Đang đồng bộ trạng thái phòng.",
   "Try again": "Thử lại",
-  "Loft home": "Trang chủ Loft",
+  "Mingly home": "Trang chủ Mingly",
   "Guests welcome": "Cho phép khách vào",
   "present": "đang có mặt",
   "Members only": "Chỉ thành viên",

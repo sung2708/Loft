@@ -1,8 +1,8 @@
-# AGENTS.md — Loft Engineering Constitution
+# AGENTS.md — Mingly Engineering Constitution
 
 ## Mission
 
-Loft is a production-oriented, realtime social hangout platform where friends congregate in shared digital rooms to hang out, talk via low-latency voice/video, share screens, chat, and synchronize media playback (YouTube) in real time.
+Mingly is a production-oriented, realtime social hangout platform where friends congregate in shared digital rooms to hang out, talk via low-latency voice/video, share screens, chat, and synchronize media playback (YouTube) in real time.
 
 The engineering goal is to maintain a robust, race-free, bounded-concurrency architecture that is resilient to network drops, node failover, and high concurrency while remaining maintainable by a single developer.
 

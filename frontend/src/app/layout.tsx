@@ -11,24 +11,24 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://mingly.site"),
   title: {
-    default: "Loft — We’re here together.",
-    template: "%s · Loft",
+    default: "Mingly — Better when we’re together.",
+    template: "%s · Mingly",
   },
-  description: "A shared space to talk, watch, listen, and hang out together.",
-  applicationName: "Loft",
+  description: "A shared space to talk, watch, listen, and hang out with your people.",
+  applicationName: "Mingly",
   openGraph: {
-    title: "Loft — We’re here together.",
-    description: "A shared space to talk, watch, listen, and hang out together.",
-    siteName: "Loft",
+    title: "Mingly — Better when we’re together.",
+    description: "A shared space to talk, watch, listen, and hang out with your people.",
+    siteName: "Mingly",
     type: "website",
-    images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Loft" }],
+    images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Mingly" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Loft — We’re here together.",
-    description: "A shared space to talk, watch, listen, and hang out together.",
+    title: "Mingly — Better when we’re together.",
+    description: "A shared space to talk, watch, listen, and hang out with your people.",
     images: ["/apple-icon.png"],
   },
 };
