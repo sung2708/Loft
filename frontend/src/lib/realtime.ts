@@ -107,11 +107,13 @@ export class RoomSocket {
           this.callbacks.onState("FAILED", "Room is full. Try again after someone leaves.");
           return;
         }
-        if (event.type === "error" && (event.payload.code === "ROOM_KICKED" || event.payload.code === "ROOM_LOCKED")) {
+        if (event.type === "error" && (event.payload.code === "ROOM_KICKED" || event.payload.code === "ROOM_TEMPORARILY_BANNED" || event.payload.code === "ROOM_LOCKED")) {
           this.close();
-          this.callbacks.onState("FAILED", event.payload.code === "ROOM_KICKED"
-            ? "You were removed from this room"
-            : "This room is locked");
+          this.callbacks.onState("FAILED", event.payload.code === "ROOM_LOCKED"
+            ? "This room is locked"
+            : event.payload.code === "ROOM_TEMPORARILY_BANNED"
+              ? "You cannot rejoin this room yet"
+              : "You were removed from this room");
           return;
         }
         if (event.type === "error" && event.payload.code === "DUPLICATE_SESSION") {
@@ -182,8 +184,12 @@ export class RoomSocket {
       | "media.duration"
       | "media.repeat"
       | "reaction.send"
+      | "wave.send"
+      | "participant.hand.set"
       | "room.lock"
-      | "participant.kick",
+      | "participant.kick"
+      | "participant.ban"
+      | "host.transfer",
     payload: object,
   ) {
     if (this.socket?.readyState !== WebSocket.OPEN || (!this.ready && type !== "connection.ping" && type !== "room.leave")) return false;

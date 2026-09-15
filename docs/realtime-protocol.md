@@ -44,6 +44,10 @@ Every packet transmitted over the WebSocket connection uses the strict JSON enve
 - **Version Implication**: None.
 - **Server Response**: Immediately sends `room.snapshot` on success, or closes socket on failure.
 
+Room snapshots may expose the safe `password_required` policy flag, but never a password or verifier.
+Reconnecting clients receive the current policy from a fresh authoritative snapshot; they do not
+replay missed access events.
+
 #### `connection.ping` / `connection.pong`
 - **Direction**: Client → Server (`ping`) / Server → Client (`pong`)
 - **Payload (`ping`)**: `{ "client_time": 1789381200100 }`
@@ -119,8 +123,19 @@ Every packet transmitted over the WebSocket connection uses the strict JSON enve
 #### `reaction.send` → `reaction.sent`
 - **Direction**: `reaction.send` (Client → Server) → `reaction.sent` (Server → Client Broadcast)
 - **Payload**: `{ "emoji": "🔥" }`
-- **Validation**: Strict emoji set: `❤️`, `🔥`, `👏`, `😂`, `👍`, `🎉`. Max 4 per client, 20 per room per 2s.
+- **Validation**: Strict final emoji set: `❤️`, `😂`, `🔥`, `👏`, `😭`. Max 4 per client, 20 per room per 2s.
 - **Source of Truth**: Ephemeral broadcast (dropped for slow consumers).
+
+#### `wave.send` → `wave.sent`
+- Empty room-level command; the server derives actor identity.
+- Ephemeral, rate-limited, non-durable, and never replayed.
+
+#### `participant.hand.set` → `participant.hand_changed`
+- Self-only command: `{ "raised": true, "expected_social_version": 2 }`.
+- Current `raised_hand` and `social_version` are recovered in snapshots/presence.
+- Stale connections/versions are rejected; true leave/removal clears the state.
+
+SFX is not part of the protocol. Clients choose local playback from domain facts and preferences.
 
 ---
 
@@ -181,6 +196,26 @@ Domain Hierarchy:
 - **Source of Truth**: PostgreSQL `room_bans` for the durable ban; Go tracks and closes the active WebSocket connection.
 - **Server Action**: Persists the ban, closes the target socket with `StatusPolicyViolation` (routing an exact remote connection through Redis when needed), calls LiveKit `RemoveParticipant`, and broadcasts `participant.left` when the socket leaves. Subsequent Loft admission and token requests reject the banned identity.
 - **LiveKit limitation**: LiveKit Cloud revokes an existing token when `RemoveParticipant` is called with `revoke_token_ts`. Self-hosted LiveKit disconnects the active participant but does not revoke an already issued JWT; that JWT may remain usable directly against LiveKit until expiry. See [LiveKit participant management](https://docs.livekit.io/intro/basics/rooms-participants-tracks/participants/).
+
+#### `host.transfer`
+- **Direction**: Client → Server
+- **Authorization**: Current realtime host only; the target must be an authenticated participant.
+- **Payload**: `{ "target_connection_id": "uuid", "expected_authority_version": 4 }`
+- **Source of Truth**: Go room authority. Durable `rooms.owner_id` is not changed.
+- **Server Action**: Atomically validates the current host and target, revokes the old host role, increments the authority version, and broadcasts `host.changed`.
+
+#### `host.changed`
+- **Direction**: Server → Client (Broadcast)
+- **Payload**: `{ "host": { "connection_id": "uuid", "identity_id": "uuid", "identity_type": "user", "generation": 1, "version": 5, "state": "connected" }, "reason": "transfer" }`
+- **Recovery**: The same host authority is included in every fresh `room.snapshot`.
+- **Compatibility**: Unknown host events can be ignored by older clients; the existing room and participant events remain valid.
+
+#### `participant.ban`
+- **Direction**: Client → Server
+- **Authorization**: Current realtime host only.
+- **Payload**: `{ "connection_id": "uuid", "duration_hours": 1 }`
+- **Scope**: Room-scoped and time-limited (1–24 hours). It uses the existing identity/session model and does not fingerprint anonymous guests.
+- **Server Action**: Persists the expiry, invalidates the active admission, closes the socket, and requests LiveKit cleanup. A failed secondary cleanup does not undo the durable decision.
 
 ---
 

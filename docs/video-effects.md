@@ -1,6 +1,8 @@
 # Video Effects Architecture & Performance Strategy — Loft
 
-This document defines the planned client-side video effects model, lifecycle management, and tiered performance degradation strategy for **Loft MVP 3**. MVP 2 keeps camera capture raw and limits video processing to presentation-layer mirroring.
+This document defines Mingly's client-side video effects model, lifecycle management, and tiered performance degradation strategy for **MVP 3 / SPEC 004**. The raw MVP2 camera path remains the default and fallback.
+
+The implemented integration extends the existing LiveKit `LocalVideoTrack` with one SDK `TrackProcessor`; it does not unpublish/re-publish the camera or create a second Room. MediaPipe Tasks Vision is loaded lazily from same-origin assets for segmentation and face landmarks. Looks and procedural 2D AR overlays share one unmirrored canvas compositor. Microphone and screen-share tracks never enter this pipeline.
 
 ---
 
@@ -51,8 +53,8 @@ export const defaultVideoEffectConfig: VideoEffectConfig = {
      (If effect was OFF -> ON)       (If effect was ON -> SWITCH)
   1. Initialize VideoProcessor       1. Update internal render mode
   2. Capture canvas.captureStream()  2. Continuous frame delivery
-  3. localParticipant.switchProvider()
-     (Replaces track in-place)
+  3. LocalVideoTrack.setProcessor()
+     (LiveKit replaces sender tracks in-place)
 ```
 
 ### Lifecycle State Machine
@@ -63,11 +65,11 @@ export const defaultVideoEffectConfig: VideoEffectConfig = {
 
 2. **Enabling an Effect**:
    - The processor starts an internal `requestAnimationFrame` loop.
-   - The processed `MediaStreamTrack` replaces the camera track published to LiveKit via `localParticipant.setCameraEnabled(false)` followed by custom track publish or `room.localParticipant.videoTrackPublications`.
+   - The processed `MediaStreamTrack` replaces the sender through LiveKit's processor lifecycle while preserving the camera publication and simulcast senders.
 
 3. **Disabling an Effect (`none`)**:
    - The processor terminates its `requestAnimationFrame` loop.
-   - LiveKit reverts directly to publishing the raw camera `MediaStreamTrack`.
+   - `LocalVideoTrack.stopProcessor()` restores the raw camera `MediaStreamTrack`.
    - CPU/GPU inference drops immediately to zero.
 
 4. **Tab Backgrounding / Visibility Change**:
@@ -101,8 +103,8 @@ If device hardware or thermal constraints create pressure, the system degrades e
 | Dimension | Tier 1: HIGH | Tier 2: MEDIUM | Tier 3: LOW | Tier 4: OFF |
 | :--- | :---: | :---: | :---: | :---: |
 | **Target Hardware** | Modern Laptops, High-end Desktops | Mid-range Laptops, Recent Tablets | Low-end Laptops, Mobile Devices | Thermal/CPU Pressure, Battery Saver |
-| **Input Resolution** | 1280x720 (720p) | 960x540 (qHD) | 640x360 (360p) | Raw Camera Resolution |
-| **Inference FPS** | 30 FPS | 15–20 FPS | 10 FPS (Interpolated) | 0 (Disabled) |
+| **Input Resolution** | 960x540 (qHD) | 640x360 (360p) | 480x270 | Lightweight passthrough |
+| **Inference FPS** | 15 FPS | 10 FPS | 6 FPS (last-result reuse) | 0 (Disabled) |
 | **Output FPS** | 30 FPS | 24 FPS | 15 FPS | Native Camera FPS |
 | **Supported Effects** | All (Blur, Image, Face) | Blur, Image, Single Face | Background Blur Only | None (Passthrough) |
 | **Compositing** | Feathered edge mask | Soft boundary box mask | Low-radius box blur | Direct camera stream |
@@ -142,6 +144,8 @@ class EffectPerformanceMonitor {
 2. **Thermal / Battery Saver**: If `navigator.getBattery()` indicates low power mode or battery $<15\%$, cap tier to `LOW` or `OFF`.
 3. **WebRTC Congestion**: If LiveKit reports high uplink packet loss ($>8\%$), effect resolution is reduced immediately to reduce encoder bitrate.
 4. **Crash Circuit Breaker**: If MediaPipe throws two consecutive WASM exceptions, effects are disabled (`OFF`) for the remainder of the session, and a non-intrusive toast informs the user: *"Camera effects disabled to keep call smooth"*.
+
+When background segmentation and face landmarks are both required, their inference calls alternate between eligible video frames. MediaPipe's web inference APIs are synchronous, so this bounds main-thread stalls instead of running both models in one frame. Repeated animation frames for the same decoded video frame never trigger duplicate inference.
 
 ---
 

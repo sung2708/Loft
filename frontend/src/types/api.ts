@@ -34,6 +34,17 @@ export interface ApiParticipant {
   role: "host" | "member" | "guest";
   livekit_identity: string;
   joined_at: string;
+  raised_hand?: boolean;
+  social_version?: number;
+}
+
+export interface HostAuthority {
+  connection_id: string;
+  identity_id: string;
+  identity_type: IdentityType;
+  generation: number;
+  version: number;
+  state: "connected" | "grace-period" | "failed-over" | string;
 }
 
 export interface ApiMessage {
@@ -57,6 +68,7 @@ export type ConnectionState =
 
 export interface RoomSnapshot {
   room: ApiRoom;
+  host: HostAuthority;
   self: ApiParticipant;
   participants: ApiParticipant[];
   messages: ApiMessage[];
@@ -105,6 +117,13 @@ export type ServerEvent =
       payload: { connection_id: string };
     }
   | {
+      type: "host.changed";
+      version: 1;
+      event_id: string;
+      room_id: string;
+      payload: { host: HostAuthority; reason: string };
+    }
+  | {
       type: "room.locked";
       version: 1;
       event_id: string;
@@ -138,6 +157,26 @@ export type ServerEvent =
       event_id: string;
       room_id: string;
       payload: { connection_id: string; display_name: string; emoji: string };
+    }
+  | {
+      type: "wave.sent";
+      version: 1;
+      event_id: string;
+      room_id: string;
+      payload: { connection_id: string; display_name: string; emitted_at: string };
+    }
+  | {
+      type: "participant.hand_changed";
+      version: 1;
+      event_id: string;
+      room_id: string;
+      payload: {
+        connection_id: string;
+        identity_id: string;
+        generation: number;
+        raised: boolean;
+        social_version: number;
+      };
     }
   | {
       type: "connection.pong";

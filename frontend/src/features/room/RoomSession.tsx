@@ -20,9 +20,9 @@ import {
   useTracks,
   VideoTrack,
 } from "@livekit/components-react";
-import { Track, ConnectionState, ConnectionQuality } from "livekit-client";
+import { Track, ConnectionState, ConnectionQuality, LocalVideoTrack } from "livekit-client";
 import { motion } from "framer-motion";
-import { MicOff } from "lucide-react";
+import { Hand, MicOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
 import { LIVEKIT_URL } from "@/lib/config";
@@ -32,6 +32,10 @@ import { useChatStore } from "@/stores/useChatStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useMusicStore } from "@/stores/useMusicStore";
 import { useReactionStore } from "@/stores/useReactionStore";
+import { useSfxStore } from "@/stores/useSfxStore";
+import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
+import { VideoEffectController } from "./effects/effectController";
+import { playSfx, sfx, unlockSfx } from "@/lib/sfx";
 import type { RoomCredential } from "@/types/api";
 import { RoomView } from "./RoomView";
 import { deriveStageLayout } from "./stageLayout";
@@ -42,6 +46,7 @@ import {
   formatMediaError,
   isSecureMediaContext,
 } from "./mediaErrors";
+import { isFrontCameraSelfView } from "./cameraOrientation";
 
 const currentText = (english: string) => translateUI(useI18nStore.getState().locale, english);
 
@@ -63,8 +68,12 @@ interface SessionValue {
       | "media.duration"
       | "media.repeat"
       | "reaction.send"
+      | "wave.send"
+      | "participant.hand.set"
       | "room.lock"
-      | "participant.kick",
+      | "participant.kick"
+      | "participant.ban"
+      | "host.transfer",
     payload: object,
   ) => boolean;
   leave: () => void;
@@ -101,6 +110,27 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
   const [mediaError, setMediaError] = useState<string | null>(null);
   const activeDrawer = useUIStore((state) => state.activeDrawer);
   const connectionState = useRoomStore((state) => state.connectionState);
+  const enteredRoom = useRef(false);
+  const previousConnectionState = useRef(connectionState);
+
+  useEffect(() => {
+    useSfxStore.getState().hydrate();
+    const unlock = () => unlockSfx();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      sfx.stopAll();
+    };
+  }, []);
+
+  useEffect(() => {
+    const previous = previousConnectionState.current;
+    if (connectionState === "RECONNECTING" && previous === "CONNECTED") playSfx("disconnect");
+    if (connectionState === "CONNECTED" && (previous === "RECONNECTING" || previous === "RESYNCING")) playSfx("reconnect");
+    previousConnectionState.current = connectionState;
+  }, [connectionState]);
 
   useEffect(() => {
     let disposed = false;
@@ -115,13 +145,21 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         }
         return currentCredential;
       },
-      onState: (state, error) =>
-        useRoomStore.getState().setConnectionState(state, error),
+      onState: (state, error) => {
+        if (state === "FAILED" && error && (error.includes("removed") || error.includes("rejoin"))) {
+          playSfx("remove-from-room");
+        }
+        useRoomStore.getState().setConnectionState(state, error);
+      },
       onEvent: (event) => {
         if (event.type === "room.snapshot") {
           useRoomStore.getState().applySnapshot(event.payload);
           useChatStore.getState().replace(event.payload.messages);
           useMusicStore.getState().replaceMedia(event.payload.media);
+          if (!enteredRoom.current) {
+            enteredRoom.current = true;
+            playSfx("room-enter");
+          }
           // Admission must succeed before a second tab can connect to LiveKit
           // with the same identity and displace the active participant.
           if (!mediaRequested) {
@@ -133,10 +171,18 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
                 if (!disposed) setMediaError(currentText("Unable to connect to media server."));
               });
           }
-        } else if (event.type === "participant.joined")
+        } else if (event.type === "participant.joined") {
           useRoomStore.getState().participantJoined(event.payload);
-        else if (event.type === "participant.left")
+          playSfx("participant-join");
+        }
+        else if (event.type === "participant.left") {
           useRoomStore.getState().participantLeft(event.payload.connection_id);
+          playSfx("participant-leave");
+        }
+        else if (event.type === "host.changed") {
+          useRoomStore.getState().hostChanged(event.payload.host);
+          playSfx("host-transfer");
+        }
         else if (event.type === "room.locked")
           useRoomStore.getState().roomLocked(event.payload.locked, event.payload.version);
         else if (event.type === "chat.message")
@@ -153,10 +199,17 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         else if (event.type === "reaction.sent") {
           useReactionStore.getState().append({ displayName: event.payload.display_name, emoji: event.payload.emoji });
         }
+        else if (event.type === "wave.sent") {
+          useReactionStore.getState().appendWave(event.payload.display_name);
+        }
+        else if (event.type === "participant.hand_changed") {
+          useRoomStore.getState().handChanged(event.payload.connection_id, event.payload.raised, event.payload.social_version);
+          if (event.payload.raised) playSfx("raise-hand");
+        }
         else if (event.type === "error") {
           if (event.payload.code === "MEDIA_COMMAND_REJECTED" || event.payload.code === "MEDIA_RATE_LIMITED") useMusicStore.getState().setError(event.payload.message);
           else if (event.payload.code === "ROOM_COMMAND_REJECTED") useRoomStore.getState().setGovernanceError(event.payload.message);
-          else if (event.payload.code === "REACTION_RATE_LIMITED") return;
+          else if (event.payload.code === "REACTION_RATE_LIMITED" || event.payload.code === "WAVE_RATE_LIMITED") return;
           else useChatStore.getState().setSendError(event.payload.message);
         }
       },
@@ -171,6 +224,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
       useChatStore.getState().reset();
       useMusicStore.getState().reset();
       useReactionStore.getState().reset();
+      enteredRoom.current = false;
     };
   }, [credential]);
 
@@ -189,9 +243,9 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
   const sendCommand: SessionValue["sendCommand"] = useCallback((type, payload) => {
     const sent = socketRef.current?.send(type, payload) ?? false;
     if (!sent) {
-      if (type === "room.lock" || type === "participant.kick") {
+      if (type === "room.lock" || type === "participant.kick" || type === "participant.ban" || type === "host.transfer") {
         useRoomStore.getState().setGovernanceError(currentText("Still reconnecting. Try again shortly."));
-      } else if (type !== "reaction.send") {
+      } else if (type !== "reaction.send" && type !== "wave.send" && type !== "participant.hand.set") {
         useMusicStore.getState().setError(currentText("Still reconnecting. Try again shortly."));
       }
     }
@@ -283,6 +337,35 @@ function LiveMediaContext({
   const isTogglingMic = useRef(false);
   const isTogglingCamera = useRef(false);
   const isTogglingScreen = useRef(false);
+  const effectSelection = useVideoEffectsStore((state) => state.selection);
+  const effectController = useRef<VideoEffectController | null>(null);
+
+  useEffect(() => {
+    const controller = new VideoEffectController((runtime) => useVideoEffectsStore.getState().setRuntime(runtime));
+    effectController.current = controller;
+    return () => {
+      effectController.current = null;
+      void controller.destroy();
+      useVideoEffectsStore.getState().reset();
+    };
+  }, []);
+
+  useEffect(() => {
+    const publication = localParticipant.getTrackPublication(Track.Source.Camera);
+    const source = publication?.track instanceof LocalVideoTrack && isCameraEnabled ? publication.track : undefined;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    void effectController.current?.reconcile(source, effectSelection, reducedMotion);
+  }, [localParticipant, isCameraEnabled, connectionState, effectSelection]);
+
+  useEffect(() => {
+    const reconcileVisibility = () => {
+      const publication = localParticipant.getTrackPublication(Track.Source.Camera);
+      const source = !document.hidden && publication?.track instanceof LocalVideoTrack && isCameraEnabled ? publication.track : undefined;
+      void effectController.current?.reconcile(source, useVideoEffectsStore.getState().selection, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+    };
+    document.addEventListener("visibilitychange", reconcileVisibility);
+    return () => document.removeEventListener("visibilitychange", reconcileVisibility);
+  }, [localParticipant, isCameraEnabled]);
 
   useEffect(() => {
     if (initialized.current || connectionState !== ConnectionState.Connected) return;
@@ -337,6 +420,7 @@ function LiveMediaContext({
             return;
           }
           await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+          playSfx(isMicrophoneEnabled ? "mute" : "unmute");
           setMediaError(null);
         } catch (error) {
           setMediaError(formatMediaError(error, "mic"));
@@ -358,6 +442,7 @@ function LiveMediaContext({
             return;
           }
           await localParticipant.setCameraEnabled(!isCameraEnabled);
+          playSfx(isCameraEnabled ? "camera-off" : "camera-on");
           setMediaError(null);
         } catch (error) {
           setMediaError(formatMediaError(error, "camera"));
@@ -385,6 +470,7 @@ function LiveMediaContext({
           }, {
             degradationPreference: "maintain-resolution",
           });
+          playSfx(isScreenShareEnabled ? "screen-end" : "screen-start");
           setMediaError(null);
         } catch (error) {
           setMediaError(formatMediaError(error, "screen"));
@@ -488,6 +574,7 @@ export function MediaStage() {
                 muted={isMuted(participant.livekit_identity)}
                 quality={qualityFor(participant.livekit_identity)}
                 camera={camera}
+                raisedHand={participant.raised_hand ?? false}
               />
             );
           })}
@@ -515,6 +602,7 @@ export function MediaStage() {
               muted={isMuted(participant.livekit_identity)}
               quality={qualityFor(participant.livekit_identity)}
               camera={cameraFor(participant.livekit_identity)}
+              raisedHand={participant.raised_hand ?? false}
             />
           ))}
         </motion.div>
@@ -532,6 +620,7 @@ function ParticipantMediaTile({
   muted = false,
   quality,
   camera,
+  raisedHand = false,
 }: {
   name: string;
   avatarUrl?: string;
@@ -541,6 +630,7 @@ function ParticipantMediaTile({
   muted?: boolean;
   quality: ConnectionQuality;
   camera: TrackReference | undefined;
+  raisedHand?: boolean;
 }) {
   const tr = useUIText();
   const [avatarSize, setAvatarSize] = useState(compact ? 44 : 88);
@@ -551,6 +641,16 @@ function ParticipantMediaTile({
       transition={{ duration: 0.22 }}
       className={`${compact ? "w-32 h-20 shrink-0" : "w-full h-full min-w-0 min-h-0"} rounded-2xl overflow-hidden bg-[var(--bg-loft-card)] shadow-lg relative border-2 transition-shadow duration-150 ${speaking ? "border-[#34c759] speaking-glow" : "border-transparent"}`}
     >
+      {raisedHand && (
+        <span
+          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-[#FF9500]/90 px-2 py-1 text-[10px] font-semibold text-black shadow"
+          aria-label={tr("Hand raised")}
+          title={tr("Hand raised")}
+        >
+          <Hand className="h-3 w-3" aria-hidden="true" />
+          {!compact && tr("Raised")}
+        </span>
+      )}
       {camera ? (
         <VideoTrack
           trackRef={camera}
@@ -607,13 +707,6 @@ function ParticipantMediaTile({
       )}
     </motion.div>
   );
-}
-
-// Mirroring is presentation-only: it never changes the published camera track.
-// Screen-share is rendered elsewhere and therefore can never be flipped.
-function isFrontCameraSelfView(camera: TrackReference) {
-  if (!camera.participant.isLocal || camera.source !== Track.Source.Camera) return false;
-  return camera.publication?.track?.mediaStreamTrack.getSettings().facingMode !== "environment";
 }
 
 export function EmptyStage() {

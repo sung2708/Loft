@@ -136,8 +136,8 @@ func TestCreateRoomRequiresAuthenticatedUser(t *testing.T) {
 	}
 }
 
-func TestResolveRoomNormalizesInviteURLAndHidesOwner(t *testing.T) {
-	store := &fakeStore{room: domain.Room{ID: "58bb9fe4-79bc-41c7-9d63-61c04815b668", Slug: "abcd1234", Name: "Late Night Coding", OwnerID: "private-owner-id", AllowGuests: true, MaxParticipants: 12}}
+func TestResolveRoomNormalizesInviteURLAndHidesPrivateFields(t *testing.T) {
+	store := &fakeStore{room: domain.Room{ID: "58bb9fe4-79bc-41c7-9d63-61c04815b668", Slug: "abcd1234", Name: "Late Night Coding", OwnerID: "private-owner-id", AllowGuests: true, MaxParticipants: 12, PasswordRequired: true, PasswordVerifier: "private-password-verifier"}}
 	secret := "12345678901234567890123456789012"
 	server := New(store, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/rooms/resolve?value=https%3A%2F%2Floft.app%2Fjoin%2FABCD1234", nil)
@@ -147,7 +147,7 @@ func TestResolveRoomNormalizesInviteURLAndHidesOwner(t *testing.T) {
 	if result.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", result.Code, result.Body.String())
 	}
-	if strings.Contains(result.Body.String(), "private-owner-id") || !strings.Contains(result.Body.String(), `"slug":"abcd1234"`) {
+	if strings.Contains(result.Body.String(), "private-owner-id") || strings.Contains(result.Body.String(), "private-password-verifier") || strings.Contains(result.Body.String(), "password_verifier") || !strings.Contains(result.Body.String(), `"slug":"abcd1234"`) || !strings.Contains(result.Body.String(), `"password_required":true`) {
 		t.Fatalf("unsafe or invalid preview: %s", result.Body.String())
 	}
 }

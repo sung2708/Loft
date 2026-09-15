@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -116,6 +117,18 @@ func (p *Postgres) SetRoomLocked(ctx context.Context, roomID, ownerID string, ex
 	return room, err
 }
 
+func (p *Postgres) SetRoomLockedByHost(ctx context.Context, roomID string, expectedVersion int64, locked bool) (domain.Room, error) {
+	var room domain.Room
+	err := p.pool.QueryRow(ctx, `UPDATE rooms SET is_locked = $3, version = version + 1, updated_at = NOW()
+		WHERE id = $1::uuid AND version = $2
+		RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, created_at`,
+		roomID, expectedVersion, locked).Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Room{}, domain.ErrConflict
+	}
+	return room, err
+}
+
 func (p *Postgres) UpdateRoomAccess(ctx context.Context, roomID, ownerID string, expectedVersion int64, update domain.RoomAccessUpdate) (domain.Room, error) {
 	var room domain.Room
 	var verifier *string
@@ -148,10 +161,37 @@ func (p *Postgres) BanIdentity(ctx context.Context, roomID, ownerID string, iden
 	return nil
 }
 
+func (p *Postgres) BanIdentityByHost(ctx context.Context, roomID string, identity domain.Identity) error {
+	result, err := p.pool.Exec(ctx, `INSERT INTO room_bans (room_id, identity_type, identity_id, banned_by)
+		SELECT id, $2::identity_type, $3::uuid, owner_id FROM rooms WHERE id = $1::uuid
+		ON CONFLICT (room_id, identity_type, identity_id) DO NOTHING`, roomID, identity.Type, identity.ID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrConflict
+	}
+	return nil
+}
+
+func (p *Postgres) BanIdentityForHost(ctx context.Context, roomID string, identity domain.Identity, expiresAt time.Time) error {
+	result, err := p.pool.Exec(ctx, `INSERT INTO room_bans (room_id, identity_type, identity_id, banned_by, expires_at)
+		SELECT id, $2::identity_type, $3::uuid, owner_id, $4 FROM rooms WHERE id = $1::uuid
+		ON CONFLICT (room_id, identity_type, identity_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`, roomID, identity.Type, identity.ID, expiresAt)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return domain.ErrConflict
+	}
+	return nil
+}
+
 func (p *Postgres) IsBanned(ctx context.Context, roomID string, identity domain.Identity) (bool, error) {
 	var banned bool
 	err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM room_bans
-		WHERE room_id = $1::uuid AND identity_type = $2::identity_type AND identity_id = $3::uuid)`,
+		WHERE room_id = $1::uuid AND identity_type = $2::identity_type AND identity_id = $3::uuid
+		AND (expires_at IS NULL OR expires_at > NOW()))`,
 		roomID, identity.Type, identity.ID).Scan(&banned)
 	return banned, err
 }

@@ -110,6 +110,118 @@ func TestConcurrentRoomAdmission(t *testing.T) {
 	}
 }
 
+func TestHostTransferAndGraceFailover(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), OwnerID: "owner", AllowGuests: true, MaxParticipants: 4}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hub.SetDisconnectGracePeriod(15 * time.Millisecond)
+	owner := &client{id: "socket-owner", roomID: room.ID, send: make(chan []byte, outboundCapacity), identity: domain.Identity{ID: "owner", Type: domain.IdentityUser}}
+	member := &client{id: "socket-member", roomID: room.ID, send: make(chan []byte, outboundCapacity), identity: domain.Identity{ID: "member", Type: domain.IdentityUser}}
+	if _, _, ok := hub.add(owner, room); !ok {
+		t.Fatal("owner was not admitted")
+	}
+	if _, _, ok := hub.add(member, room); !ok {
+		t.Fatal("member was not admitted")
+	}
+	hub.mu.Lock()
+	state := hub.rooms[room.ID]
+	if state.host.ConnectionID != owner.participant.ConnectionID || owner.participant.Role != "host" {
+		hub.mu.Unlock()
+		t.Fatalf("owner was not selected as host: %+v", state.host)
+	}
+	transferEvent := setHostLocked(state, member.participant, member.generation, "connected", "transfer")
+	hub.mu.Unlock()
+	if len(transferEvent) == 0 || member.participant.Role != "host" || owner.participant.Role == "host" {
+		t.Fatal("host transfer did not revoke the old host")
+	}
+	hub.remove(member)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if host := hub.hostAuthority(room.ID); host.ConnectionID == owner.participant.ConnectionID && host.State == "connected" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if host := hub.hostAuthority(room.ID); host.ConnectionID != owner.participant.ConnectionID || host.State != "connected" {
+		t.Fatalf("expected deterministic failover to owner, got %+v", host)
+	}
+}
+
+func TestRemoteHostEventConverges(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), OwnerID: "owner", AllowGuests: true, MaxParticipants: 4}
+	first := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	second := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	remoteClient := &client{id: "a-remote", roomID: room.ID, send: make(chan []byte, outboundCapacity), identity: domain.Identity{ID: "member", Type: domain.IdentityUser}}
+	if _, _, ok := second.add(remoteClient, room); !ok {
+		t.Fatal("remote participant was not admitted")
+	}
+	ownerClient := &client{id: "z-owner", roomID: room.ID, send: make(chan []byte, outboundCapacity), identity: domain.Identity{ID: "owner", Type: domain.IdentityUser}}
+	if _, _, ok := first.add(ownerClient, room); !ok {
+		t.Fatal("owner was not admitted")
+	}
+	first.mu.RLock()
+	authority := first.rooms[room.ID].host
+	first.mu.RUnlock()
+	second.DeliverRemote(room.ID, hostEvent(room.ID, authority, "initial"))
+	if got := second.hostAuthority(room.ID); got.ConnectionID != authority.ConnectionID || got.IdentityID != authority.IdentityID {
+		t.Fatalf("remote host state did not converge: got %+v want %+v", got, authority)
+	}
+	if remoteClient.participant.Role == "host" {
+		t.Fatal("remote participant retained stale host role")
+	}
+}
+
+func TestTemporaryBanExpiresInLocalAdmission(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), AllowGuests: true, MaxParticipants: 4}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	identity := domain.Identity{ID: "guest-1", Type: domain.IdentityGuest, RoomID: room.ID}
+	first := &client{id: "guest-1", roomID: room.ID, identity: identity, send: make(chan []byte, outboundCapacity)}
+	hub.mu.Lock()
+	state := &roomState{clients: make(map[string]*client), kicked: make(map[string]struct{}), temporaryBans: map[string]time.Time{identity.LiveKitIdentity(): time.Now().UTC().Add(time.Minute)}, room: room}
+	hub.rooms[room.ID] = state
+	hub.mu.Unlock()
+	if _, _, ok := hub.add(first, room); ok || first.joinError != "ROOM_TEMPORARILY_BANNED" {
+		t.Fatalf("active temporary ban did not reject admission: ok=%v error=%s", ok, first.joinError)
+	}
+	hub.mu.Lock()
+	state.temporaryBans[identity.LiveKitIdentity()] = time.Now().UTC().Add(-time.Second)
+	hub.mu.Unlock()
+	second := &client{id: "guest-2", roomID: room.ID, identity: identity, send: make(chan []byte, outboundCapacity)}
+	if _, _, ok := hub.add(second, room); !ok {
+		t.Fatalf("expired temporary ban still blocked admission: %s", second.joinError)
+	}
+}
+
+func TestReconnectPreservesHandAndRemoteNewerVersionWins(t *testing.T) {
+	room := domain.Room{ID: "social-room", AllowGuests: true, MaxParticipants: 4}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	first := &client{id: "socket-a", tabSessionID: "tab", roomID: room.ID, send: make(chan []byte, outboundCapacity), identity: domain.Identity{ID: "member", Type: domain.IdentityUser}}
+	if _, _, ok := hub.add(first, room); !ok {
+		t.Fatal("first connection not admitted")
+	}
+	first.participant.RaisedHand = true
+	first.participant.SocialVersion = 2
+	first.disconnected = true
+	second := &client{id: "socket-b", tabSessionID: "tab", roomID: room.ID, send: make(chan []byte, outboundCapacity), identity: first.identity}
+	if _, _, ok := hub.add(second, room); !ok {
+		t.Fatalf("reconnect not admitted: %s", second.joinError)
+	}
+	if !second.participant.RaisedHand || second.participant.SocialVersion != 2 {
+		t.Fatalf("social state not restored: %+v", second.participant)
+	}
+	hub.DeliverRemote(room.ID, event("participant.hand_changed", room.ID, handChangedPayload{
+		ConnectionID: second.participant.ConnectionID, IdentityID: "member", Raised: false, SocialVersion: 3,
+	}))
+	if second.participant.RaisedHand || second.participant.SocialVersion != 3 {
+		t.Fatalf("newer remote hand state not applied: %+v", second.participant)
+	}
+	hub.DeliverRemote(room.ID, event("participant.hand_changed", room.ID, handChangedPayload{
+		ConnectionID: second.participant.ConnectionID, IdentityID: "member", Raised: true, SocialVersion: 2,
+	}))
+	if second.participant.RaisedHand || second.participant.SocialVersion != 3 {
+		t.Fatalf("stale remote hand state applied: %+v", second.participant)
+	}
+}
+
 func TestDuplicateSessionAndShutdown(t *testing.T) {
 	room := domain.Room{ID: uuid.NewString(), AllowGuests: true, MaxParticipants: 2}
 	guests := auth.NewGuestTokens("12345678901234567890123456789012", time.Hour)
@@ -571,6 +683,61 @@ func TestQueueMutationRateLimit(t *testing.T) {
 	}
 	if accepted != 10 || limited != 1 {
 		t.Fatalf("queue rate limit: accepted=%d limited=%d", accepted, limited)
+	}
+}
+
+func TestSocialCommandsValidateAndPublishCurrentState(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), AllowGuests: true, MaxParticipants: 4}
+	guests := auth.NewGuestTokens("12345678901234567890123456789012", time.Hour)
+	raw, _, _, err := guests.Issue(room.ID, "Minh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := New(&realtimeStore{room: room}, guests, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := httptest.NewServer(hub)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), &websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "test complete")
+	authData, _ := json.Marshal(authPayload{Token: raw, RoomID: room.ID, TabSessionID: "tab-social"})
+	if err := wsjson.Write(ctx, conn, Envelope{Type: "connection.auth", Version: 1, EventID: uuid.NewString(), RoomID: room.ID, Payload: authData}); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot Envelope
+	if err := wsjson.Read(ctx, conn, &snapshot); err != nil || snapshot.Type != "room.snapshot" {
+		t.Fatalf("snapshot: %s %v", snapshot.Type, err)
+	}
+
+	if err := wsjson.Write(ctx, conn, Envelope{Type: "reaction.send", Version: 1, EventID: uuid.NewString(), RoomID: room.ID, Payload: json.RawMessage(`{"emoji":"👍"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var rejected Envelope
+	if err := wsjson.Read(ctx, conn, &rejected); err != nil || rejected.Type != "error" {
+		t.Fatalf("retired reaction was not rejected: %s %v", rejected.Type, err)
+	}
+
+	if err := wsjson.Write(ctx, conn, Envelope{Type: "participant.hand.set", Version: 1, EventID: uuid.NewString(), RoomID: room.ID, Payload: json.RawMessage(`{"raised":true,"expected_social_version":0}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var hand Envelope
+	if err := wsjson.Read(ctx, conn, &hand); err != nil || hand.Type != "participant.hand_changed" {
+		t.Fatalf("hand event: %s %v", hand.Type, err)
+	}
+	var handPayload handChangedPayload
+	if err := json.Unmarshal(hand.Payload, &handPayload); err != nil || !handPayload.Raised || handPayload.SocialVersion != 1 {
+		t.Fatalf("invalid hand fact: %+v %v", handPayload, err)
+	}
+
+	if err := wsjson.Write(ctx, conn, Envelope{Type: "wave.send", Version: 1, EventID: uuid.NewString(), RoomID: room.ID, Payload: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var wave Envelope
+	if err := wsjson.Read(ctx, conn, &wave); err != nil || wave.Type != "wave.sent" {
+		t.Fatalf("wave event: %s %v", wave.Type, err)
 	}
 }
 

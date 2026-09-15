@@ -82,4 +82,21 @@ export const vi: TranslationDictionary = {
     openInYouTube: "Mở trên YouTube",
     remove: "Xóa",
   },
+  roomModeration: {
+    participantActions: "Thao tác với thành viên",
+    makeHost: "Chuyển quyền chủ phòng",
+    removeParticipant: "Mời ra khỏi phòng",
+    temporaryBan: "Cấm trong 1 giờ",
+    temporaryBanConfirmation: "Tạm cấm {name} trong 1 giờ?",
+  },
+  roomSocial: {
+    socialActions: "Tương tác trong phòng",
+    wave: "Vẫy chào cả phòng",
+    raiseHand: "Giơ tay",
+    lowerHand: "Hạ tay",
+    handRaised: "Đang giơ tay",
+    soundEffects: "Hiệu ứng âm thanh",
+    roomSounds: "Âm thanh trong phòng",
+    effectsVolume: "Âm lượng hiệu ứng",
+  },
 };

@@ -7,10 +7,12 @@ export function KickParticipantDialog({
   name,
   onCancel,
   onConfirm,
+  action = "kick",
 }: {
   name: string;
   onCancel: () => void;
   onConfirm: () => void;
+  action?: "kick" | "ban";
 }) {
   const tr = useUIText();
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -40,10 +42,10 @@ export function KickParticipantDialog({
         className="w-full max-w-md rounded-2xl border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-6 text-[var(--text-loft-primary)] shadow-2xl"
       >
         <h2 id="kick-participant-title" className="text-lg font-semibold">
-          {tr("Remove participant")}
+          {tr(action === "ban" ? "Temporarily ban participant" : "Remove participant")}
         </h2>
         <p id="kick-participant-description" className="mt-3 text-sm text-[var(--text-loft-secondary)]">
-          {tr("Remove participant confirmation").replace("{name}", name)}
+          {tr(action === "ban" ? "Temporary ban confirmation" : "Remove participant confirmation").replace("{name}", name)}
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <button
@@ -59,7 +61,7 @@ export function KickParticipantDialog({
             onClick={onConfirm}
             className="rounded-xl bg-[#FF3B30] px-4 py-2 text-sm font-semibold text-white hover:bg-[#e6352b]"
           >
-            {tr("Remove participant")}
+            {tr(action === "ban" ? "Ban for 1 hour" : "Remove participant")}
           </button>
         </div>
       </div>

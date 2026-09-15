@@ -92,3 +92,11 @@ If Redis becomes unreachable in a clustered production environment:
    - Cross-instance broadcast pauses, but clients connected to the same instance continue chatting and syncing media normally.
 4. **No Process Panics**: The Go process **never panics or crashes** due to Redis outages.
 5. **Automatic Reconnection**: The Redis client retries connection with exponential backoff and resumes its bounded wildcard room subscription automatically once Redis recovers.
+
+## 6. SPEC 003 Social Coordination
+
+- Existing room Pub/Sub carries bounded Reaction, Wave, and Raise Hand facts.
+- Existing distributed buckets prevent cross-instance reaction/Wave limit bypass.
+- Presence leases carry current Raise Hand state; Redis never becomes durable social history.
+- During outage, cross-instance social delivery may degrade while same-node rooms and calls continue.
+- Recovery uses fresh current state and never replays expired reactions or Waves.

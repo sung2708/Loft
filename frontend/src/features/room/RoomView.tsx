@@ -1,18 +1,16 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Check,
   Copy,
   Crown,
   MessageSquare,
   Music2,
-  SmilePlus,
   Mic,
   MicOff,
   Lock,
   Unlock,
-  UserX,
   MonitorUp,
   PhoneOff,
   Settings2,
@@ -20,6 +18,7 @@ import {
   Users,
   Video,
   VideoOff,
+  Sparkles,
   Wifi,
   WifiOff,
   X,
@@ -33,9 +32,14 @@ import { useUIStore } from "@/stores/useUIStore";
 import { EmptyStage, MediaStage, useRoomSession } from "./RoomSession";
 import { MusicDrawer } from "./MusicDrawer";
 import { useReactionStore } from "@/stores/useReactionStore";
+import { useSfxStore } from "@/stores/useSfxStore";
 import { useUIText } from "@/lib/i18n/uiText";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
 import { KickParticipantDialog } from "@/components/room/KickParticipantDialog";
+import { ParticipantMenu, type ParticipantAction } from "@/components/room/ParticipantMenu";
+import { SocialActions } from "@/components/room/SocialActions";
+import { VideoEffectsPanel } from "@/components/room/VideoEffectsPanel";
+import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
 
 export function RoomView() {
   const drawer = useUIStore((state) => state.activeDrawer);
@@ -69,6 +73,7 @@ export function RoomView() {
 
 function Stage() {
   const tr = useUIText();
+  const reducedMotion = useReducedMotion();
   const media = useRoomSession();
   const reactions = useReactionStore((state) => state.reactions);
   useEffect(() => {
@@ -93,7 +98,7 @@ function Stage() {
         </div>
       )}
       <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 max-w-[90%] overflow-hidden">
-        {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -24 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-lg" title={reaction.displayName}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-xs font-semibold">×{reaction.count}</span>}</motion.div>)}
+        {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0.12 : 0.22 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-lg" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-xs font-semibold">×{reaction.count}</span>}</motion.div>)}
       </div>
     </div>
   );
@@ -132,6 +137,12 @@ function RoomHeader() {
   const self = useRoomStore((state) => state.self);
   const count = useRoomStore((state) => state.participants.length);
   const { theme, setTheme } = useUIStore();
+  const soundEffectsEnabled = useSfxStore((state) => state.soundEffectsEnabled);
+  const roomSoundsEnabled = useSfxStore((state) => state.roomSoundsEnabled);
+  const sfxVolume = useSfxStore((state) => state.volume);
+  const setSoundEffectsEnabled = useSfxStore((state) => state.setSoundEffectsEnabled);
+  const setRoomSoundsEnabled = useSfxStore((state) => state.setRoomSoundsEnabled);
+  const setSfxVolume = useSfxStore((state) => state.setVolume);
   const [copied, setCopied] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const appearanceRef = useRef<HTMLDivElement>(null);
@@ -193,7 +204,7 @@ function RoomHeader() {
           )}
           <span className="hidden sm:inline">{tr("Invite")}</span>
         </button>
-        {self?.role === "host" && room && (
+        {self?.identity_type === "user" && self.identity_id === room?.owner_id && room && (
           <button
             type="button"
             onClick={() => location.assign(`/home?settings=${encodeURIComponent(room.slug)}`)}
@@ -219,7 +230,7 @@ function RoomHeader() {
             <div
               role="menu"
               aria-label={tr("Appearance")}
-              className="absolute right-0 top-full mt-2 z-50 min-w-32 rounded-xl border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-1 shadow-xl"
+              className="absolute right-0 top-full mt-2 z-50 min-w-52 rounded-xl border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
             >
               {(["system", "light", "dark"] as const).map((option) => (
                 <button
@@ -239,6 +250,19 @@ function RoomHeader() {
                   )}
                 </button>
               ))}
+              <div className="my-1 border-t border-[var(--border-loft)]" />
+              <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs">
+                {tr("Sound effects")}
+                <input type="checkbox" checked={soundEffectsEnabled} onChange={(event) => setSoundEffectsEnabled(event.target.checked)} />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs">
+                {tr("Room sounds")}
+                <input type="checkbox" checked={roomSoundsEnabled} onChange={(event) => setRoomSoundsEnabled(event.target.checked)} />
+              </label>
+              <label className="block rounded-lg px-2 py-1.5 text-xs">
+                <span className="flex justify-between"><span>{tr("Effects volume")}</span><span>{sfxVolume}%</span></span>
+                <input className="mt-1 w-full" type="range" min={0} max={100} value={sfxVolume} onChange={(event) => setSfxVolume(Number(event.target.value))} />
+              </label>
             </div>
           )}
         </div>
@@ -312,37 +336,26 @@ function GovernanceNotice() {
 function CallDock() {
   const tr = useUIText();
   const media = useRoomSession();
-  const [reactionsOpen, setReactionsOpen] = useState(false);
-  const reactionsRef = useRef<HTMLDivElement>(null);
   const drawer = useUIStore((state) => state.activeDrawer);
   const toggleDrawer = useUIStore((state) => state.toggleDrawer);
   const unread = useChatStore((state) => state.unreadCount);
   const count = useRoomStore((state) => state.participants.length);
-
-  useEffect(() => {
-    if (!reactionsOpen) return;
-    const handleClickOutside = (e: PointerEvent) => {
-      if (!reactionsRef.current?.contains(e.target as Node)) {
-        setReactionsOpen(false);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setReactionsOpen(false);
-    };
-    document.addEventListener("pointerdown", handleClickOutside);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handleClickOutside);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [reactionsOpen]);
+  const self = useRoomStore((state) => state.self);
+  const effectsOpen = useVideoEffectsStore((state) => state.panelOpen);
+  const setEffectsOpen = useVideoEffectsStore((state) => state.setPanelOpen);
+  const effectsTriggerRef = useRef<HTMLButtonElement>(null);
 
   const sendReaction = (emoji: string) => media.sendCommand("reaction.send", { emoji });
+  const sendWave = () => media.sendCommand("wave.send", {});
+  const toggleHand = () => media.sendCommand("participant.hand.set", {
+    raised: !(self?.raised_hand ?? false),
+    expected_social_version: self?.social_version ?? 0,
+  });
   const control =
     "btn-press relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
   return (
     <div className="flex-shrink-0 pb-[calc(.75rem+env(safe-area-inset-bottom))] px-2 flex justify-center">
-      <div className="glass-dock rounded-full shadow-2xl p-2 flex items-center gap-1 sm:gap-1.5">
+      <div className="relative glass-dock rounded-full shadow-2xl p-2 flex items-center gap-1 sm:gap-1.5">
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleMic()}
@@ -355,6 +368,19 @@ function CallDock() {
             <MicOff className="w-4 h-4" />
           )}
         </button>
+        <button
+          ref={effectsTriggerRef}
+          disabled={!media.mediaConnected}
+          onClick={() => setEffectsOpen(!effectsOpen)}
+          aria-expanded={effectsOpen}
+          aria-haspopup="dialog"
+          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${effectsOpen ? "bg-[#0066CC] text-white" : ""}`}
+          title={tr("Video effects")}
+          aria-label={tr("Video effects")}
+        >
+          <Sparkles className="w-4 h-4" />
+        </button>
+        {effectsOpen && <VideoEffectsPanel cameraEnabled={media.cameraEnabled} triggerRef={effectsTriggerRef} />}
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleCamera()}
@@ -400,23 +426,14 @@ function CallDock() {
         </button>
         <button onClick={() => toggleDrawer("music")} className={`${control} ${drawer === "music" ? "bg-[#0066CC] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
         <span className="w-px h-6 bg-[var(--border-loft)]" />
-        <div ref={reactionsRef} className="relative">
-          <button onClick={() => setReactionsOpen((open) => !open)} className={control} title={tr("Reactions")} aria-label={tr("Reactions")}><SmilePlus className="w-4 h-4" /></button>
-          {reactionsOpen && (
-            <div className="absolute bottom-full right-0 mb-3 flex gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-1.5 shadow-xl">
-              {["❤️", "🔥", "👏", "😂", "👍", "🎉"].map((emoji) => (
-                <button
-                  key={emoji}
-                  onClick={() => { sendReaction(emoji); setReactionsOpen(false); }}
-                  title={`${tr("React")} ${emoji}`}
-                  className="w-8 h-8 rounded-full hover:bg-[var(--border-loft)] text-sm transition-transform active:scale-125"
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <SocialActions
+          raised={self?.raised_hand ?? false}
+          disabled={useRoomStore.getState().connectionState !== "CONNECTED"}
+          onReaction={sendReaction}
+          onWave={sendWave}
+          onToggleHand={toggleHand}
+          controlClass={control}
+        />
         <span className="w-px h-6 bg-[var(--border-loft)]" />
         <button
           onClick={media.leave}
@@ -606,18 +623,36 @@ function PeopleDrawer() {
   const connection = useRoomStore((state) => state.connectionState);
   const session = useRoomSession();
   const isHost = self?.role === "host";
-  const [pendingKick, setPendingKick] = useState<{ connectionId: string; name: string } | null>(null);
-  const closeKickDialog = useCallback(() => setPendingKick(null), []);
+  const [pendingModeration, setPendingModeration] = useState<{ connectionId: string; name: string; action: "kick" | "ban" } | null>(null);
+  const closeKickDialog = useCallback(() => setPendingModeration(null), []);
   const lockRoom = () => {
     if (!room) return;
     useRoomStore.getState().setGovernanceError(null);
     session.sendCommand("room.lock", { locked: !room.is_locked, expected_version: room.version });
   };
-  const kick = () => {
-    if (!pendingKick) return;
+  const moderate = () => {
+    if (!pendingModeration) return;
     useRoomStore.getState().setGovernanceError(null);
-    const sent = session.sendCommand("participant.kick", { connection_id: pendingKick.connectionId });
-    if (sent) setPendingKick(null);
+    const sent = session.sendCommand(
+      pendingModeration.action === "ban" ? "participant.ban" : "participant.kick",
+      pendingModeration.action === "ban"
+        ? { connection_id: pendingModeration.connectionId, duration_hours: 1 }
+        : { connection_id: pendingModeration.connectionId },
+    );
+    if (sent) setPendingModeration(null);
+  };
+  const handleParticipantAction = (person: (typeof people)[number], action: ParticipantAction) => {
+    if (action === "transfer") {
+      if (room) {
+        useRoomStore.getState().setGovernanceError(null);
+        session.sendCommand("host.transfer", {
+          target_connection_id: person.connection_id,
+          expected_authority_version: useRoomStore.getState().host?.version ?? 0,
+        });
+      }
+      return;
+    }
+    setPendingModeration({ connectionId: person.connection_id, name: person.display_name, action });
   };
   return (
     <>
@@ -670,16 +705,12 @@ function PeopleDrawer() {
                 </span>
               )}
               {isHost && person.role !== "host" && person.connection_id !== self?.connection_id && (
-                <button
-                  type="button"
-                  onClick={() => setPendingKick({ connectionId: person.connection_id, name: person.display_name })}
+                <ParticipantMenu
+                  participant={person}
+                  canTransfer={Boolean(room && person.identity_type === "user")}
                   disabled={connection !== "CONNECTED"}
-                  title={tr("Remove participant")}
-                  aria-label={`${tr("Remove participant")}: ${person.display_name}`}
-                  className="rounded-lg p-2 text-[#FF3B30] hover:bg-[#FF3B30]/10 disabled:opacity-50"
-                >
-                  <UserX className="w-4 h-4" />
-                </button>
+                  onAction={(action) => handleParticipantAction(person, action)}
+                />
               )}
             </div>
           ))}
@@ -688,11 +719,12 @@ function PeopleDrawer() {
           <Settings2 className="w-4 h-4" /> {tr("Presence follows active browser connections.")}
         </div>
       </DrawerFrame>
-      {pendingKick && (
+      {pendingModeration && (
         <KickParticipantDialog
-          name={pendingKick.name}
+          name={pendingModeration.name}
+          action={pendingModeration.action}
           onCancel={closeKickDialog}
-          onConfirm={kick}
+          onConfirm={moderate}
         />
       )}
     </>

@@ -127,7 +127,11 @@ Use two browser profiles. Create a room through Google, copy `/join/<invite-code
 - Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage falls back to bounded local behavior.
 - A room admits one active connection per verified identity. A same-tab reload replaces the previous socket; a different tab receives `DUPLICATE_SESSION`. Idle application connections expire after roughly 30 seconds without traffic, and room capacity is enforced locally and through Redis leases.
 - Authenticated invite holders may join; durable non-owner membership is reserved for later product rules.
-- Host transfer, advanced moderation, camera filters/background effects, Spotify/SoundCloud, recording, and discovery remain deferred.
+- Advanced moderation dashboards, camera filters/background effects, Spotify/SoundCloud, recording, and discovery remain deferred. The current host can transfer realtime authority, lock admission, remove a participant, or apply a room-scoped one-hour temporary ban.
 - LiveKit and Supabase availability depend on configured external projects.
+- Social reactions use ❤️, 😂, 🔥, 👏, and 😭. Wave is room-level and ephemeral; Raise Hand is
+  self-controlled and reconnect-aware. Automatic AFK is intentionally not inferred.
+- Optional SFX is local presentation only; reactions and chat remain silent. Confirm redistribution
+  rights and final mastering for user-provided candidate audio before public release.
 
 The full physical-device and two-node Redis release matrix still requires staging execution before production sign-off.

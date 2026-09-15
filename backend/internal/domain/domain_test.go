@@ -73,6 +73,37 @@ func TestMediaControlPermission(t *testing.T) {
 	}
 }
 
+func TestRealtimeHostPermissionAndTransfer(t *testing.T) {
+	current := HostAuthority{ConnectionID: "conn-1", IdentityID: "owner", IdentityType: IdentityUser}
+	target := Participant{ConnectionID: "conn-2", IdentityID: "member", IdentityType: IdentityUser}
+	if !CanModerateHost(current, Identity{ID: "owner", Type: IdentityUser}) {
+		t.Fatal("current host was not allowed to moderate")
+	}
+	if !CanTransferHost(current, Identity{ID: "owner", Type: IdentityUser}, target) {
+		t.Fatal("current host could not transfer to an eligible user")
+	}
+	if CanTransferHost(current, Identity{ID: "member", Type: IdentityUser}, target) {
+		t.Fatal("non-host was allowed to transfer authority")
+	}
+	if CanTransferHost(current, Identity{ID: "owner", Type: IdentityUser}, Participant{ConnectionID: "guest", IdentityID: "g", IdentityType: IdentityGuest}) {
+		t.Fatal("guest was allowed to become host")
+	}
+	if CanTransferHost(current, Identity{ID: "owner", Type: IdentityUser}, Participant{ConnectionID: "conn-1", IdentityID: "owner", IdentityType: IdentityUser}) {
+		t.Fatal("host was allowed to transfer to itself")
+	}
+	if !CanKickParticipant(current, Identity{ID: "owner", Type: IdentityUser}, Participant{ConnectionID: "conn-2", IdentityID: "member", IdentityType: IdentityUser, Role: "member"}) {
+		t.Fatal("current host could not kick a member")
+	}
+	for _, target := range []Participant{
+		{ConnectionID: "conn-1", IdentityID: "owner", IdentityType: IdentityUser, Role: "host"},
+		{ConnectionID: "", IdentityID: "member", IdentityType: IdentityUser, Role: "member"},
+	} {
+		if CanKickParticipant(current, Identity{ID: "owner", Type: IdentityUser}, target) {
+			t.Fatalf("invalid kick target was accepted: %+v", target)
+		}
+	}
+}
+
 func TestValidation(t *testing.T) {
 	if name, err := ValidateDisplayName("  Minh   Nguyen "); err != nil || name != "Minh Nguyen" {
 		t.Fatalf("unexpected normalized name %q, %v", name, err)
@@ -89,5 +120,26 @@ func TestValidation(t *testing.T) {
 	}
 	if _, err := ValidateMessage(string(tooLong)); err == nil {
 		t.Fatal("oversized message accepted")
+	}
+}
+
+func TestSocialValidationAndHandAuthority(t *testing.T) {
+	for _, reaction := range []string{"❤️", "😂", "🔥", "👏", "😭"} {
+		if !ValidReaction(reaction) {
+			t.Fatalf("supported reaction rejected: %s", reaction)
+		}
+	}
+	for _, reaction := range []string{"👍", "🎉", "👋", "<script>", ""} {
+		if ValidReaction(reaction) {
+			t.Fatalf("unsupported reaction accepted: %q", reaction)
+		}
+	}
+	participant := Participant{ConnectionID: "conn", IdentityID: "member", IdentityType: IdentityUser}
+	if !CanSetOwnHand(Identity{ID: "member", Type: IdentityUser}, participant) {
+		t.Fatal("participant could not control own hand")
+	}
+	if CanSetOwnHand(Identity{ID: "other", Type: IdentityUser}, participant) ||
+		CanSetOwnHand(Identity{ID: "member", Type: IdentityGuest}, participant) {
+		t.Fatal("another identity could control participant hand")
 	}
 }
