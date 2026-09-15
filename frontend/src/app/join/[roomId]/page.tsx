@@ -12,6 +12,7 @@ import { useTranslation } from "@/lib/i18n/useTranslation";
 import { useUIText } from "@/lib/i18n/uiText";
 import {
   Link2,
+  Lock,
   LockOpen,
   CheckCircle2,
   Headphones,
@@ -47,13 +48,16 @@ export default function RoomJoinPage() {
     void api.resolveRoom(roomId, controller.signal)
       .then((resolved) => {
         setRoom(resolved.room);
+        if (/^\d{6}$/.test(resolved.room.slug) && resolved.room.slug !== roomId) {
+          router.replace(`/join/${encodeURIComponent(resolved.room.slug)}`);
+        }
       })
       .catch((caught: Error) => {
         if (caught.name !== "AbortError")
           setError(caught.message || l("Room not found", "Không tìm thấy phòng"));
       });
     return () => controller.abort();
-  }, [roomId, l]);
+  }, [roomId, l, router]);
 
   useEffect(() => {
     let active = true;
@@ -84,7 +88,7 @@ export default function RoomJoinPage() {
         displayName: guest.display_name,
       });
       setJoinStep("entering");
-      router.push(`/room/${encodeURIComponent(room.id)}`);
+      router.push(`/room/${encodeURIComponent(room.slug)}`);
     } catch (caught) {
       setJoinStep("idle");
       setIsJoiningGuest(false);
@@ -107,7 +111,7 @@ export default function RoomJoinPage() {
           roomId: room.id,
           displayName: me.display_name,
         });
-        router.push(`/room/${encodeURIComponent(room.id)}`);
+        router.push(`/room/${encodeURIComponent(room.slug)}`);
       } catch (caught) {
         setError(
           caught instanceof Error ? caught.message : l("Could not join room", "Không thể vào phòng"),
@@ -116,7 +120,7 @@ export default function RoomJoinPage() {
       return;
     }
     try {
-      await signInWithGoogle(`/room/${encodeURIComponent(room.id)}`);
+      await signInWithGoogle(`/room/${encodeURIComponent(room.slug)}`);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -154,9 +158,9 @@ export default function RoomJoinPage() {
                 {l("Instant Portal Link", "Liên kết vào phòng ngay")}
               </span>
             </div>
-            <div className="flex items-center gap-1.5 text-[#0066CC] text-xs font-medium bg-[var(--bg-loft-surface)] px-2.5 py-1 rounded-full border border-[var(--border-loft)] shadow-xs">
-              <LockOpen className="w-3.5 h-3.5 text-[#0066CC]" />
-              <span>{l("Open Session", "Phiên đang mở")}</span>
+            <div className={`flex items-center gap-1.5 ${room?.is_locked ? "text-amber-500" : "text-[#0066CC]"} text-xs font-medium bg-[var(--bg-loft-surface)] px-2.5 py-1 rounded-full border border-[var(--border-loft)] shadow-xs`}>
+              {room?.is_locked ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
+              <span>{room?.is_locked ? l("Room locked", "Phòng đã khóa") : l("Open Session", "Phiên đang mở")}</span>
             </div>
           </div>
 

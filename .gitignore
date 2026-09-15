@@ -18,6 +18,7 @@ npm-debug.log*
 
 # Go
 .cache/
+.gocache/
 backend/bin/
 backend/coverage.out
 *.test

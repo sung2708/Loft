@@ -6,7 +6,7 @@ This document specifies the testing methodology, automated test suites, and mand
 
 ## 1. Automated vs Real-Browser Testing Boundary
 
-Realtime WebRTC and client-side computer vision cannot be fully validated through headless synthetic scripts alone. Loft strictly distinguishes what must be automated from what requires real physical device testing:
+Realtime WebRTC cannot be fully validated through headless synthetic scripts alone. Loft strictly distinguishes what must be automated from what requires real physical device testing. Camera filters and background effects are deferred to MVP 3.
 
 ```
 +────────────────────────────────────────+────────────────────────────────────────+
@@ -14,8 +14,8 @@ Realtime WebRTC and client-side computer vision cannot be fully validated throug
 |    (CI/CD Blocking, Headless)          |    (Physical Webcams & Mobile Devices) |
 +────────────────────────────────────────+────────────────────────────────────────+
 | • Go unit & concurrency race tests     | • Camera mirroring orientation check   |
-| • PostgreSQL relational integration    | • MediaPipe face filter anchor tracking|
-| • Redis Pub/Sub multi-node forwarding  | • Background blur edge feathering      |
+| • PostgreSQL relational integration    | • Screen-share text/orientation check  |
+| • Redis Pub/Sub multi-node forwarding  | • YouTube audio gesture in two browsers|
 | • Realtime protocol envelope validation| • LiveKit adaptive layer switching     |
 | • Playback calculation & drift math    | • Device switching (front/rear camera) |
 | • Queue permutation & version conflict | • Audio/video lip-sync under CPU load  |
@@ -59,10 +59,9 @@ The following tests **must** be executed on physical hardware (laptop webcam + m
 | **Mirroring Correctness** | Chrome on macOS / Windows | Enable front camera. Hold up text (e.g. printed page or logo). | Local self-view is **mirrored** (feels natural). Remote peer sees **unmirrored** text (readable left-to-right). | **Release Blocking** |
 | **Rear Camera Orientation** | Safari on iOS / Chrome Android | Switch to rear (`environment`) camera. | Local preview and remote published view are both **unmirrored**. | **Release Blocking** |
 | **Screen Share Non-Mirror** | Chrome Desktop | Share an IDE code window or document tab. | Remote participants see crisp, **unmirrored** code. Never flipped. | **Release Blocking** |
-| **Face Filter Tracking** | Chrome Desktop | Select "Sunglasses" or "Bunny Ears". Tilt head $\pm 45^\circ$. | Accessories track eyes/forehead smoothly without jitter or popping off. | Visual Signoff |
-| **Background Blur Feathering** | Edge / Safari Desktop | Enable "Blur" effect. Move hand across frame. | Edges feather smoothly; fingers do not aggressively clip in and out. | Visual Signoff |
-| **Degradation Under Load** | Older Laptop or Mobile | Run CPU stress test while filter is active. | Filter FPS drops to 15fps or blur-only, but **audio remains crystal clear**. | **Release Blocking** |
-| **Zero Remount on Toggle** | Chrome Desktop | Toggle filter ON/OFF 5 times rapidly. | Participant video switches in-place; React stage does not flicker or remount. | **Release Blocking** |
+| **YouTube Playback** | Two independent browsers | Host adds and plays a track; each device enables audio. | Both hear the same track; play/pause/seek converge without reload. | **Release Blocking** |
+| **Host Governance** | Two independent browsers | Host locks room and kicks a guest; guest attempts rejoin. | Guest leaves the room and cannot rejoin while denied; other participants continue. | **Release Blocking** |
+| **Degradation Under Load** | Older Laptop or Mobile | Run a call while the CPU is throttled. | Audio remains usable; video quality may adapt without dropping the room session. | **Release Blocking** |
 
 ---
 

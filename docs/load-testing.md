@@ -13,7 +13,7 @@ Loft is engineered for high-concurrency social rooms without premature enterpris
 | **Profile A (Dev)** | **10** | 1 | 10 users / room | Local development machine (Single Go node) |
 | **Profile B (Standard)**| **25** | 2 | 12 users / room | Staging server (1 Go node + Redis) |
 | **Profile C (Target)** | **50** | 5 | 10 users / room | Production baseline (2 Go nodes + Redis) |
-| **Profile D (Stress)** | **100** | 2 | 50 users / room (Large Stage) | Breakpoint stress & slow consumer analysis |
+| **Profile D (Stress)** | **100** | 9 | 10–12 users / room (capacity-respecting) | Breakpoint stress & slow consumer analysis |
 
 ---
 
@@ -27,7 +27,7 @@ Loft is engineered for high-concurrency social rooms without premature enterpris
   - Connection teardown cleanly frees memory and reaps goroutines.
 
 ### Scenario 2: Chat Fan-Out & Reaction Burst
-- **Pattern**: In a 50-participant room, 10 simulated users each send 2 chat messages/sec and 5 reactions/sec continuously for 60 seconds.
+- **Pattern**: Across five capacity-respecting rooms (up to 12 participants each), 10 simulated users each send 2 chat messages/sec and 5 reactions/sec continuously for 60 seconds.
 - **Broadcast Math**:
   $$\text{Total Events/sec} = 10 \times (2 + 5) = 70 \text{ in/sec} \implies \text{Fan-Out} = 70 \times 50 = 3,500 \text{ frames/sec}$$
 - **Verification Criteria**:
@@ -43,7 +43,7 @@ Loft is engineered for high-concurrency social rooms without premature enterpris
   - Exactly one version increment per valid command; all 50 clients converge to identical playback state.
 
 ### Scenario 4: Slow Consumer Injection
-- **Pattern**: In a 50-client room, 5 mock clients stop reading from their TCP sockets (simulating backgrounded mobile devices).
+- **Pattern**: In a full 12-client room, 5 mock clients stop reading from their TCP sockets (simulating backgrounded mobile devices).
 - **Verification Criteria**:
   - Saturated clients fill their 64-frame buffer and are disconnected immediately (`CloseNow`).
   - The remaining 45 healthy clients experience **zero** latency spike or packet loss.
@@ -79,13 +79,40 @@ Loft is engineered for high-concurrency social rooms without premature enterpris
 ## 4. Benchmark Execution Command Reference
 
 ```powershell
-# 1. Run race-detector unit benchmarks
-go test -race -bench=. ./internal/realtime/...
+# 1. Run race detector, then measure local fan-out and collect profiles
+go test -race ./...
+go test ./internal/realtime -run '^$' -bench BenchmarkBroadcastFanout -benchmem -memprofile heap.out -cpuprofile cpu.out
 
-# 2. Inspect memory and goroutines with pprof
-go tool pprof http://localhost:8080/debug/pprof/heap
-go tool pprof http://localhost:8080/debug/pprof/goroutine
+# 2. Inspect benchmark heap and CPU profiles
+go tool pprof heap.out
+go tool pprof cpu.out
 
-# 3. Execute k6 WebSocket load test
-k6 run --vus 50 --duration 2m loadtest/k6_room_burst.js
+# 3. Run authenticated WebSocket profiles with a private credential fixture
+$env:LOFT_USERS_FILE='C:\\path\\to\\users.json'
+k6 run -e LOFT_VUS=10  loadtest/k6_room_burst.js
+k6 run -e LOFT_VUS=25  loadtest/k6_room_burst.js
+k6 run -e LOFT_VUS=50  loadtest/k6_room_burst.js
+k6 run -e LOFT_VUS=100 loadtest/k6_room_burst.js
 ```
+
+The k6 fixture shape, room capacity requirements, and metric scope are in
+[`backend/loadtest/README.md`](../backend/loadtest/README.md). Capture the
+measured values, target host, commit, and configuration with the release gate.
+The profiles must be run before signing off; the existence of a harness does
+not establish any latency or resource threshold.
+
+### Local benchmark sample (2026-09-15)
+
+`go test ./internal/realtime -run '^$' -bench BenchmarkBroadcastFanout
+-benchtime=100x -benchmem` on Windows/amd64, Intel Core i7-8550U, measured
+the in-process enqueue path only:
+
+| Recipients | ns/op | B/op | allocs/op |
+| ---: | ---: | ---: | ---: |
+| 10 | 4,142 | 192 | 2 |
+| 25 | 4,975 | 448 | 3 |
+| 50 | 8,616 | 960 | 4 |
+| 100 | 11,404 | 2,112 | 5 |
+
+This is not a network load result and does not establish p95 latency or leak
+stability. The authenticated k6 profiles remain to be executed.

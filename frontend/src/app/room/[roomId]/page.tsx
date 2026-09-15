@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { api, loadCredential, saveCredential } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
 import { RoomSession } from "@/features/room/RoomSession";
@@ -10,6 +10,7 @@ import { useUIText } from "@/lib/i18n/uiText";
 
 export default function ActiveRoomPage() {
   const tr = useUIText();
+  const router = useRouter();
   const identifier = String(useParams<{ roomId: string }>().roomId);
   const [credential, setCredential] = useState<RoomCredential | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +18,10 @@ export default function ActiveRoomPage() {
     void (async () => {
       try {
         const room = await api.room(identifier);
+        if (room.slug && room.slug !== identifier) {
+          router.replace(`/room/${encodeURIComponent(room.slug)}`);
+          return;
+        }
         const existing = loadCredential(room.id);
         if (existing?.type === "guest") {
           setCredential(existing);
@@ -40,7 +45,7 @@ export default function ActiveRoomPage() {
         setError(caught instanceof Error ? caught.message : "Room not found");
       }
     })();
-  }, [identifier]);
+  }, [identifier, router]);
   if (error)
     return (
       <main className="min-h-screen flex items-center justify-center p-6">

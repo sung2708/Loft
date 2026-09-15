@@ -62,7 +62,9 @@ interface SessionValue {
       | "media.seek"
       | "media.duration"
       | "media.repeat"
-      | "reaction.send",
+      | "reaction.send"
+      | "room.lock"
+      | "participant.kick",
     payload: object,
   ) => boolean;
   leave: () => void;
@@ -98,6 +100,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
   const [liveKitToken, setLiveKitToken] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const activeDrawer = useUIStore((state) => state.activeDrawer);
+  const connectionState = useRoomStore((state) => state.connectionState);
 
   useEffect(() => {
     let disposed = false;
@@ -134,6 +137,8 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           useRoomStore.getState().participantJoined(event.payload);
         else if (event.type === "participant.left")
           useRoomStore.getState().participantLeft(event.payload.connection_id);
+        else if (event.type === "room.locked")
+          useRoomStore.getState().roomLocked(event.payload.locked, event.payload.version);
         else if (event.type === "chat.message")
           useChatStore
             .getState()
@@ -150,6 +155,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         }
         else if (event.type === "error") {
           if (event.payload.code === "MEDIA_COMMAND_REJECTED" || event.payload.code === "MEDIA_RATE_LIMITED") useMusicStore.getState().setError(event.payload.message);
+          else if (event.payload.code === "ROOM_COMMAND_REJECTED") useRoomStore.getState().setGovernanceError(event.payload.message);
           else if (event.payload.code === "REACTION_RATE_LIMITED") return;
           else useChatStore.getState().setSendError(event.payload.message);
         }
@@ -182,7 +188,13 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
   }, []);
   const sendCommand: SessionValue["sendCommand"] = useCallback((type, payload) => {
     const sent = socketRef.current?.send(type, payload) ?? false;
-    if (!sent && type !== "reaction.send") useMusicStore.getState().setError(currentText("Still reconnecting. Try again shortly."));
+    if (!sent) {
+      if (type === "room.lock" || type === "participant.kick") {
+        useRoomStore.getState().setGovernanceError(currentText("Still reconnecting. Try again shortly."));
+      } else if (type !== "reaction.send") {
+        useMusicStore.getState().setError(currentText("Still reconnecting. Try again shortly."));
+      }
+    }
     return sent;
   }, []);
   const leave = useCallback(() => {
@@ -190,7 +202,11 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     window.location.assign("/");
   }, []);
 
-  if (liveKitToken && LIVEKIT_URL) {
+  // A kicked or otherwise permanently rejected application session must also
+  // tear down the LiveKit tree. Keeping the media provider mounted while the
+  // WebSocket is FAILED leaves the removed participant's audio/video alive and
+  // makes the kick appear to have had no effect until a full page reload.
+  if (liveKitToken && connectionState !== "FAILED" && LIVEKIT_URL) {
     return (
       <LiveKitRoom
         token={liveKitToken}

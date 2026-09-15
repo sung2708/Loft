@@ -50,11 +50,12 @@ When Client A dispatches a chat message or media command:
 | State Element | Distribution Scope | Synchronization Mechanism |
 | :--- | :--- | :--- |
 | **Room Metadata** | Global | PostgreSQL durable read/write. |
-| **Active Participants** | Distributed Aggregation | Aggregated via Redis presence keys `presence:room:<id>:*`. |
-| **Media Playback State** | Global Sequential | Evaluated by receiving instance, version-incremented, published via Redis. |
+| **Active Participants** | Distributed Admission | Redis hash `presence:room:<id>:members` stores one 15s lease per identity; snapshots merge it with local Hub clients. |
+| **Media Playback State** | Global Sequential | A fenced Redis media-owner lease serializes mutations; non-owners forward commands over bounded media RPC. |
 | **Collaborative Queue** | Global Sequential | Incremented monotonic `version` over Redis Pub/Sub. |
 | **Chat Messages** | Global | Inserted to PostgreSQL, fanned out via Redis Pub/Sub. |
 | **Ephemeral Reactions** | Ephemeral Global | Broadcast over Redis Pub/Sub (best-effort, unbuffered). |
+| **Remote Governance** | Target Node | Redis instance channel closes the exact kicked socket; PostgreSQL `room_bans` remains the durable admission gate. |
 | **WebSocket Socket Pointers**| Strictly Local | Kept in local Go RAM (`state.clients map[string]*client`). |
 | **LiveKit Tokens** | Local REST Generation | Generated locally by each instance using shared `LIVEKIT_API_SECRET`. |
 
@@ -107,14 +108,7 @@ func (h *Hub) handleRedisMessage(msg *redis.Message) {
 
 To conserve Redis resources and network bandwidth, an instance only subscribes to Redis channels for rooms that have at least one active local WebSocket connection:
 
-1. **First Participant Joins Room on Instance X**:
-   - Instance X registers client.
-   - Instance X subscribes to Redis channel `room:<room_id>:events`.
-2. **Subsequent Participants Join on Instance X**:
-   - Reuses existing Redis subscription.
-3. **Last Local Participant Leaves Instance X**:
-   - Instance X unsubscribes from Redis channel `room:<room_id>:events`.
-   - Halts inter-node traffic for idle rooms on this instance.
+The Redis bus uses one bounded `room:*:events` wildcard subscription per backend instance. It is started with the process, reconnects with exponential backoff, and ignores origin packets from the same instance. Room-local fan-out still iterates only the Hub's local clients, so an idle room has no local work even though the subscription remains open.
 
 ---
 

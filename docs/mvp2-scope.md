@@ -9,7 +9,7 @@ This document establishes the authoritative engineering boundaries for **Loft MV
 Loft MVP 1 successfully established a working, single-node social room with low-latency WebRTC voice/video (LiveKit), a dedicated WebSocket control plane, Supabase authentication, durable PostgreSQL storage, and synchronized YouTube playback for small groups.
 
 **MVP 2 evolves Loft into:**
-1. A **visually polished social video experience** with camera mirror correctness, client-side face filters, and background blur/replacement.
+1. A **visually polished social video experience** with camera mirror correctness and optimized raw camera capture. Face filters and background effects move to MVP 3.
 2. An **optimized WebRTC experience** utilizing LiveKit adaptive streaming, dynacast, and viewport-aware subscription quality.
 3. A **multi-instance-capable backend** backed by Redis Pub/Sub for realtime room fan-out and ephemeral presence coordination without compromising PostgreSQL data durability.
 4. A **hardened realtime protocol** featuring bounded outbound backpressure, slow consumer protection, robust reconnect state recovery, and optimistic versioning.

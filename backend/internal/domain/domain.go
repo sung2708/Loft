@@ -16,6 +16,8 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrInvalidName  = errors.New("invalid display name")
 	ErrInvalidChat  = errors.New("invalid chat message")
+	ErrConflict     = errors.New("conflict")
+	ErrBanned       = errors.New("banned")
 )
 
 type IdentityType string
@@ -42,7 +44,17 @@ type Room struct {
 	OwnerID         string    `json:"owner_id"`
 	AllowGuests     bool      `json:"allow_guests"`
 	MaxParticipants int       `json:"max_participants"`
+	IsLocked        bool      `json:"is_locked"`
+	Version         int64     `json:"version"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// GovernanceStore persists room admission rules. Realtime authority keeps a
+// local copy, but PostgreSQL remains the durable source after process restart.
+type GovernanceStore interface {
+	SetRoomLocked(context.Context, string, string, int64, bool) (Room, error)
+	BanIdentity(context.Context, string, string, Identity) error
+	IsBanned(context.Context, string, Identity) (bool, error)
 }
 
 type Participant struct {

@@ -15,12 +15,63 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
 )
 
 type realtimeStore struct{ room domain.Room }
+
+type governedRealtimeStore struct {
+	realtimeStore
+	mu   sync.Mutex
+	bans map[string]struct{}
+}
+
+func (s *governedRealtimeStore) GetRoom(_ context.Context, identifier string) (domain.Room, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.room.ID == identifier || s.room.Slug == identifier {
+		return s.room, nil
+	}
+	return domain.Room{}, domain.ErrNotFound
+}
+
+func (s *governedRealtimeStore) SetRoomLocked(_ context.Context, roomID, ownerID string, expectedVersion int64, locked bool) (domain.Room, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.room.ID != roomID || s.room.OwnerID != ownerID || s.room.Version != expectedVersion {
+		return domain.Room{}, domain.ErrConflict
+	}
+	s.room.IsLocked = locked
+	s.room.Version++
+	return s.room, nil
+}
+
+func (s *governedRealtimeStore) BanIdentity(_ context.Context, roomID, ownerID string, identity domain.Identity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.room.ID != roomID || s.room.OwnerID != ownerID {
+		return domain.ErrConflict
+	}
+	key := identity.LiveKitIdentity()
+	if _, exists := s.bans[key]; exists {
+		return domain.ErrConflict
+	}
+	s.bans[key] = struct{}{}
+	return nil
+}
+
+func (s *governedRealtimeStore) IsBanned(_ context.Context, roomID string, identity domain.Identity) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.room.ID != roomID {
+		return false, domain.ErrNotFound
+	}
+	_, exists := s.bans[identity.LiveKitIdentity()]
+	return exists, nil
+}
 
 func (s *realtimeStore) Ping(context.Context) error                           { return nil }
 func (s *realtimeStore) UpsertProfile(context.Context, domain.Identity) error { return nil }
@@ -196,6 +247,137 @@ func TestDeleteGuardBlocksJoinsAndActiveRooms(t *testing.T) {
 	hub.FinishDelete(room.ID, false)
 	if _, _, added := hub.add(&client{id: uuid.NewString(), roomID: room.ID}, room); !added {
 		t.Fatal("failed delete did not release room")
+	}
+}
+
+func TestLockedRoomAllowsSameTabGuestReconnect(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), AllowGuests: true}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	identity := domain.Identity{ID: uuid.NewString(), Type: domain.IdentityGuest, RoomID: room.ID, DisplayName: "Guest"}
+	first := &client{id: uuid.NewString(), tabSessionID: "tab-1", roomID: room.ID, identity: identity}
+	if _, _, added := hub.add(first, room); !added {
+		t.Fatal("initial guest could not join")
+	}
+	hub.mu.Lock()
+	hub.rooms[room.ID].room.IsLocked = true
+	first.disconnected = true
+	hub.mu.Unlock()
+	reconnect := &client{id: uuid.NewString(), tabSessionID: "tab-1", roomID: room.ID, identity: identity}
+	if _, _, added := hub.add(reconnect, room); !added {
+		t.Fatalf("same-tab reconnect was blocked: %s", reconnect.joinError)
+	}
+	newGuest := identity
+	newGuest.ID = uuid.NewString()
+	blocked := &client{id: uuid.NewString(), tabSessionID: "tab-2", roomID: room.ID, identity: newGuest}
+	if _, _, added := hub.add(blocked, room); added || blocked.joinError != "ROOM_LOCKED" {
+		t.Fatalf("new guest was not blocked by lock: added=%v error=%s", added, blocked.joinError)
+	}
+}
+
+func TestRoomLockAndParticipantKick(t *testing.T) {
+	const (
+		secret  = "12345678901234567890123456789012"
+		ownerID = "4ff036f8-834c-4cb5-9097-30710442e19e"
+	)
+	room := domain.Room{ID: uuid.NewString(), OwnerID: ownerID, AllowGuests: true, MaxParticipants: 3}
+	store := &governedRealtimeStore{realtimeStore: realtimeStore{room: room}, bans: make(map[string]struct{})}
+	users := auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret)
+	guests := auth.NewGuestTokens(secret, time.Hour)
+	guestToken, guestIdentity, _, err := guests.Issue(room.ID, "Guest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": ownerID, "iss": "https://test.supabase.co/auth/v1", "aud": "authenticated", "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := New(store, guests, users, []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := httptest.NewServer(hub)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	dial := func(token string) (*websocket.Conn, Envelope) {
+		t.Helper()
+		conn, _, dialErr := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), &websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}}})
+		if dialErr != nil {
+			t.Fatal(dialErr)
+		}
+		payload, _ := json.Marshal(authPayload{Token: token, RoomID: room.ID, TabSessionID: uuid.NewString()})
+		if writeErr := wsjson.Write(ctx, conn, Envelope{Type: "connection.auth", Version: 1, RoomID: room.ID, Payload: payload}); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		var snapshot Envelope
+		if readErr := wsjson.Read(ctx, conn, &snapshot); readErr != nil {
+			t.Fatal(readErr)
+		}
+		return conn, snapshot
+	}
+	host, hostSnapshot := dial(hostToken)
+	defer host.CloseNow()
+	if hostSnapshot.Type != "room.snapshot" {
+		t.Fatalf("host join failed: %s", hostSnapshot.Type)
+	}
+	guest, guestSnapshot := dial(guestToken)
+	defer guest.CloseNow()
+	if guestSnapshot.Type != "room.snapshot" {
+		t.Fatalf("guest join failed: %s", guestSnapshot.Type)
+	}
+	var snapshotPayload struct {
+		Self domain.Participant `json:"self"`
+	}
+	if err := json.Unmarshal(guestSnapshot.Payload, &snapshotPayload); err != nil {
+		t.Fatal(err)
+	}
+	guestParticipant := snapshotPayload.Self
+	var joined Envelope
+	if err := wsjson.Read(ctx, host, &joined); err != nil || joined.Type != "participant.joined" {
+		t.Fatalf("host did not observe guest join: type=%s err=%v", joined.Type, err)
+	}
+	lockData, _ := json.Marshal(roomLockPayload{Locked: true, ExpectedVersion: 0})
+	if err := wsjson.Write(ctx, host, Envelope{Type: "room.lock", Version: 1, RoomID: room.ID, Payload: lockData}); err != nil {
+		t.Fatal(err)
+	}
+	var lockEvent Envelope
+	if err := wsjson.Read(ctx, host, &lockEvent); err != nil || lockEvent.Type != "room.locked" {
+		t.Fatalf("host did not observe room lock: type=%s err=%v", lockEvent.Type, err)
+	}
+	var lockPayload roomLockedPayload
+	if err := json.Unmarshal(lockEvent.Payload, &lockPayload); err != nil || !lockPayload.Locked || lockPayload.Version != 1 {
+		t.Fatalf("room lock state was not committed: payload=%s", lockEvent.Payload)
+	}
+	var guestLock Envelope
+	if err := wsjson.Read(ctx, guest, &guestLock); err != nil || guestLock.Type != "room.locked" {
+		t.Fatalf("guest did not receive room lock: type=%s err=%v", guestLock.Type, err)
+	}
+	kickPayload, _ := json.Marshal(kickPayload{ConnectionID: guestParticipant.ConnectionID})
+	if err := wsjson.Write(ctx, host, Envelope{Type: "participant.kick", Version: 1, RoomID: room.ID, Payload: kickPayload}); err != nil {
+		t.Fatal(err)
+	}
+	var left Envelope
+	if err := wsjson.Read(ctx, host, &left); err != nil || left.Type != "participant.left" {
+		t.Fatalf("host did not observe kick: type=%s err=%v", left.Type, err)
+	}
+	var leftPayload struct {
+		ConnectionID string `json:"connection_id"`
+	}
+	if err := json.Unmarshal(left.Payload, &leftPayload); err != nil || leftPayload.ConnectionID != guestParticipant.ConnectionID {
+		t.Fatalf("wrong kicked participant: payload=%s", left.Payload)
+	}
+	var ignored Envelope
+	if err := wsjson.Read(ctx, guest, &ignored); err == nil {
+		t.Fatal("kicked guest websocket remained open")
+	}
+	if banned, _ := store.IsBanned(ctx, room.ID, guestIdentity); !banned {
+		t.Fatal("kick did not persist a ban")
+	}
+	reconnected, reconnectResponse := dial(guestToken)
+	defer reconnected.CloseNow()
+	var rejection errorPayload
+	if err := json.Unmarshal(reconnectResponse.Payload, &rejection); err != nil || reconnectResponse.Type != "error" || rejection.Code != "ROOM_KICKED" {
+		t.Fatalf("banned guest was allowed to reconnect: type=%s payload=%s", reconnectResponse.Type, reconnectResponse.Payload)
 	}
 }
 

@@ -23,7 +23,7 @@ import {
 import { emptyMedia, useMusicStore } from "@/stores/useMusicStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useRoomSession } from "./RoomSession";
-import { canonicalPositionMs } from "./mediaClock";
+import { canonicalPositionMs, driftCorrection } from "./mediaClock";
 import { useTranslation } from "@/lib/i18n/useTranslation";
 
 interface YouTubePlayer {
@@ -36,6 +36,9 @@ interface YouTubePlayer {
   getCurrentTime(): number;
   getDuration(): number;
   getPlayerState(): number;
+  getPlaybackRate?(): number;
+  getAvailablePlaybackRates?(): number[];
+  setPlaybackRate?(rate: number): void;
   getVideoData?(): { video_id: string; title?: string; author?: string };
   setVolume(volume: number): void;
   isMuted?(): boolean;
@@ -61,6 +64,7 @@ interface YouTubeAPI {
         onReady: () => void;
         onStateChange: (event: { data: number }) => void;
         onError: () => void;
+        onAutoplayBlocked: () => void;
       };
     },
   ) => YouTubePlayer;
@@ -114,8 +118,12 @@ export function MusicDrawer({
     Record<string, { title?: string; channel?: string }>
   >({});
 
-  const [apiReady, setApiReady] = useState(false);
+  const [apiReady, setApiReady] = useState(
+    () => typeof window !== "undefined" && Boolean(window.YT?.Player),
+  );
+  const [playerReady, setPlayerReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const volumeRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
   const loadedVideo = useRef<string | null>(null);
   const pendingVersion = useRef<number | null>(null);
@@ -148,10 +156,7 @@ export function MusicDrawer({
   // evaluating. Register it before Next's Script callback runs so we cannot
   // miss that one-shot signal on a fast connection.
   useEffect(() => {
-    if (window.YT?.Player) {
-      setApiReady(true);
-      return;
-    }
+    if (window.YT?.Player) return;
 
     const previousCallback = window.onYouTubeIframeAPIReady;
     const markReady = () => setApiReady(true);
@@ -243,6 +248,7 @@ export function MusicDrawer({
       events: {
         onReady: () => {
           playerRef.current = instance;
+          setPlayerReady(true);
           instance.setVolume(latest.current.volume);
           const state = latest.current.media;
           if (state.current) {
@@ -289,6 +295,11 @@ export function MusicDrawer({
           useMusicStore
             .getState()
             .setError("This YouTube video cannot play here. The host can skip it.");
+        },
+        onAutoplayBlocked: () => {
+          // A click in the room may not grant permission to the cross-origin
+          // iframe. Leave a real gesture button visible instead of retrying.
+          if (instance.getPlayerState() !== 1) setActivated(false);
         },
       },
     });
@@ -338,9 +349,10 @@ export function MusicDrawer({
     }
 
     if (activated && media.status === "PLAYING") {
-      instance.playVideo();
+      if (instance.getPlayerState() !== 1) instance.playVideo();
     } else {
       instance.pauseVideo();
+      if (instance.getPlaybackRate?.() !== 1) instance.setPlaybackRate?.(1);
     }
   }, [media, clockOffset, activated]);
 
@@ -387,15 +399,16 @@ export function MusicDrawer({
     return () => clearInterval(interval);
   }, [duration, isScrubbing]);
 
-  // Periodic resync check
+  // Compare with the room's canonical clock once per second. YouTube only
+  // supports a subset of rates, so use soft nudges when 0.95/1.05 are offered.
   useEffect(() => {
     const resyncTimer = setInterval(() => {
       const instance = playerRef.current;
       const state = latest.current;
-      if (!instance || !state.media.current || !state.activated) return;
+      if (!instance || !state.media.current) return;
 
       const playerState = instance.getPlayerState();
-      if (state.media.status !== "PLAYING") {
+      if (state.media.status !== "PLAYING" || !state.activated) {
         if (playerState === 1) instance.pauseVideo();
         return;
       }
@@ -413,14 +426,35 @@ export function MusicDrawer({
             state.media.status,
             Date.now() + state.clockOffset,
           ) / 1000;
-        if (Math.abs(instance.getCurrentTime() - target) > 1.5) {
-          instance.seekTo(target, true);
+        const correction = driftCorrection(
+          instance.getCurrentTime() * 1000,
+          target * 1000,
+          instance.getPlaybackRate?.() ?? 1,
+          instance.getAvailablePlaybackRates?.() ?? [1],
+        );
+        if (correction.kind === "seek") {
+          instance.seekTo(correction.positionMs / 1000, true);
+          if (instance.getPlaybackRate?.() !== 1) instance.setPlaybackRate?.(1);
+        } else if (correction.kind === "rate") {
+          instance.setPlaybackRate?.(correction.rate);
         }
       }
-    }, 2000);
+    }, 1000);
 
     return () => clearInterval(resyncTimer);
   }, []);
+
+  const enableAudio = () => {
+    const instance = playerRef.current;
+    if (!instance) return;
+    // Send playVideo directly from the user's click; a React effect scheduled
+    // after the click can lose the browser's transient user activation.
+    instance.unMute?.();
+    instance.setVolume(volume);
+    setIsMuted(false);
+    if (media.status === "PLAYING") instance.playVideo();
+    setActivated(true);
+  };
 
   const handleAddTrack = async (event: FormEvent) => {
     event.preventDefault();
@@ -538,6 +572,24 @@ export function MusicDrawer({
     }
   };
 
+  useEffect(() => {
+    if (!showVolumeSlider) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!volumeRef.current?.contains(event.target as Node)) {
+        setShowVolumeSlider(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowVolumeSlider(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showVolumeSlider]);
+
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
     if (playerRef.current) {
@@ -611,6 +663,9 @@ export function MusicDrawer({
         strategy="afterInteractive"
         onReady={() => {
           if (window.YT?.Player) setApiReady(true);
+        }}
+        onError={() => {
+          useMusicStore.getState().setError("Unable to load the YouTube player. Check your connection and try again.");
         }}
       />
 
@@ -696,10 +751,11 @@ export function MusicDrawer({
             )}
 
             {/* Audio Enable Prompt if not yet activated on mobile/Safari */}
-            {media.current && !activated && (
+            {media.current && media.status === "PLAYING" && !activated && (
               <button
-                onClick={() => setActivated(true)}
-                className="w-full py-1.5 rounded-lg bg-[#0066CC] hover:bg-[#0077ED] text-white text-xs font-semibold shadow-xs transition-all"
+                onClick={enableAudio}
+                disabled={!playerReady}
+                className="w-full py-1.5 rounded-lg bg-[#0066CC] hover:bg-[#0077ED] disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition-all"
               >
                 {mq.enableAudio}
               </button>
@@ -793,14 +849,18 @@ export function MusicDrawer({
                 <div className="flex items-center gap-1 relative">
                   {/* Volume Toggle & Popover */}
                   <div
+                    ref={volumeRef}
                     className="relative flex items-center"
-                    onMouseEnter={() => setShowVolumeSlider(true)}
-                    onMouseLeave={() => setShowVolumeSlider(false)}
                   >
                     <button
-                      onClick={toggleMute}
+                      onClick={() => {
+                        setShowVolumeSlider((open) => !open);
+                        toggleMute();
+                      }}
                       className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--border-loft)] transition-all cursor-pointer"
                       title={mq.volume}
+                      aria-label={mq.volume}
+                      aria-expanded={showVolumeSlider}
                     >
                       {isMuted || volume === 0 ? (
                         <VolumeX className="w-4 h-4 text-[#FF3B30]" />
@@ -811,7 +871,7 @@ export function MusicDrawer({
 
                     {/* Inline mini slider when hovered */}
                     {showVolumeSlider && (
-                      <div className="absolute right-0 bottom-full p-2 rounded-xl bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-xl z-50 flex items-center gap-2">
+                      <div role="dialog" aria-label={mq.volume} className="absolute right-0 bottom-full mb-1 p-2 rounded-xl bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-xl z-50 flex items-center gap-2">
                         <input
                           type="range"
                           min="0"

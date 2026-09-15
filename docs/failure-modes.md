@@ -6,32 +6,14 @@ This document specifies the failure modes, detection mechanics, user impact, and
 
 ## 1. Resilience Matrix Overview
 
-```
-+---------------------+-------------------+---------------------+--------------------+
-| FAILING SUBSYSTEM   | DETECTION METHOD  | USER IMPACT         | SYSTEM BEHAVIOR    |
-+---------------------+-------------------+---------------------+--------------------+
-| PostgreSQL          | Ping / Query Err  | Cannot create rooms | Degrades to read;  |
-|                     |                   | or persist chat     | memory state runs  |
-+---------------------+-------------------+---------------------+--------------------+
-| Redis               | Ping timeout      | Loss of cross-node  | Falls back to local|
-|                     |                   | fan-out             | in-memory Hub      |
-+---------------------+-------------------+---------------------+--------------------+
-| LiveKit SFU         | ICE / Token Err   | Audio/video drops   | WS chat & media    |
-|                     |                   |                     | remain 100% active |
-+---------------------+-------------------+---------------------+--------------------+
-| Supabase Auth       | JWKS fetch / 5xx  | Cannot login        | Guest tokens continue|
-|                     |                   |                     | working cleanly    |
-+---------------------+-------------------+---------------------+--------------------+
-| YouTube Embed       | Iframe onError    | Video fails to load | Advance to next in |
-|                     |                   |                     | collaborative queue|
-+---------------------+-------------------+---------------------+--------------------+
-| Vision Filter Crash | JS Error / Canvas | Video freezes/drops | Disables effects;  |
-|                     |                   |                     | raw camera fallback|
-+---------------------+-------------------+---------------------+--------------------+
-| Client Slow Socket  | Outbound buffer   | Laggy user dropped  | Terminate slow peer|
-|                     | full (>64)        |                     | protect fast peers |
-+---------------------+-------------------+---------------------+--------------------+
-```
+| Failing subsystem | Detection | User impact | Current behavior |
+| :--- | :--- | :--- | :--- |
+| PostgreSQL | Ping or query error | New joins, room changes, and chat persistence fail | Existing room state remains in Go memory; failed writes return errors |
+| Redis | Pub/Sub or command timeout | Cross-node events and admission can fail | Local Hub continues; cross-node delivery resumes on reconnect |
+| LiveKit SFU | SDK connection or token error | Voice/video drops | WebSocket chat and queue remain available |
+| Supabase Auth | JWT/JWKS verification error | User login or rejoin fails | Valid guest tokens can still join permitted rooms |
+| YouTube Embed | IFrame player error | Track cannot play | Client shows an error; host may skip |
+| Slow WebSocket client | Outbound buffer fills | Slow peer disconnects | Fast peers continue receiving local broadcasts |
 
 ---
 
@@ -48,8 +30,8 @@ This document specifies the failure modes, detection mechanics, user impact, and
 ### 2. Redis Cluster Outage
 - **Detection**: Background Redis ping times out ($>500\text{ms}$).
 - **User Impact**: In a multi-instance cluster, participants connected to different Go nodes stop receiving each other's messages. Participants on the same node experience zero disruption.
-- **System Behavior**: Circuit breaker trips. The Go backend logs an alert and automatically falls back to local in-memory presence and local rate limiting. **The Go process never crashes.**
-- **Recovery**: Redis client reconnects with exponential backoff and automatically resubscribes to active room channels.
+- **System Behavior**: The Go backend logs an error and continues local in-memory room delivery and rate limiting. Cross-node delivery cannot continue until Redis recovers; a multi-instance deployment must treat this as degraded.
+- **Recovery**: Redis client reconnects with exponential backoff and resumes its bounded wildcard room subscription.
 - **Data Integrity**: Zero permanent data lost (Redis holds only ephemeral state).
 - **Observability**: `slog.Error("redis unavailable, falling back to in-memory mode")`.
 
@@ -71,7 +53,7 @@ This document specifies the failure modes, detection mechanics, user impact, and
 ### 5. YouTube Embed Unavailable / Video Blocked
 - **Detection**: YouTube IFrame API fires `onError` (code 101/150: playback in embedded players disabled by owner).
 - **User Impact**: Player displays video unavailable banner.
-- **System Behavior**: The client reports the error to the Go server; the room authority advances to the next track in the collaborative queue (`queue.next`).
+- **System Behavior**: The client displays a playback error. The host can skip the track with `queue.next`; automatic skip is not implemented.
 - **Observability**: Logged client-side; metrics record `media_playback_failures_total`.
 
 ### 6. Go Backend Instance Crash (Node Failure)
@@ -79,25 +61,14 @@ This document specifies the failure modes, detection mechanics, user impact, and
 - **User Impact**: Connected WebSockets disconnect immediately.
 - **System Behavior**: Load balancer shifts traffic to healthy instances.
 - **Recovery**: Clients transition to `RECONNECTING` with exponential jitter, reconnect to an alternate Go instance, and fetch authoritative `room.snapshot`.
-- **Data Integrity**: Durable messages and room metadata are safe in PostgreSQL. Active media state resumes from last committed anchor.
+- **Data Integrity**: Durable messages and room metadata are safe in PostgreSQL. Active media state is Go-owned and ephemeral; a node crash can lose its current queue/timeline unless a distributed room authority has transferred that state.
 
-### 7. Client-Side Video Filter Crash / WebAssembly Exception
-- **Detection**: `try ... catch` around `@mediapipe/tasks-vision` frame detection loop.
-- **User Impact**: Video effects momentarily stop.
-- **System Behavior**: Circuit breaker disables effects (`effectConfig.faceEffect = "none"`, `backgroundEffect = "none"`) and falls back immediately to raw camera stream. The call does not crash.
-- **Recovery**: User receives non-intrusive toast (*"Camera effects disabled to keep call smooth"*).
-
-### 8. Camera Permission Revoked Mid-Call
+### 7. Camera Permission Revoked Mid-Call
 - **Detection**: `navigator.mediaDevices` triggers track `ended` event; LiveKit emits `onMediaDeviceFailure`.
 - **User Impact**: Camera tile switches to avatar initials; audio continues streaming.
 - **System Behavior**: LiveKit unpublishes camera track; Go UI reflects camera off status.
 
-### 9. CPU Throttling / Device Overheating
-- **Detection**: Client render loop averages $>25\text{ms}$ per frame over 3 consecutive seconds.
-- **User Impact**: Video filter degrades gracefully (e.g. 30fps → 15fps → blur-only → off).
-- **System Behavior**: **Golden Rule Enforced:** Filter quality drops before camera or audio quality degrades.
-
-### 10. Saturated Client Outbound Socket (Slow Consumer)
+### 8. Saturated Client Outbound Socket (Slow Consumer)
 - **Detection**: WebSocket client `send` channel exceeds capacity (64 items).
 - **User Impact**: Saturated client is disconnected.
 - **System Behavior**: Server invokes `c.conn.CloseNow()` immediately. Fast clients in the room experience zero latency impact.

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,23 +20,30 @@ import (
 	"loft/backend/internal/domain"
 	"loft/backend/internal/livekit"
 	"loft/backend/internal/ratelimit"
+	"loft/backend/internal/telemetry"
 )
 
 type Server struct {
-	store      domain.Store
-	deletion   RoomDeletionGuard
-	users      *auth.SupabaseVerifier
-	guests     *auth.GuestTokens
-	livekit    *livekit.TokenService
-	guestLimit *ratelimit.Limiter
-	roomLimit  *ratelimit.Limiter
-	origins    map[string]struct{}
-	logger     *slog.Logger
+	store        domain.Store
+	deletion     RoomDeletionGuard
+	users        *auth.SupabaseVerifier
+	guests       *auth.GuestTokens
+	livekit      *livekit.TokenService
+	lookupLimit  *ratelimit.Limiter
+	guestLimit   *ratelimit.Limiter
+	roomLimit    *ratelimit.Limiter
+	origins      map[string]struct{}
+	logger       *slog.Logger
+	httpRequests atomic.Uint64
+	httpDuration telemetry.DurationHistogram
 }
 
 type RoomDeletionGuard interface {
 	BeginDelete(roomID string) bool
 	FinishDelete(roomID string, deleted bool)
+}
+type mediaAdmissionGuard interface {
+	CanIssueMediaToken(context.Context, string, domain.Identity) (bool, error)
 }
 type metricsProvider interface{ PrometheusMetrics() string }
 
@@ -44,13 +53,17 @@ type roomPreview struct {
 	Name            string `json:"name"`
 	AllowGuests     bool   `json:"allow_guests"`
 	MaxParticipants int    `json:"max_participants"`
+	IsLocked        bool   `json:"is_locked"`
 }
 
 func preview(room domain.Room) roomPreview {
-	return roomPreview{ID: room.ID, Slug: room.Slug, Name: room.Name, AllowGuests: room.AllowGuests, MaxParticipants: room.MaxParticipants}
+	return roomPreview{ID: room.ID, Slug: room.Slug, Name: room.Name, AllowGuests: room.AllowGuests, MaxParticipants: room.MaxParticipants, IsLocked: room.IsLocked}
 }
 
 func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTokens, livekitService *livekit.TokenService, origins []string, logger *slog.Logger, deletion ...RoomDeletionGuard) *Server {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	allowed := make(map[string]struct{}, len(origins))
 	for _, origin := range origins {
 		allowed[origin] = struct{}{}
@@ -60,12 +73,20 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		guard = deletion[0]
 	}
 	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		guestLimit: ratelimit.New(10, time.Minute, 5), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger}
+		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger}
+}
+
+// ConfigureDistributedRateLimits shares abuse budgets across backend nodes.
+// Each limiter retains a bounded in-process fallback for Redis outages.
+func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
+	s.lookupLimit.SetDistributed("room_lookup", remote)
+	s.guestLimit.SetDistributed("guest_session", remote)
+	s.roomLimit.SetDistributed("room_create", remote)
 }
 
 func (s *Server) Routes(ws http.Handler) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.Recoverer, s.cors)
+	r.Use(middleware.RequestID, s.observeHTTP, middleware.Recoverer, s.cors)
 	r.Handle("/ws", ws)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(15 * time.Second))
@@ -92,10 +113,26 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 	if metrics, ok := ws.(metricsProvider); ok {
 		r.Get("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-			_, _ = fmt.Fprint(w, metrics.PrometheusMetrics())
+			_, _ = fmt.Fprint(w, s.prometheusMetrics(), metrics.PrometheusMetrics())
 		})
 	}
 	return r
+}
+
+func (s *Server) observeHTTP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		defer func() {
+			s.httpRequests.Add(1)
+			s.httpDuration.Observe(time.Since(start))
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) prometheusMetrics() string {
+	return fmt.Sprintf("# HELP loft_http_requests_total HTTP requests served by this process.\n# TYPE loft_http_requests_total counter\nloft_http_requests_total %d\n", s.httpRequests.Load()) +
+		s.httpDuration.Prometheus("loft_http_request_duration_seconds", "HTTP handler duration in seconds.")
 }
 
 func (s *Server) deleteRoom(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +179,10 @@ func (s *Server) deleteRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveRoom(w http.ResponseWriter, r *http.Request) {
+	if !s.lookupLimit.AllowContext(r.Context(), clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many room lookups")
+		return
+	}
 	identifier, err := domain.NormalizeRoomIdentifier(r.URL.Query().Get("value"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ROOM_IDENTIFIER", "Enter a valid room ID or invite link")
@@ -171,6 +212,10 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getRoom(w http.ResponseWriter, r *http.Request) {
+	if !s.lookupLimit.AllowContext(r.Context(), clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many room lookups")
+		return
+	}
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
@@ -184,7 +229,7 @@ func (s *Server) getRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
-	if !s.guestLimit.Allow(clientIP(r)) {
+	if !s.guestLimit.AllowContext(r.Context(), clientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many guest sessions")
 		return
 	}
@@ -199,6 +244,10 @@ func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !room.AllowGuests {
 		writeError(w, http.StatusForbidden, "ROOM_ACCESS_DENIED", "This room does not allow guests")
+		return
+	}
+	if room.IsLocked {
+		writeError(w, http.StatusForbidden, "ROOM_LOCKED", "This room is locked")
 		return
 	}
 	var input struct {
@@ -248,7 +297,7 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
-	if !s.roomLimit.Allow(clientIP(r)) {
+	if !s.roomLimit.AllowContext(r.Context(), clientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many room creation attempts")
 		return
 	}
@@ -321,6 +370,28 @@ func (s *Server) liveKitToken(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
 		return
+	}
+	if governance, ok := s.store.(domain.GovernanceStore); ok {
+		banned, err := governance.IsBanned(r.Context(), room.ID, identity)
+		if err != nil {
+			s.internal(w, r, "check room ban", err)
+			return
+		}
+		if banned {
+			writeError(w, http.StatusForbidden, "ROOM_KICKED", "You were removed from this room")
+			return
+		}
+	}
+	if guard, ok := s.deletion.(mediaAdmissionGuard); ok {
+		admitted, err := guard.CanIssueMediaToken(r.Context(), room.ID, identity)
+		if err != nil {
+			s.internal(w, r, "check media admission", err)
+			return
+		}
+		if !admitted {
+			writeError(w, http.StatusForbidden, "ROOM_ACCESS_DENIED", "Join the room before requesting media access")
+			return
+		}
 	}
 	token, err := s.livekit.Create(room, identity)
 	if err != nil {

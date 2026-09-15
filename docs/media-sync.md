@@ -18,7 +18,7 @@ Loft provides a shared media social viewing experience with strict copyright and
 ```go
 type MediaState struct {
     Current    *YouTubeTrack `json:"current"`      // Currently active track
-    Queue      []YouTubeTrack`json:"queue"`        // Ordered collaborative queue
+    Queue      []YouTubeTrack `json:"queue"`       // Ordered collaborative queue
     Repeat     bool          `json:"repeat"`       // Repeat active track toggle
     Status     string        `json:"status"`       // "IDLE" | "PLAYING" | "PAUSED"
     PositionMs int64         `json:"position_ms"`  // Anchor playback position
@@ -46,15 +46,15 @@ Broadcasting `currentTime` ticks every second or every frame generates severe ne
 ### The Authoritative Anchor Formula
 The server maintains a static anchor `(position_ms, started_at)`. Any client computes the canonical instantaneous playback position deterministically:
 
-$$\text{PredictedPositionMs} = \begin{cases} 
-\text{PositionMs} & \text{if Status} = \text{PAUSED} \text{ or } \text{IDLE} \\ 
-\text{PositionMs} + (\text{ClientNow} + \text{ClockOffset} - \text{StartedAt}) \times \text{PlaybackRate} & \text{if Status} = \text{PLAYING} 
+$$\text{PredictedPositionMs} = \begin{cases}
+\text{PositionMs} & \text{if Status} = \text{PAUSED} \text{ or } \text{IDLE} \\
+\text{PositionMs} + (\text{ClientNow} + \text{ClockOffset} - \text{StartedAt}) & \text{if Status} = \text{PLAYING}
 \end{cases}$$
 
 Where:
 - $\text{ClientNow}$ is the local browser `Date.now()`.
 - $\text{ClockOffset}$ is the NTP-calibrated delta computed from `connection.ping` / `connection.pong`.
-- $\text{PlaybackRate}$ is standard $1.0$ (or nudged rate during soft drift correction).
+- The canonical room timeline always advances at $1.0\times$. A supported local player-rate adjustment affects only that client's short-term drift correction.
 
 ---
 
@@ -104,6 +104,8 @@ All media mutations are verified by the Go backend before modifying the in-memor
    - Host player reports video duration extracted from YouTube iframe API.
    - Updates `Current.DurationSec`, enabling the Go server to manage automatic queue advance.
 
+`queue.add` is the exception to the `expected_version` check: an admitted member may append to the queue without a version precondition. If it supplies the first track, the server cues that track in `PAUSED`; only the host can start shared playback. Other media/queue mutations require the current media version.
+
 ---
 
 ## 5. Three-Tier Client Drift Correction
@@ -123,9 +125,9 @@ $$\Delta_{\text{drift}} = P_{\text{local}} - P_{\text{predicted}}$$
            250ms <= |Δ_drift| <= 1500ms
         ┌───────────────────────────────────┐
         │      TIER 2: SOFT CORRECTION      │
-        │ • Nudge player speed to 0.95x/1.05│
-        │ • Smooth audio, avoids pop/clicks │
-        │ • Reverts to 1.0x when drift <50ms│
+        │ • Use 0.95x/1.05x only if the     │
+        │   current video supports it      │
+        │ • Revert to 1.0x below 50ms      │
         └───────────────────────────────────┘
 
                  |Δ_drift| > 1500ms
@@ -136,6 +138,8 @@ $$\Delta_{\text{drift}} = P_{\text{local}} - P_{\text{predicted}}$$
         └───────────────────────────────────┘
 ```
 
+The YouTube IFrame API exposes supported rates per video through `getAvailablePlaybackRates()`. Calling `setPlaybackRate()` does not guarantee a change. When 0.95×/1.05× are unavailable, the client leaves moderate drift alone until it exceeds 1500 ms, then seeks to the canonical position. This behavior follows the [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference).
+
 ---
 
 ## 6. Late Join & Reconnect Synchronization
@@ -145,4 +149,4 @@ When a client joins an active room or reconnects after an interruption:
 2. Client mounts/cues the active `Current.VideoID`.
 3. Client computes $P_{\text{predicted}}$ from the snapshot anchor.
 4. Client seeks directly to $P_{\text{predicted}}$ (Tier 3 Hard Seek) and initiates playback if `Status == "PLAYING"` and user gesture activation is present.
-5. Result: The user is in sync with the room in $<500\text{ms}$ without custom streaming infrastructure.
+5. The client continues local drift checks after the player becomes ready. Audible playback still depends on that browser's user-gesture/autoplay policy.

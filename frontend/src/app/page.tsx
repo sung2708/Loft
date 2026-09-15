@@ -332,7 +332,7 @@ export default function LobbyPage() {
                     <div className="flex flex-col gap-1">
                       {recentRooms.slice(0, 4).map((room) => (
                         <div key={room.id} className="group flex items-center gap-1 rounded-xl hover:bg-[var(--border-loft)] transition-colors text-xs">
-                          <Link href={`/room/${room.id}`} className="flex-1 min-w-0 flex items-center justify-between px-3 py-2">
+                          <Link href={`/room/${room.slug}`} className="flex-1 min-w-0 flex items-center justify-between px-3 py-2">
                             <div className="flex items-center gap-2 min-w-0">
                             <span className="w-1.5 h-1.5 rounded-full bg-[#0066CC]" />
                             <span className="font-medium text-[var(--text-loft-primary)] truncate">

@@ -10,11 +10,13 @@ const fallback: Metadata = {
     description: "A shared space to talk, watch, listen, and hang out together.",
     siteName: "Loft",
     type: "website",
+    images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Loft" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Loft — We’re here together.",
     description: "A shared space to talk, watch, listen, and hang out together.",
+    images: ["/apple-icon.png"],
   },
 };
 
@@ -38,10 +40,10 @@ export async function generateRoomMetadata(identifier: string): Promise<Metadata
     const data: unknown = await response.json();
     if (!isRoomPreview(data) || !data.allow_guests) return fallback;
 
-    // id is the public identifier exposed by the unauthenticated room preview
-    // and /room/{id}. slug is backed by invite_code and is never emitted here.
+    // id is the public room identifier exposed by the unauthenticated preview;
+    // slug is the short invite code used by /join/{code} and /room/{code}.
     const title = `${data.name.trim() || `Room ${data.id}`} · Loft`;
-    const description = `Room ${data.id} on Loft — We’re here together.`;
+    const description = `${title} — a shared space to talk, watch, listen, and hang out together.`;
     return {
       title: { absolute: title },
       description,
@@ -50,11 +52,13 @@ export async function generateRoomMetadata(identifier: string): Promise<Metadata
         description,
         type: "website",
         siteName: "Loft",
+        images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Loft" }],
       },
       twitter: {
         card: "summary_large_image",
         title,
         description,
+        images: ["/apple-icon.png"],
       },
     };
   } catch {

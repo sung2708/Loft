@@ -66,8 +66,9 @@ Clear ownership boundaries prevent state drift, security vulnerabilities, and di
 
 ### C. Redis Boundary
 - **What it Owns:**
-  - `presence:room:<room_id>:<user_id>` keys with strict TTL (e.g., 15 seconds).
-  - Pub/Sub channel `room:<room_id>` for horizontal multi-instance fan-out.
+  - `presence:room:<room_id>:members` hash with per-identity 15-second leases and a short hash TTL.
+  - Pub/Sub channel `room:<room_id>:events` for horizontal multi-instance fan-out.
+  - Fenced `lease:room:<room_id>:media_owner` and short-lived media snapshot cache.
   - Distributed rate limit counters with sliding window expiry.
 - **Failure Invariant:** If Redis crashes or is flushed, the application experiences transient presence drops or temporary rate limit reset, but **zero durable data loss** occurs. Redis is an accelerator and ephemeral coordination bus, never a database.
 
@@ -95,9 +96,9 @@ Clear ownership boundaries prevent state drift, security vulnerabilities, and di
 2. **Go:** Validates JWT against Supabase public keys; checks ban table in Postgres.
 3. **Go:** Allocates room actor in-memory (or connects to existing).
 4. **Go -> LiveKit:** Generates scoped LiveKit token with specific grants (`canPublish: true, canSubscribe: true`).
-5. **Go -> Redis:** Sets presence key `presence:room:<id>:<user>` with 15s TTL.
-6. **Go -> Client:** Returns authoritative `room.snapshot` payload + LiveKit JWT token.
-7. **Client -> LiveKit:** Connects directly to SFU using token.
+5. **Go -> Redis:** Atomically admits one identity into `presence:room:<id>:members` with a 15s lease.
+6. **Go -> Client:** Returns authoritative `room.snapshot`; the client then requests a LiveKit token after admission.
+7. **Client -> LiveKit:** Connects directly to SFU using the scoped token.
 
 ### Workflow 2: Synchronized Play/Pause Command
 1. **Client -> Go (WS):** Sends `media.play` with client timestamp and target media ID.

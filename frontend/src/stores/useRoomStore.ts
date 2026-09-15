@@ -14,9 +14,12 @@ interface RoomStoreState {
   participants: ApiParticipant[];
   connectionState: ConnectionState;
   connectionError: string | null;
+  governanceError: string | null;
   applySnapshot: (snapshot: RoomSnapshot) => void;
   participantJoined: (participant: ApiParticipant) => void;
   participantLeft: (connectionId: string) => void;
+  roomLocked: (locked: boolean, version: number) => void;
+  setGovernanceError: (error: string | null) => void;
   setConnectionState: (state: ConnectionState, error?: string | null) => void;
   reset: () => void;
 }
@@ -27,6 +30,7 @@ const initial = {
   participants: [],
   connectionState: "DISCONNECTED" as ConnectionState,
   connectionError: null,
+  governanceError: null,
 };
 
 export const useRoomStore = create<RoomStoreState>((set) => ({
@@ -38,6 +42,7 @@ export const useRoomStore = create<RoomStoreState>((set) => ({
       participants: snapshot.participants,
       connectionState: "CONNECTED",
       connectionError: null,
+      governanceError: null,
     }),
   participantJoined: (participant) =>
     set((state) => ({
@@ -60,6 +65,11 @@ export const useRoomStore = create<RoomStoreState>((set) => ({
         (item) => item.connection_id !== connectionId,
       ),
     })),
+  roomLocked: (locked, version) =>
+    set((state) => state.room && version > state.room.version
+      ? { room: { ...state.room, is_locked: locked, version }, governanceError: null }
+      : state),
+  setGovernanceError: (governanceError) => set({ governanceError }),
   setConnectionState: (connectionState, connectionError = null) =>
     set({ connectionState, connectionError }),
   reset: () => set(initial),

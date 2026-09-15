@@ -54,44 +54,44 @@ All HTTP error responses return a standardized JSON envelope with stable machine
 | HTTP Status | Error Code | Description |
 | :--- | :--- | :--- |
 | `400 Bad Request` | `INVALID_PAYLOAD` | Request body failed JSON decoding or field validation. |
-| `401 Unauthorized` | `AUTHENTICATION_REQUIRED` | Missing, expired, or malformed JWT / Guest token. |
-| `403 Forbidden` | `PERMISSION_DENIED` | Caller lacks required capability (e.g. non-host altering room settings). |
-| `403 Forbidden` | `USER_BANNED` | User is banned from entering the target room. |
+| `401 Unauthorized` | `UNAUTHORIZED` | Missing, expired, or malformed JWT / Guest token. |
+| `403 Forbidden` | `ROOM_ACCESS_DENIED` | Caller cannot enter the target room or request media access. |
+| `403 Forbidden` | `ROOM_KICKED` | Identity has a durable ban in the target room. |
 | `404 Not Found` | `ROOM_NOT_FOUND` | Room ID or slug does not exist. |
 | `404 Not Found` | `INVITE_EXPIRED` | Invitation code does not exist or has reached max uses / expiry. |
-| `409 Conflict` | `STALE_VERSION` | Optimistic lock conflict; caller must re-fetch snapshot. |
-| `429 Too Many Requests` | `RATE_LIMIT_EXCEEDED` | Exceeded allowed requests per time window. |
-| `500 Internal Error` | `INTERNAL_SERVER_ERROR`| Unhandled server exception. |
+| `409 Conflict` | `ROOM_BUSY` | Room has active participants or another delete is in progress. |
+| `429 Too Many Requests` | `RATE_LIMITED` | Exceeded allowed requests per time window. |
+| `503 Service Unavailable` | `NOT_READY` / `LIVEKIT_TOKEN_FAILED` | A required dependency is unavailable. |
+| `500 Internal Error` | `INTERNAL_ERROR` | Unhandled server exception. |
 
 ---
 
 ## 4. HTTP API Endpoint Catalog (v1)
 
 ### Authentication & Profiles
-- `POST /api/v1/auth/guest` — Generate room-scoped guest token.
-  - Body: `{ "room_slug": "friday-hangout", "display_name": "Cozy Beaver" }`
-  - Returns: `{ "token": "...", "guest_id": "...", "display_name": "..." }`
-- `GET /api/v1/users/me` — Retrieve current authenticated profile.
+- `GET /api/v1/users/me` — Retrieve the current authenticated profile (`Authorization: Bearer <supabase-jwt>`).
 
 ### Rooms & Lifecycle
 - `POST /api/v1/rooms` — Create a new room (Requires Auth).
-  - Body: `{ "name": "Friday Chill", "is_private": true, "passcode": "optional" }`
-  - Returns: Created room record with unique slug.
+  - Body: `{ "name": "Friday Chill", "allow_guests": true }`
+  - Returns: Created room record with a unique six-digit public `slug`; the UUID `id` remains the internal identifier.
+- `GET /api/v1/rooms` — List rooms owned by the authenticated user.
+- `GET /api/v1/rooms/resolve?value=<room-id-or-invite-link>` — Resolve a UUID, six-digit code, or legacy invite link without exposing private fields.
 - `GET /api/v1/rooms/{id}` — Fetch public room metadata.
-- `PATCH /api/v1/rooms/{id}` — Update room settings (Requires `can_change_room_settings`).
 - `DELETE /api/v1/rooms/{id}` — Terminate room (Host only).
 
-### Invites & Membership
-- `POST /api/v1/rooms/{id}/invites` — Generate invite link with optional expiry & usage limits.
-- `GET /api/v1/invites/{code}` — Resolve invite code to room slug and name.
+### Guest Membership
+- `POST /api/v1/rooms/{id}/guest-session` — Generate a room-scoped guest credential.
+  - Body: `{ "display_name": "Cozy Beaver" }`
+  - Returns: `{ "token": "...", "guest_id": "...", "display_name": "...", "room_id": "...", "expires_at": "..." }`
 
 ### Chat & History
-- `GET /api/v1/rooms/{id}/messages?cursor={timestamp}&limit=50` — Cursor-paginated chat history.
+- `GET /api/v1/rooms/{id}/messages` — Return the recent durable chat history for an admitted user or guest.
 
 ### LiveKit Media
-- `GET /api/v1/rooms/{id}/livekit-token` — Request scoped media token.
+- `POST /api/v1/rooms/{id}/livekit-token` — Request a scoped LiveKit token after WebSocket room admission.
 
 ### Infrastructure & Telemetry
-- `GET /healthz` — Liveness probe (Returns `200 OK` if Go runtime is responsive).
-- `GET /readyz` — Readiness probe (Returns `200 OK` only if PostgreSQL and Redis connections are healthy).
-- `GET /metrics` — Prometheus metrics scrape endpoint (Protected / internal network only).
+- `GET /health` (`/healthz` alias) — Liveness probe (Returns `200 OK` if Go runtime is responsive).
+- `GET /ready` (`/readyz` alias) — Readiness probe (Returns `200 OK` when PostgreSQL is reachable; Redis is optional and reported through degraded logs).
+- `GET /metrics` — Prometheus metrics scrape endpoint. Keep this route behind an internal ingress or auth policy in production.

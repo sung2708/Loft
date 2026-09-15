@@ -12,23 +12,29 @@ This follow-up supersedes the unresolved code findings in `release-gate-2026-09-
 - **JWKS request amplification:** concurrent refreshes share one in-flight request; unknown keys and outages have a 30-second refresh cooldown. Responses are size bounded. Known, unexpired cached keys continue to work. A newly rotated unknown key can require up to 30 seconds to become available.
 - **Media state/cleanup:** UI availability follows LiveKit's real connection state. Initial device-enable promise failures are handled; late token results after unmount are ignored; leaving explicitly disconnects LiveKit before navigating. LiveKit connection errors are surfaced while chat remains separate.
 - **Accessibility/lint:** mobile invite has an accessible name; removed two unused bindings. New admission messages have Vietnamese translations.
+- **Distributed governance and leases:** same-tab replacement is routed across nodes, remote participant kicks close the exact socket on its owning node, and a restarted process cannot adopt a predecessor's live media lease just because `INSTANCE_ID` was reused. Locked rooms preserve same-tab guest reconnects while rejecting new guest entries.
+- **Governance feedback:** kicked clients leave the LiveKit tree as soon as the application session is rejected, lock state is visible in the room header and invite lobby, and locked guest-session requests return a distinct `ROOM_LOCKED` error.
+- **Short room links:** public room links use a six-digit `short_code`; the durable UUID remains internal and legacy invite codes continue to resolve.
+- **Shared abuse budgets:** chat and reaction limiters now use the same bounded Redis token-bucket fallback as connection, guest, room, and media actions.
+- **Volume control:** the YouTube volume popover opens by click/touch and stays open until an outside click or Escape, so moving away from the speaker icon no longer loses the slider.
 
 ## Validation actually completed
 
 - Frontend lint: zero errors/warnings.
-- Frontend tests: 9 files / 31 tests passed.
+- Frontend tests: 11 files / 67 tests passed.
 - TypeScript check and Next production build passed.
 - Backend `go vet ./...`, `go test -race ./...`, `go build ./...` passed. Modified Go files formatted.
+- Realtime governance regression covers lock broadcast/versioning, kick close, durable ban persistence, and banned reconnect rejection. HTTP coverage verifies locked guest-session rejection.
 - New tests cover 50 concurrent admission attempts (12 distinct admitted, or exactly one when all use the same identity), duplicate-session rejection without displacing the original, active-WebSocket shutdown and rejected post-shutdown requests, idle reader expiry, and a 50-request unknown-JWKS-key burst making only one upstream request.
 - Supabase negative tests now cover expired/missing expiry, wrong issuer/audience/role, invalid subject format, invalid signature, unknown key, missing and malformed tokens. Guest expiry/malformed credentials are tested.
 - Frontend regression tests cover refreshed reconnect credentials, command gating before snapshot, half-open recovery without `onclose`, late async credential completion after leave, and room-full retry termination.
 - Restarted the QA backend on port 18081 with real configured database access. All 15 HTTP/WebSocket smoke assertions passed, including `DUPLICATE_SESSION`, one participant per identity, cross-room denial, tamper denial and malformed/oversized event handling. Scratch runner now exits unsuccessfully if an assertion fails.
 
-The 50-admission and JWKS tests exercise concurrent in-process behavior; they are not a 50-browser media/load benchmark. Shutdown passed in the HTTP/WebSocket integration test; an OS-signal test under full live-media load remains unverified.
+The 50-admission and JWKS tests exercise concurrent in-process behavior; they are not a 50-browser media/load benchmark. Shutdown passed in the HTTP/WebSocket integration test; an OS-signal test under full live-media load remains unverified. Redis-backed two-node routing and the physical media path still require staging services and real devices.
 
 ## Changed files
 
-`backend/internal/realtime/hub.go`, `hub_test.go`; `backend/cmd/server/main.go`; `backend/internal/auth/supabase.go`, `supabase_test.go`, `guest_test.go`; `frontend/src/lib/realtime.ts`, `realtime.test.ts`; `frontend/src/features/room/RoomSession.tsx`, `RoomView.tsx`; `frontend/src/lib/i18n/uiText.ts`; `frontend/src/lib/auth/useAuth.ts`; `frontend/public/theme-init.js`; `README.md`; release documentation. Ignored QA smoke script/results were also updated.
+`backend/migrations/000003_short_room_codes.*`; `backend/internal/store/postgres.go`, `release_integration_test.go`; `backend/internal/realtime/hub.go`, `hub_test.go`; `backend/internal/httpapi/server.go`, `server_test.go`; `redis.go`, `redis_admission.go`, `redis_media.go`; `backend/cmd/server/main.go`; `backend/internal/auth/supabase.go`, `supabase_test.go`, `guest_test.go`; `frontend/src/lib/realtime.ts`, `realtime.test.ts`; `frontend/src/features/room/RoomSession.tsx`, `RoomView.tsx`, `MusicDrawer.tsx`; `frontend/src/app/join/[roomId]/page.tsx`; `frontend/src/types/api.ts`; `frontend/src/lib/i18n/uiText.ts`; `frontend/src/lib/auth/useAuth.ts`; `frontend/public/theme-init.js`; `README.md`; release documentation. Ignored QA smoke script/results were also updated.
 
 ## Release status
 

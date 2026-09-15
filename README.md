@@ -1,8 +1,8 @@
-# Loft MVP 1
+# Loft MVP 2
 
-Loft is a realtime social room for small groups (2–12 people): guest invite joins, optional Google identity, persistent host-owned rooms, voice/video/screen sharing, presence, and durable chat. Product goal: **we’re here together**.
+Loft is a realtime social room for small groups (2–12 people): guest invite joins, optional Google identity, persistent host-owned rooms, voice/video/screen sharing, presence, durable chat, and synchronized YouTube playback. Product goal: **we’re here together**.
 
-## MVP scope
+## MVP 2 scope
 
 - Public landing with no login wall
 - Google OAuth through Supabase; authenticated room creation
@@ -12,9 +12,13 @@ Loft is a realtime social room for small groups (2–12 people): guest invite jo
 - Persistent recent chat in Supabase PostgreSQL
 - Voice, camera, screen share, and participant audio through LiveKit
 - Fresh-snapshot reconnect with exponential backoff and jitter
+- Adaptive streaming, dynacast/simulcast, screen-share quality hints, and connection quality indicators
+- Host room lock, participant kick/ban, and optimistic room governance versioning
+- Synchronized YouTube playback with drift correction and collaborative queue
+- Redis Pub/Sub fan-out, distributed admission/rate limits, and ephemeral presence leases
 - System/light/dark appearance, responsive Stage-first room UI
 
-Spotify, synchronized media, moderation, Redis, multi-node presence, recording, and host transfer remain out of scope.
+Camera filters and background effects, Spotify/SoundCloud, recording, discovery, billing, and host transfer remain out of scope for MVP 2 and are planned for later milestones.
 
 ## Architecture and authority
 
@@ -42,7 +46,7 @@ Requirements: Node 24+, pnpm 11+, Go 1.26+, Supabase project, and LiveKit Cloud 
 
 1. Copy `frontend/.env.example` to `frontend/.env.local` and set public values.
 2. Copy `backend/.env.example` to `backend/.env` and set server values. `go run ./cmd/server` loads this file when run from `backend`; exported shell variables take precedence.
-3. Apply `backend/migrations/000001_mvp.up.sql` through Supabase SQL Editor or your migration runner.
+3. Apply `backend/migrations/000001_mvp.up.sql`, `backend/migrations/000002_governance.up.sql`, and `backend/migrations/000003_short_room_codes.up.sql` through Supabase SQL Editor or your migration runner.
 4. Start backend:
 
    ```powershell
@@ -73,17 +77,17 @@ Go derives user ID from validated JWT claims and upserts only profile display me
 
 ## LiveKit
 
-Create LiveKit project and set public WebSocket URL in frontend. API key and secret belong only in backend environment. Browser requests a one-hour room/identity-scoped grant from Go. Published sources are limited to microphone, camera, screen share, and screen-share audio.
+Create LiveKit project and set public WebSocket URL in frontend. API key and secret belong only in backend environment. Browser requests a short-lived room/identity-scoped grant from Go after successful WebSocket admission. Published sources are limited to microphone, camera, screen share, and screen-share audio.
 
 Guest credentials are HMAC-signed, expire after 12 hours, and include exact room ID. Keep them in `sessionStorage`; they cannot enter another room.
 
 ## Database
 
-Migration creates `profiles`, `rooms`, `room_members`, and `messages`, plus query indexes and checks. Room creation and host membership share one transaction. Chat persistence succeeds before broadcast. Presence and media tracks never enter PostgreSQL.
+Migrations create `profiles`, `rooms`, `room_members`, `messages`, and MVP2 governance fields/tables (`rooms.is_locked`, `rooms.version`, `room_bans`). Migration 000003 adds a unique six-digit `rooms.short_code`; the older `invite_code` remains accepted as a legacy alias. Room creation and host membership share one transaction. Chat persistence succeeds before broadcast. Presence and active media state remain ephemeral and never enter PostgreSQL.
 
 Tables have RLS enabled and direct access revoked from Supabase `anon`/`authenticated`; browser business mutations go through Go. Backend connection must use a trusted database role that owns/bypasses these policies.
 
-Rollback for a disposable development database: `backend/migrations/000001_mvp.down.sql` (destructive).
+Rollback for a disposable development database: apply `backend/migrations/000003_short_room_codes.down.sql`, `backend/migrations/000002_governance.down.sql`, and then `backend/migrations/000001_mvp.down.sql` (destructive).
 
 ## Commands
 
@@ -108,20 +112,20 @@ go build ./...
 - Room-scoped short-lived guest JWTs; 32-character minimum signing secret
 - Server-owned host role and LiveKit identity (`user:<uuid>` / `guest:<uuid>`)
 - 32 KiB HTTP and 16 KiB WebSocket payload limits; 2,000-rune chat limit
-- Parameterized SQL, bounded DB pool, rate limits for guest/room/chat operations
+- Parameterized SQL, bounded DB pool, distributed rate limits for connections, guest/room/chat/reaction/media operations
 - Structured logs without access, guest, or LiveKit tokens
 - React text rendering only; user chat is never inserted as HTML
 
 ## Manual acceptance
 
-Use two browser profiles. Create a room through Google, copy `/join/<invite-code>`, join twice as guests, verify presence/chat/audio/camera/screen share, refresh one client, and confirm snapshot recovery plus persisted history. Cloud credentials and browser device permissions are required, so this scenario cannot be automated from a credential-free checkout.
+Use two browser profiles. Create a room through Google, copy `/join/<invite-code>`, join as host and guest, verify presence/chat/audio/camera/screen share, lock the room and confirm existing guests stay while a new guest receives `ROOM_LOCKED`, kick the guest, paste a YouTube link, and play it from the host. Refresh one client and confirm snapshot recovery, synchronized playback, and persisted chat history. Cloud credentials, Redis/LiveKit services, and browser device permissions are required for the full matrix.
 
 ## Known MVP limits
 
-- Single Go process; restart clears presence but not rooms/chat.
-- A room admits one active connection per verified identity. A duplicate tab waits for the original to leave; it does not start LiveKit or create a second participant. Idle application connections expire after 60 seconds. Room capacity is enforced by the Go Hub.
+- Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage falls back to bounded local behavior.
+- A room admits one active connection per verified identity. A same-tab reload replaces the previous socket; a different tab receives `DUPLICATE_SESSION`. Idle application connections expire after roughly 30 seconds without traffic, and room capacity is enforced locally and through Redis leases.
 - Authenticated invite holders may join; durable non-owner membership is reserved for later product rules.
-- No host transfer/failover, moderation, Redis fan-out, media queue, or recording.
+- Host transfer, advanced moderation, camera filters/background effects, Spotify/SoundCloud, recording, and discovery remain deferred.
 - LiveKit and Supabase availability depend on configured external projects.
 
-Next candidates: synchronized media queue, YouTube/Spotify/SoundCloud, moderation, host transfer, Redis multi-instance presence, load tests, and richer metrics.
+The full physical-device and two-node Redis release matrix still requires staging execution before production sign-off.

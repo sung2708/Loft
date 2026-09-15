@@ -56,7 +56,7 @@ export default function HomePage() {
         name,
         allowGuests,
       );
-      location.assign(`/room/${room.id}`);
+      location.assign(`/room/${room.slug}`);
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Could not create room",
@@ -144,7 +144,7 @@ export default function HomePage() {
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
-              <a href={`/room/${room.id}`} className="block mt-4 rounded-lg focus-visible:outline-2 focus-visible:outline-[#0066CC]">
+              <a href={`/room/${room.slug}`} className="block mt-4 rounded-lg focus-visible:outline-2 focus-visible:outline-[#0066CC]">
                 <h3 className="font-semibold">{room.name}</h3>
                 <p className="text-xs text-[var(--text-loft-muted)] mt-1">
                   {room.allow_guests ? t.lobby.guestAccessEnabled : t.lobby.signInRequired}

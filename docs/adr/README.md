@@ -106,6 +106,7 @@ This directory records all critical architectural decisions for Loft. Each recor
 ### ADR-007: Client-Side Video Effects via MediaPipe & OffscreenCanvas
 
 - **Status:** Accepted
+- **MVP rollout:** Deferred to MVP 3. MVP 2 ships raw camera capture and presentation-layer mirroring only.
 - **Context:** Users want background blur/replacement and playful face filters. Processing camera video streams on the backend would require costly GPU server clusters, massive ingress/egress bandwidth, and introduce severe privacy risks.
 - **Decision:** Execute all video effects **client-side** in the user's browser using `@mediapipe/tasks-vision` (WebAssembly/SIMD) and HTML Canvas compositing, piping the resulting `MediaStreamTrack` directly to LiveKit.
 - **Alternatives Considered:**

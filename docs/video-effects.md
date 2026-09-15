@@ -1,6 +1,6 @@
 # Video Effects Architecture & Performance Strategy — Loft
 
-This document defines the client-side video effects model, lifecycle management, and tiered performance degradation strategy for **Loft MVP 2**.
+This document defines the planned client-side video effects model, lifecycle management, and tiered performance degradation strategy for **Loft MVP 3**. MVP 2 keeps camera capture raw and limits video processing to presentation-layer mirroring.
 
 ---
 

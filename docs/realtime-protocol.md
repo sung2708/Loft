@@ -1,10 +1,10 @@
 # Realtime Protocol Specification — Loft
 
-This document specifies the bidirectional WebSocket protocol for Loft. Section 1 documents the **authoritative MVP 1 protocol** currently running in the repository. Section 2 specifies the **proposed MVP 2 protocol extensions**.
+This document specifies the bidirectional WebSocket protocol currently implemented for Loft MVP 2. The envelope stays at protocol version `1`; the section labels group baseline events and governance extensions.
 
 ---
 
-## 1. Authoritative MVP 1 Protocol (Current Codebase)
+## 1. Baseline Protocol (Current Codebase)
 
 ### Envelope Standard (`backend/internal/realtime/hub.go`)
 
@@ -69,6 +69,8 @@ Every packet transmitted over the WebSocket connection uses the strict JSON enve
       "owner_id": "uuid",
       "allow_guests": true,
       "max_participants": 12,
+      "is_locked": false,
+      "version": 0,
       "created_at": "2026-09-14T10:00:00Z"
     },
     "self": {
@@ -122,27 +124,27 @@ Every packet transmitted over the WebSocket connection uses the strict JSON enve
 
 ---
 
-### MVP 1 Media & Queue Events
+### Media & Queue Events
 
 - **Events**: `media.play`, `media.pause`, `media.seek`, `media.duration`, `media.repeat`, `queue.add`, `queue.next`, `queue.select`, `queue.remove`, `queue.clear`, `queue.shuffle`, `queue.reorder`.
 - **Direction**: Client → Server → Server broadcasts resulting `media.state`.
-- **Validation**: Must pass `expected_version == media.Version` check.
-- **Authorization**: `CanControlMedia` for playback controls; `CanManageQueue` for queue additions/mutations.
+- **Validation**: Mutations require `expected_version == media.Version`, except `queue.add`, which appends without a version precondition.
+- **Authorization**: `CanControlMedia` for playback, duration, repeat, select, and next; `CanManageQueue` for add, remove, clear, shuffle, and reorder.
 - **Broadcast (`media.state`)**: Full snapshot of `mediaState` with incremented monotonic `version`.
 
 ---
 
-## 2. Proposed MVP 2 Protocol Extensions
+## 2. MVP 2 Room Governance
 
-To support MVP 2 governance, multi-instance presence, and collaborative features, the following events are defined:
+The following governance events are implemented. Presence leases are refreshed by the existing `connection.ping`; there is no separate `presence.heartbeat` event. Clients recover media state from `room.snapshot` on reconnect; there is no `media.resync` command.
 
 ```
 Domain Hierarchy:
 ├── room.*        (Governance, state snapshots)
-├── presence.*    (Heartbeats, connection status)
+├── connection.*  (Auth and heartbeat)
 ├── media.*       (Playback control, drift resync)
 ├── queue.*       (Collaborative queue management)
-└── permission.*  (Role assignment, capability grants)
+└── participant.* (Host eviction and membership broadcasts)
 ```
 
 ---
@@ -157,9 +159,9 @@ Domain Hierarchy:
   { "locked": true, "expected_version": 14 }
   ```
 - **Validation**: Boolean `locked` flag. `expected_version` matches room state.
-- **Source of Truth**: Go Room Authority + PostgreSQL `rooms.is_locked`.
-- **Idempotency**: Safe to repeat with matching expected version.
-- **Version Implications**: Increments `room.version++`.
+- **Source of Truth**: PostgreSQL `rooms.is_locked` and `rooms.version`; the Go room copy is updated after a successful compare-and-swap write.
+- **Concurrency**: A repeated command with the old version is rejected. The client must use the new room version after `room.locked` or `room.snapshot`.
+- **Admission**: New guests are rejected while locked; existing admitted guests remain connected. Persisted room bans are checked independently of the lock.
 
 #### `room.locked`
 - **Direction**: Server → Client (Broadcast)
@@ -173,41 +175,19 @@ Domain Hierarchy:
 - **Authorization**: Host only
 - **Payload**:
   ```json
-  { "connection_id": "uuid", "reason": "Disruptive behavior" }
+  { "connection_id": "uuid" }
   ```
 - **Validation**: Target must be an active participant and cannot be the host.
-- **Source of Truth**: Go Room Authority.
-- **Server Action**: Closes target socket with `StatusPolicyViolation`, revokes LiveKit token, and broadcasts `participant.left`.
+- **Source of Truth**: PostgreSQL `room_bans` for the durable ban; Go tracks and closes the active WebSocket connection.
+- **Server Action**: Persists the ban, closes the target socket with `StatusPolicyViolation` (routing an exact remote connection through Redis when needed), calls LiveKit `RemoveParticipant`, and broadcasts `participant.left` when the socket leaves. Subsequent Loft admission and token requests reject the banned identity.
+- **LiveKit limitation**: LiveKit Cloud revokes an existing token when `RemoveParticipant` is called with `revoke_token_ts`. Self-hosted LiveKit disconnects the active participant but does not revoke an already issued JWT; that JWT may remain usable directly against LiveKit until expiry. See [LiveKit participant management](https://docs.livekit.io/intro/basics/rooms-participants-tracks/participants/).
 
 ---
 
-### B. Presence Family (`presence.*`)
+### Recovery and Presence
 
-#### `presence.heartbeat`
-- **Direction**: Client → Server
-- **Authorization**: Admitted participant
-- **Payload**:
-  ```json
-  { "client_time": 1789382000000, "is_speaking": false, "is_video_on": true }
-  ```
-- **Validation**: Timestamp validation. Rate limit: 1 per 10s.
-- **Source of Truth**: Redis key `presence:room:<room_id>:<user_id>:<conn_id>` with 15s TTL.
-- **Idempotency**: Idempotent lease refresh.
-
----
-
-### C. Media Synchronization Family (`media.*`)
-
-#### `media.resync`
-- **Direction**: Client → Server
-- **Authorization**: Admitted participant
-- **Payload**:
-  ```json
-  { "client_position_ms": 45200, "reason": "LARGE_DRIFT" }
-  ```
-- **Validation**: Positive integer millisecond offset.
-- **Source of Truth**: Go In-Memory Room Authority.
-- **Server Action**: Returns immediate `media.state` snapshot containing current anchor.
+- `connection.ping` / `connection.pong` provide heartbeat and clock calibration. When Redis is configured, the server refreshes the participant's 15-second presence/admission lease after a ping.
+- On reconnect, a successful `connection.auth` returns a fresh `room.snapshot` containing the room, participants, and media anchor. The client replaces its local state from this snapshot rather than replaying missed events.
 
 ---
 

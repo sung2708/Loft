@@ -21,9 +21,9 @@ describe("shared room metadata", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/v1/rooms/late-night");
     expect(metadata.title).toEqual({ absolute: "Late Night · Loft" });
-    expect(metadata.description).toContain("137fbc64-d27f-4f8e-b448-f830f466a152");
+    expect(metadata.description).toContain("shared space");
     expect(metadata.openGraph?.title).toBe("Late Night · Loft");
-    expect(metadata.description).toBe("Room 137fbc64-d27f-4f8e-b448-f830f466a152 on Loft — We’re here together.");
+    expect(metadata.description).toBe("Late Night · Loft — a shared space to talk, watch, listen, and hang out together.");
     expect(metadata.twitter).toMatchObject({ card: "summary_large_image" });
     expect(JSON.stringify(metadata)).not.toContain("late-night");
     expect(metadata.twitter?.description).toBe(metadata.description);

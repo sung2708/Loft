@@ -9,8 +9,7 @@ This document outlines the sequential, dependency-ordered implementation roadmap
 ```mermaid
 flowchart TD
     subgraph Media Pipeline & WebRTC
-        M21["MVP 2.1: Media Correctness & Mirroring"] --> M22["MVP 2.2: Client-Side Camera Effects"]
-        M21 --> M23["MVP 2.3: LiveKit/WebRTC Optimization"]
+        M21["MVP 2.1: Media Correctness & Mirroring"] --> M23["MVP 2.3: LiveKit/WebRTC Optimization"]
     end
 
     subgraph Realtime Control Plane
@@ -25,7 +24,6 @@ flowchart TD
     end
 
     subgraph Verification & Release Gating
-        M22 --> O29["MVP 2.9: Observability & Failure Resilience"]
         M23 --> O29
         R25 --> O29
         Q27 --> O29
@@ -51,19 +49,8 @@ flowchart TD
 
 ---
 
-### MVP 2.2 — Client-Side Camera Effects
-- **Goals:** Deliver smooth background segmentation and face filters running client-side with minimal CPU/GPU overhead.
-- **Key Deliverables:**
-  - `@mediapipe/tasks-vision` pipeline with `ImageSegmenter` and `FaceLandmarker`.
-  - Background blur effect with edge feathering.
-  - Custom background image replacement.
-  - Curated MVP face landmark effects (sunglasses, cat ears, mesh glow).
-  - Track replacement in LiveKit using `localParticipant.switchProvider` or track substitution.
-  - Tab backgrounding and visibility change handling (bypass inference when hidden).
-  - Performance tiering: `HIGH` (30fps), `MEDIUM` (15fps), `LOW` (blur only, 10fps), `OFF` (raw passthrough).
-  - Degradation guard: **Audio stability > Camera stability > Filter quality**.
-- **Dependencies:** Requires **MVP 2.1** (clean track pipeline and mirroring).
-- **Gate Criteria:** Background blur and face filter toggle without interrupting audio or remounting the room participant tree.
+### MVP 2.2 — Client-Side Camera Effects (Deferred)
+Camera filters, background segmentation, and MediaPipe processing are explicitly deferred to MVP 3. MVP2 keeps the raw camera path optimized and focuses on deterministic orientation, adaptive streaming, and reliable room controls.
 
 ---
 
@@ -140,7 +127,7 @@ flowchart TD
 - **Key Deliverables:**
   - Centralized domain authorization functions: `CanChangeSettings`, `CanKick`, `CanControlMedia`, `CanManageQueue`.
   - Room lock toggle (`room.lock`): prevents new guest entries while active.
-  - Participant eviction (`participant.kick`): immediately closes WebSocket connection and revokes LiveKit token.
+  - Participant eviction (`participant.kick`): immediately closes the WebSocket, persists a room ban, and asks LiveKit to remove the active participant. LiveKit Cloud token revocation is supported; self-hosted LiveKit may keep an already issued JWT valid until expiry.
   - Host disconnect grace period (15s timer before room state eviction or host reassignment).
 - **Dependencies:** Requires **MVP 2.4** (protocol envelopes and client eviction).
 - **Gate Criteria:** Non-host clients attempting privileged operations receive `403 / MEDIA_COMMAND_REJECTED`; kicked participant cannot rejoin locked room.
@@ -154,7 +141,7 @@ flowchart TD
   - Zero logging of credentials, tokens, or personal identifiers.
   - Low-cardinality Prometheus domain metrics (connection counts, latency histograms, queue drops, Redis errors).
   - Automated failure test suite: PostgreSQL disconnect, Redis crash, LiveKit downtime, client network drops, camera revocation.
-- **Dependencies:** Requires **MVP 2.2**, **MVP 2.3**, **MVP 2.5**, **MVP 2.7**, **MVP 2.8**.
+- **Dependencies:** Requires **MVP 2.3**, **MVP 2.5**, **MVP 2.7**, **MVP 2.8**.
 - **Gate Criteria:** Complete failure mode runbook verified; all error logs carry structured IDs; metrics collector does not leak high-cardinality labels.
 
 ---

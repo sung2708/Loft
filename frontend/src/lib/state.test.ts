@@ -26,6 +26,10 @@ describe("normalizeRoomInput", () => {
       type: "invite",
       value: "abcd1234",
     });
+    expect(normalizeRoomInput(" 012345 ")).toEqual({
+      type: "invite",
+      value: "012345",
+    });
   });
 
   it("rejects malformed and unrelated URLs", () => {

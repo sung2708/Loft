@@ -7,12 +7,14 @@ export interface ApiRoom {
   owner_id: string;
   allow_guests: boolean;
   max_participants: number;
+  is_locked: boolean;
+  version: number;
   created_at: string;
 }
 
 export type ApiRoomPreview = Pick<
   ApiRoom,
-  "id" | "slug" | "name" | "allow_guests" | "max_participants"
+  "id" | "slug" | "name" | "allow_guests" | "max_participants" | "is_locked"
 >;
 
 export interface ApiIdentity {
@@ -100,6 +102,13 @@ export type ServerEvent =
       event_id: string;
       room_id: string;
       payload: { connection_id: string };
+    }
+  | {
+      type: "room.locked";
+      version: 1;
+      event_id: string;
+      room_id: string;
+      payload: { locked: boolean; locked_by: string; version: number };
     }
   | {
       type: "chat.message";

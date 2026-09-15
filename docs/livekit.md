@@ -30,7 +30,7 @@ LiveKit serves as the dedicated Selective Forwarding Unit (SFU) for Loft.
 
 ## 2. Token Minting Implementation (Actual Code vs Target)
 
-### Actual MVP 1 Implementation (`backend/internal/livekit/token.go`)
+### Current Token Implementation (`backend/internal/livekit/token.go`)
 - Tokens are minted using standard JWT library `github.com/golang-jwt/jwt/v5` with HMAC-SHA256 (`LIVEKIT_API_SECRET`).
 - Token subject uses canonical prefix: `identity.LiveKitIdentity()` = `"user:<uuid>"` or `"guest:<uuid>"`.
 - Video grant claims specify:
@@ -44,11 +44,11 @@ LiveKit serves as the dedicated Selective Forwarding Unit (SFU) for Loft.
     "canPublishSources": ["microphone", "camera", "screen_share", "screen_share_audio"]
   }
   ```
-- **Discrepancy Note**: Legacy docs referenced `github.com/livekit/protocol/auth`. The actual codebase uses pure `golang-jwt` to eliminate heavy CGO or protocol dependencies while preserving full LiveKit SFU compatibility.
+- Grants are minted after the Go Hub confirms WebSocket admission. The JWT is short-lived; room bans block both future Loft admission and future token requests. LiveKit Cloud can revoke an active token through the management API; self-hosted LiveKit may keep an already issued JWT valid until expiry.
 
 ---
 
-## 3. Actual Current Client Configuration (MVP 1)
+## 3. Current Client Configuration (MVP 2)
 
 In `frontend/src/features/room/RoomSession.tsx`:
 ```tsx
@@ -58,8 +58,14 @@ In `frontend/src/features/room/RoomSession.tsx`:
   connect
   audio={false}
   video={false}
-  onError={(error) => setMediaError(error.message)}
-  onMediaDeviceFailure={(failure) => setMediaError(`Device unavailable: ${failure}`)}
+  options={{
+    adaptiveStream: true,
+    dynacast: true,
+    videoCaptureDefaults: { resolution: { width: 1280, height: 720, frameRate: 30 } },
+    publishDefaults: { simulcast: true, degradationPreference: "maintain-framerate" },
+  }}
+  onError={(error) => setMediaError(formatMediaError(error, "general"))}
+  onMediaDeviceFailure={(failure) => setMediaError(formatDeviceFailure(failure))}
 >
   <LiveMediaContext ... />
   <RoomAudioRenderer />
@@ -72,7 +78,7 @@ In `frontend/src/features/room/RoomSession.tsx`:
 
 ## 4. MVP 2 Optimization Strategy
 
-The following WebRTC optimizations are scheduled for implementation in **MVP 2.3**:
+The following WebRTC optimizations are implemented in **MVP 2.3**:
 
 ### A. Adaptive Stream & Dynacast
 - **Adaptive Stream (`adaptiveStream: true`)**:
@@ -91,7 +97,7 @@ Loft's `MediaStage` dynamically shifts between layouts (`grid`, `solo`, `screen-
 | **Compact Strip (Screen share active)** | **LOW** | 320x180 @ 15fps | ~120 kbps |
 | **Drawer / Tab Hidden Participant** | **PAUSED** | Layer paused | 0 kbps |
 
-- **Implementation**: Hook `useTracks` with `{ onlySubscribed: false }` coupled with `TrackSubscribed` components that notify LiveKit of element size changes.
+- **Implementation**: `MediaStage` uses `useTracks` with `{ onlySubscribed: false }`; LiveKit's adaptive stream observes rendered video element sizes and chooses the appropriate simulcast layer. The stage switches between solo, grid, and compact screen-share layouts.
 
 ### C. Screen Share Optimization
 - **Text Sharpness & Detail**:
@@ -108,6 +114,4 @@ Loft's `MediaStage` dynamically shifts between layouts (`grid`, `solo`, `screen-
 - **Simulcast Layers**: Published with 3 spatial layers (High: 720p, Medium: 360p, Low: 180p).
 
 ### E. Connection Quality Monitoring
-- Real-time quality indicators rendered on each participant's tile:
-  - Uses `useConnectionQualityIndicator` from `@livekit/components-react`.
-  - Maps LiveKit's `ConnectionQuality` enum (`Excellent`, `Good`, `Poor`, `Lost`) to green/yellow/red status indicators.
+- Real-time quality indicators are rendered on each participant tile from LiveKit's `connectionQuality` value (`Excellent`, `Good`, `Poor`, `Unknown`) and mapped to bounded green/yellow/gray/red visual states.

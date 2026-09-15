@@ -5,7 +5,7 @@
 Presence represents ephemeral user availability in a room.
 1. **Presence is NOT Durable:** Presence data is **never** written to PostgreSQL.
 2. **Crash Resilience via TTL:** The system must remain correct even if a Go backend node experiences a hard crash (`kill -9`). Presence entries in Redis expire automatically via TTL.
-3. **Multiple Connections Supported:** A user may legitimately connect from multiple browser tabs or devices simultaneously without corrupting room participant counts.
+3. **Single Active Session Per Identity:** A verified identity may have one active room session at a time. A reload in the same browser tab keeps its `tab_session_id` so the server can replace the stale socket without creating a duplicate participant; a different tab is rejected with `DUPLICATE_SESSION`.
 
 ---
 
@@ -15,23 +15,24 @@ Presence is tracked hierarchically using Redis keys with a **15-second TTL**:
 
 ```
 Key Pattern:
-presence:room:<room_id>:<user_id>:<connection_id>
-  Value: JSON string containing:
+presence:room:<room_id>:members (Redis hash, TTL 30s)
+  Field: <livekit_identity> (for example `guest:<uuid>`)
+  Value: JSON lease containing:
     {
+      "connection_id": "uuid",
+      "tab_session_id": "browser-tab-uuid",
       "instance_id": "go-node-01",
-      "user_id": "uuid",
-      "username": "alex",
-      "role": "member",
-      "is_muted": false,
-      "is_deafened": false,
-      "last_heartbeat": 1789381200
+      "expires_ms": 1789381200000,
+      "participant": { "identity_id": "uuid", "role": "guest" }
     }
-  TTL: 15 Seconds
+  Per-member lease: 15 seconds
 ```
 
-### Multi-Tab Aggregation Rule
-- A user is marked as **Offline** in a room if and only if **zero** active connection keys exist for that `(room_id, user_id)` pair.
-- When tab B connects while tab A is already open, the room receives no redundant `participant.joined` event; only the connection registry is incremented.
+### Session Admission Rule
+- Admission atomically prunes expired hash fields, checks room capacity, and stores one lease per identity.
+- A different `tab_session_id` for an existing identity returns `DUPLICATE_SESSION`; it never displaces the original connection.
+- The same tab session may replace its previous socket during reload/reconnect, preserving the participant's connection ID and join time.
+- If the replacement lands on another Go instance, Redis sends a bounded replacement notification to the old instance so its socket is closed and its exact lease cleanup cannot delete the new connection.
 
 ---
 
@@ -41,8 +42,8 @@ presence:room:<room_id>:<user_id>:<connection_id>
  Client (Browser)                  Go Node                       Redis Cluster
         │                             │                                │
         │── Every 10s: heartbeat ────►│                                │
-        │   { connection_id }         │── SETEX presence:... 15s ────►│
-        │                             │   (Extends TTL)                │
+        │   { connection_id }         │── atomic HSET lease (15s) ───►│
+        │                             │   (Extends member deadline)    │
         │                             │                                │
   [Tab Closed / WiFi Lost]            │                                │
         │                             │                                │
@@ -51,8 +52,9 @@ presence:room:<room_id>:<user_id>:<connection_id>
                                       │    (15s passes without ping)   │
                                       │◄── Redis Key Expires ─────────┤
                                       │                                │
-                                      │── Broadcasts: participant.left │
-                                      │   to all room subscribers      │
+                                      │── Next snapshot omits expired │
+                                      │   lease; local Hub grace logic │
+                                      │   emits participant.left       │
 ```
 
 ---
@@ -81,9 +83,9 @@ presence:room:<room_id>:<user_id>:<connection_id>
 
 ---
 
-## 5. In-Memory Presence Cache in `RoomActor`
+## 5. Reconciliation Between Redis and the Hub
 
-To avoid roundtrip Redis lookups on every chat message or broadcast:
-- The local Go `RoomActor` maintains an in-memory map: `map[uuid.UUID]*ActivePresence`.
-- Updates are pushed to local clients immediately and synchronized across cluster instances via Redis Pub/Sub channel `presence:room:<room_id>`.
-- If Redis is disconnected, the node falls back to local in-memory presence tracking, guaranteeing local room continuity without crashing.
+- The Go Hub keeps active WebSocket pointers in `roomState.clients`; Redis is only the distributed admission/lease layer.
+- `connection.ping` refreshes the 15-second lease. `room.snapshot` reads non-expired remote leases through `ListPresence` and merges them with local participants.
+- Explicit leave removes only the exact connection lease. Disconnect grace keeps the lease alive long enough for same-tab replacement.
+- If Redis is disconnected, the node falls back to local capacity, identity and rate-limit checks. Cross-instance presence and fan-out are temporarily unavailable, while same-node rooms continue without crashing.

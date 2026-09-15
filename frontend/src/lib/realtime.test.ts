@@ -69,4 +69,16 @@ describe("room socket recovery", () => {
     expect(TestSocket.instances).toHaveLength(1);
     expect(onState).toHaveBeenLastCalledWith("FAILED", expect.stringContaining("full"));
   });
+
+  it("stops retrying immediately after a host kick", async () => {
+    const onState = vi.fn();
+    const socket = new RoomSocket(credential, { onEvent: vi.fn(), onState });
+    await socket.connect();
+    const active = TestSocket.instances[0];
+    active.receive("error", { code: "ROOM_KICKED", message: "Removed from room by host" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(TestSocket.instances).toHaveLength(1);
+    expect(onState).toHaveBeenLastCalledWith("FAILED", "You were removed from this room");
+    expect(socket.send("chat.send", {})).toBe(false);
+  });
 });

@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"testing"
@@ -8,6 +9,51 @@ import (
 
 	"loft/backend/internal/domain"
 )
+
+type mediaAuthorityStub struct {
+	commitErr error
+}
+
+func (s *mediaAuthorityStub) Publish(context.Context, string, []byte) error { return nil }
+func (s *mediaAuthorityStub) MediaOwner(context.Context, string) (bool, string, error) {
+	return true, "stub", nil
+}
+func (s *mediaAuthorityStub) LoadMedia(context.Context, string) (mediaState, bool, error) {
+	return mediaState{}, false, nil
+}
+func (s *mediaAuthorityStub) InitializeMedia(context.Context, string, mediaState) (bool, error) {
+	return true, nil
+}
+func (s *mediaAuthorityStub) CommitMedia(context.Context, string, uint64, mediaState, []byte) error {
+	return s.commitErr
+}
+func (s *mediaAuthorityStub) ForwardMedia(context.Context, string, string, string, json.RawMessage, domain.Identity) error {
+	return nil
+}
+
+func TestMediaMutationRollsBackWhenOwnerFenceFails(t *testing.T) {
+	room := domain.Room{ID: "room", OwnerID: "host"}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, nil)
+	hub.SetBus(&mediaAuthorityStub{commitErr: ErrMediaOwnerLost})
+	client := &client{id: "client", roomID: room.ID, send: make(chan []byte, 2)}
+	if _, _, ok := hub.add(client, room); !ok {
+		t.Fatal("client could not join")
+	}
+	payload, _ := json.Marshal(mediaCommand{URL: "https://youtu.be/dQw4w9WgXcQ"})
+	response := hub.handleForwardedMedia(context.Background(), mediaRPCRequest{
+		RequestID: "request", RoomID: room.ID, Kind: "queue.add", Payload: payload,
+		Actor: domain.Identity{ID: "host", Type: domain.IdentityUser},
+	})
+	if response.Error == "" {
+		t.Fatal("fenced mutation unexpectedly succeeded")
+	}
+	hub.mu.RLock()
+	state := hub.rooms[room.ID].media
+	hub.mu.RUnlock()
+	if state.Version != 0 || state.Current != nil || len(client.send) != 0 {
+		t.Fatalf("uncommitted media leaked: state=%+v queued=%d", state, len(client.send))
+	}
+}
 
 func TestParseYouTubeID(t *testing.T) {
 	for _, raw := range []string{

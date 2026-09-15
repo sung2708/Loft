@@ -1,6 +1,6 @@
 # Client-Side Media Processing Pipeline — Loft
 
-This document specifies the architecture, data flow, and invariants for Loft's client-side video processing pipeline, addressing camera orientation, mirroring correctness, and real-time vision effects.
+This document specifies the future client-side video processing pipeline for Loft. MVP 2 ships the raw camera path with deterministic orientation; vision effects and processed tracks remain deferred to MVP 3.
 
 ---
 
@@ -109,7 +109,7 @@ const facingMode: "user" | "environment" = settings.facingMode || "user";
 
 All ML inference executes client-side on the user's browser using WebAssembly and SIMD acceleration via Google MediaPipe.
 
-### Technology Stack
+### Technology Stack (MVP 3 design)
 - **Library**: `@mediapipe/tasks-vision`
 - **Wasm Runtime**: Loaded asynchronously from public CDN or bundled assets (`/wasm/vision_wasm_internal.js`).
 - **Models**:
@@ -117,7 +117,7 @@ All ML inference executes client-side on the user's browser using WebAssembly an
   - Face Landmarker: `face_landmarker.task` (sparse 468 3D landmarks, ~3.5MB).
 
 ### Compositing: Canvas 2D vs WebGL
-- **Canvas 2D (Default MVP 2)**:
+- **Canvas 2D (MVP 3 baseline)**:
   - Simple, predictable across all browsers (including low-end mobile Chrome/Safari).
   - Uses `OffscreenCanvas` with `CanvasRenderingContext2D.drawImage()`, `globalCompositeOperation = "destination-in"` for masking, and `filter = "blur(12px)"`.
   - Zero shader compilation overhead.

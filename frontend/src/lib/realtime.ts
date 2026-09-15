@@ -12,17 +12,23 @@ export function reconnectDelay(retry: number, random = Math.random()) {
   return base * (0.75 + random * 0.5);
 }
 
+const memoryTabSessions = new Map<string, string>();
+
 function tabSessionID(roomId: string): string {
   const key = `loft.room.tab-session.${roomId}`;
-  const navigation = performance.getEntriesByType("navigation")[0] as
+  const storage = typeof window !== "undefined" ? window.sessionStorage : undefined;
+  const navigation = typeof performance !== "undefined"
+    ? performance.getEntriesByType("navigation")[0] as
     | PerformanceNavigationTiming
-    | undefined;
+    | undefined
+    : undefined;
   const isReload = navigation?.type === "reload";
-  const saved = isReload ? sessionStorage.getItem(key) : null;
+  const saved = isReload ? (storage?.getItem(key) ?? memoryTabSessions.get(key) ?? null) : null;
   if (saved) return saved;
 
   const id = crypto.randomUUID();
-  sessionStorage.setItem(key, id);
+  if (storage) storage.setItem(key, id);
+  else memoryTabSessions.set(key, id);
   return id;
 }
 
@@ -101,6 +107,13 @@ export class RoomSocket {
           this.callbacks.onState("FAILED", "Room is full. Try again after someone leaves.");
           return;
         }
+        if (event.type === "error" && (event.payload.code === "ROOM_KICKED" || event.payload.code === "ROOM_LOCKED")) {
+          this.close();
+          this.callbacks.onState("FAILED", event.payload.code === "ROOM_KICKED"
+            ? "You were removed from this room"
+            : "This room is locked");
+          return;
+        }
         if (event.type === "error" && event.payload.code === "DUPLICATE_SESSION") {
           this.retryError = "This room is open in another tab. Close that tab to join here.";
           this.callbacks.onState("RECONNECTING", this.retryError);
@@ -115,11 +128,16 @@ export class RoomSocket {
       }
     };
     socket.onerror = () => undefined;
-    socket.onclose = () => {
+    socket.onclose = (event?: CloseEvent) => {
       if (this.socket !== socket) return;
       this.clearHeartbeat();
       this.ready = false;
       if (this.stopped) return;
+      if (event?.code === 1008 && event.reason === "removed by host") {
+        this.close();
+        this.callbacks.onState("FAILED", "You were removed from this room");
+        return;
+      }
       this.scheduleReconnect();
     };
   }
@@ -163,7 +181,9 @@ export class RoomSocket {
       | "media.seek"
       | "media.duration"
       | "media.repeat"
-      | "reaction.send",
+      | "reaction.send"
+      | "room.lock"
+      | "participant.kick",
     payload: object,
   ) {
     if (this.socket?.readyState !== WebSocket.OPEN || (!this.ready && type !== "connection.ping" && type !== "room.leave")) return false;

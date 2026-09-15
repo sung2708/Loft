@@ -31,17 +31,28 @@ All configuration is parsed from environment variables at startup:
 
 | Variable | Description | Required | Example |
 | :--- | :--- | :---: | :--- |
-| `ENV` | Execution environment (`development`, `staging`, `production`) | Yes | `production` |
-| `PORT` | HTTP/WS bind port | Yes | `8080` |
+| `HTTP_ADDR` | HTTP/WS bind address | No | `:8080` |
 | `DATABASE_URL` | PostgreSQL connection string | Yes | `postgres://postgres:pass@db.supabase.co:5432/postgres` |
 | `REDIS_URL` | Redis connection URL (optional in single-node dev) | No | `redis://default:pass@redis.domain.com:6379` |
 | `SUPABASE_URL` | Supabase project URL | Yes | `https://xyzproject.supabase.co` |
-| `SUPABASE_JWT_SECRET` | Secret or public key used to verify Supabase JWTs | Yes | `super-secret-jwt-key` |
-| `GUEST_HMAC_SECRET` | Secret key for signing room-scoped guest tokens | Yes | `32-byte-cryptographic-random-secret` |
-| `LIVEKIT_URL` | LiveKit server WebRTC endpoint | Yes | `wss://loft.livekit.cloud` |
-| `LIVEKIT_API_KEY` | LiveKit server API key | Yes | `APIKeyABC123` |
-| `LIVEKIT_API_SECRET` | LiveKit server API secret (Never sent to client) | Yes | `SecretKeyXYZ789` |
-| `ALLOWED_ORIGIN` | Strict CORS and CSWSH allowed frontend origin | Yes | `https://loft.app` |
+| `SUPABASE_JWT_SECRET` | Optional legacy HS256 secret; asymmetric projects use Supabase JWKS | No | `super-secret-jwt-key` |
+| `GUEST_TOKEN_SECRET` | Secret key for signing room-scoped guest tokens | Yes | `32-byte-cryptographic-random-secret` |
+| `LIVEKIT_URL` | LiveKit server WebRTC endpoint | No for chat-only local mode; required for media | `wss://loft.livekit.cloud` |
+| `LIVEKIT_API_KEY` | LiveKit server API key | Required for media | `APIKeyABC123` |
+| `LIVEKIT_API_SECRET` | LiveKit server API secret (Never sent to client) | Required for media | `SecretKeyXYZ789` |
+| `FRONTEND_ORIGINS` | Strict CORS and WebSocket origin allowlist | No | `https://loft.app` |
+| `NEXT_PUBLIC_SITE_URL` | Public frontend origin used for canonical and social link metadata | Yes for production previews | `https://loft.app` |
+| `INSTANCE_ID` | Stable per-node ID for Redis origin guards | No | `loft-prod-1` |
+
+### Social link previews
+
+Facebook Messenger and other crawlers read the server-rendered HTML and must be
+able to reach the public HTTPS frontend from outside the user's browser. A
+`localhost`, LAN-only, development tunnel, authentication-gated, or invalid
+TLS URL cannot produce a preview. Set `NEXT_PUBLIC_SITE_URL` and
+`NEXT_PUBLIC_API_URL` to public production origins before building the
+frontend; the invite route (`/join/<six-digit-code>`) generates its Open Graph
+metadata on the server.
 
 ---
 
@@ -51,7 +62,7 @@ The backend compiles into a minimal, scratch/distroless container with non-root 
 
 ```dockerfile
 # Build Stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache ca-certificates git
 
