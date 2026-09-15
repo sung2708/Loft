@@ -77,7 +77,7 @@ func isUniqueViolation(err error) bool {
 
 func (p *Postgres) GetRoom(ctx context.Context, identifier string) (domain.Room, error) {
 	var room domain.Room
-	err := p.pool.QueryRow(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, password_verifier, created_at
+	err := p.pool.QueryRow(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, COALESCE(password_verifier, ''), created_at
 		FROM rooms WHERE id::text = $1 OR short_code = $1 OR invite_code = $1`, identifier).Scan(
 		&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.PasswordVerifier, &room.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
