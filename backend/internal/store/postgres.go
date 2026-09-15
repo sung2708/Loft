@@ -55,9 +55,9 @@ func (p *Postgres) createRoom(ctx context.Context, params domain.CreateRoomParam
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var room domain.Room
-	err = tx.QueryRow(ctx, `INSERT INTO rooms (name, owner_id, allow_guests)
-		VALUES ($1, $2, $3) RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, created_at`,
-		params.Name, params.Owner.ID, params.AllowGuests).Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.CreatedAt)
+	err = tx.QueryRow(ctx, `INSERT INTO rooms (name, owner_id, allow_guests, password_required, password_verifier)
+		VALUES ($1, $2, $3, ($4 <> ''), NULLIF($4, '')) RETURNING id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, created_at`,
+		params.Name, params.Owner.ID, params.AllowGuests, params.Password).Scan(&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.CreatedAt)
 	if err != nil {
 		return domain.Room{}, err
 	}

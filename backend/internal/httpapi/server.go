@@ -387,8 +387,10 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Name        string `json:"name"`
-		AllowGuests *bool  `json:"allow_guests"`
+		Name            string `json:"name"`
+		AllowGuests     *bool  `json:"allow_guests"`
+		PasswordEnabled bool   `json:"password_enabled"`
+		Password        string `json:"password"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -402,11 +404,19 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
 	if input.AllowGuests != nil {
 		allowGuests = *input.AllowGuests
 	}
+	verifier := ""
+	if input.PasswordEnabled {
+		verifier, err = auth.HashRoomPassword(input.Password)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ROOM_PASSWORD", "Room password must be at least 4 characters")
+			return
+		}
+	}
 	if err := s.store.UpsertProfile(r.Context(), identity); err != nil {
 		s.internal(w, r, "upsert creator", err)
 		return
 	}
-	room, err := s.store.CreateRoom(r.Context(), domain.CreateRoomParams{Name: name, Owner: identity, AllowGuests: allowGuests})
+	room, err := s.store.CreateRoom(r.Context(), domain.CreateRoomParams{Name: name, Owner: identity, AllowGuests: allowGuests, Password: verifier})
 	if err != nil {
 		s.internal(w, r, "create room", err)
 		return

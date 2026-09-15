@@ -179,6 +179,13 @@ instance, and verify reconnect behavior under both still-valid and invalid autho
 
 ## Requirements
 
+### Password Setup UX
+
+- An authenticated owner can enable password protection and provide the initial password during room creation.
+- The active-room owner can reach the existing Room Settings controls to change or disable password protection.
+- Guests and non-owner participants do not receive password-management controls.
+- Passwords are validated and stored only through the existing server-side password policy; they never appear in room previews, invites, or responses.
+
 ### Functional Requirements
 
 - **FR-001**: The system MUST allow an authenticated user to create a named persistent room.

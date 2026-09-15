@@ -97,6 +97,7 @@ type CreateRoomParams struct {
 	Name        string
 	Owner       Identity
 	AllowGuests bool
+	Password    string
 }
 
 type Store interface {

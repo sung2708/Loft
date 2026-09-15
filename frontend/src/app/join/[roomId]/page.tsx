@@ -132,12 +132,12 @@ export default function RoomJoinPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)] relative overflow-x-hidden selection:bg-[#0066CC]/30">
+    <div className="h-dvh w-full flex flex-col bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)] relative overflow-hidden selection:bg-[#0066CC]/30">
       {/* Top Shared Lobby Header */}
       <LobbyHeader />
 
       {/* Main Spatial Stage Body */}
-      <main className="flex-1 w-full pt-14 min-h-[calc(100vh-3.5rem)] flex flex-col items-center justify-between px-4 sm:px-6 py-8 relative">
+      <main className="flex-1 min-h-0 w-full pt-14 flex flex-col items-center justify-center px-3 sm:px-6 py-3 sm:py-6 relative">
         {/* Ethereal Ambient Lounge Lights */}
         <div
           className="pointer-events-none absolute -top-32 left-1/2 -translate-x-1/2 w-[640px] h-[480px] bg-gradient-to-b from-[#0066CC]/20 via-[#2193fb]/10 to-transparent rounded-full blur-3xl -z-10 animate-pulse"
@@ -150,9 +150,9 @@ export default function RoomJoinPage() {
         />
 
         {/* Centered 480px Spatial Enclosure */}
-        <div className="w-full max-w-[480px] my-auto py-4 flex flex-col gap-4 z-10">
+        <div className="w-full max-w-[480px] py-1 flex flex-col gap-2 sm:gap-4 z-10">
           {/* Top Ambient Pill Header */}
-          <div className="flex items-center justify-between px-1">
+          <div className="hidden sm:flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
               <span className="inline-block w-2 h-2 rounded-full bg-[#0066CC] shadow-[0_0_8px_#0066CC] animate-ping" />
               <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-loft-secondary)]">
@@ -202,7 +202,7 @@ export default function RoomJoinPage() {
             className="relative rounded-2xl bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-2xl overflow-hidden flex flex-col"
           >
             {/* Subtle Top Image Backdrop Ambient Texture */}
-            <div className="relative h-28 w-full overflow-hidden bg-gradient-to-r from-[#18181E] via-[#202028] to-[#141419]">
+            <div className="relative h-16 sm:h-28 w-full overflow-hidden bg-gradient-to-r from-[#18181E] via-[#202028] to-[#141419]">
               <img
                 src="https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=800&q=80"
                 alt={l("Co-working ambient space", "Không gian làm việc chung")}
@@ -226,7 +226,7 @@ export default function RoomJoinPage() {
             </div>
 
             {/* Room Meta & Body Content */}
-            <div className="px-5 pt-2 pb-5 flex flex-col gap-3.5">
+            <div className="px-4 sm:px-5 pt-2 pb-3 sm:pb-5 flex flex-col gap-2.5 sm:gap-3.5">
               {/* Title & Topic Area */}
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between">
@@ -243,7 +243,7 @@ export default function RoomJoinPage() {
               </div>
 
               {/* Spatial Host & Live Participant Mosaic */}
-              <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-loft-surface)] border border-[var(--border-loft)]">
+              <div className="hidden sm:flex items-center justify-between p-3 rounded-xl bg-[var(--bg-loft-surface)] border border-[var(--border-loft)]">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-[10px] font-semibold uppercase text-[var(--text-loft-muted)] tracking-wider">
                     {l("Spatial Anchor", "Chủ phòng")}
@@ -261,7 +261,7 @@ export default function RoomJoinPage() {
               </div>
 
               {/* Active Audio State Sync */}
-              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[var(--bg-loft-surface)] border border-[var(--border-loft)]">
+              <div className="hidden sm:flex items-center justify-between px-3 py-2 rounded-xl bg-[var(--bg-loft-surface)] border border-[var(--border-loft)]">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-7 h-7 rounded-lg bg-[var(--bg-loft-base)] flex items-center justify-center text-[#0066CC] shrink-0 border border-[var(--border-loft)]">
                     <Radio className="w-4 h-4" />
@@ -321,7 +321,7 @@ export default function RoomJoinPage() {
             </div>
 
             {/* Dual Action Section */}
-            <div className="p-5 pt-0 flex flex-col gap-2.5">
+            <div className="px-4 sm:px-5 pb-4 sm:pb-5 pt-0 flex flex-col gap-2 sm:gap-2.5">
               {room?.allow_guests && (
                 <input
                   value={displayName}
@@ -356,7 +356,7 @@ export default function RoomJoinPage() {
                   type="button"
                   disabled={isJoiningGuest}
                   onClick={() => void handleJoinGuest()}
-                  className="btn-press w-full group relative overflow-hidden flex items-center justify-center gap-2 bg-[#0066CC] hover:bg-[#0077ED] active:scale-[0.98] text-white text-sm font-semibold py-3.5 px-4 rounded-xl shadow-lg shadow-[#0066CC]/25 transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                  className="btn-press w-full group relative overflow-hidden flex items-center justify-center gap-2 bg-[#0066CC] hover:bg-[#0077ED] active:scale-[0.98] text-white text-sm font-semibold py-3 px-4 rounded-xl shadow-lg shadow-[#0066CC]/25 transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-wait"
                 >
                   {joinStep === "connecting" ? (
                     <>
@@ -413,7 +413,7 @@ export default function RoomJoinPage() {
               </button>
 
               {/* Micro Helper Note */}
-              <p className="text-center text-xs text-[var(--text-loft-muted)] pt-1">
+              <p className="hidden sm:block text-center text-xs text-[var(--text-loft-muted)] pt-1">
                 {room?.password_required
                   ? l("Enter the room password to join. No account is required.", "Nhập mật khẩu phòng để tham gia. Không cần tài khoản.")
                   : l("No password or signup required. You can choose your avatar and name next.", "Không cần mật khẩu hay đăng ký. Bạn có thể chọn ảnh đại diện và tên sau.")}
@@ -422,7 +422,7 @@ export default function RoomJoinPage() {
           </motion.div>
 
           {/* Quick Room Feature Badges */}
-          <div className="grid grid-cols-3 gap-2.5 pt-1">
+          <div className="hidden sm:grid grid-cols-3 gap-2.5 pt-1">
             <div className="flex flex-col items-center justify-center p-3 rounded-xl bg-[var(--bg-loft-surface)]/80 border border-[var(--border-loft)] text-center gap-1 shadow-xs">
               <AudioWaveform className="w-5 h-5 text-[#0066CC]" />
               <span className="text-[11px] font-medium text-[var(--text-loft-secondary)]">
@@ -446,7 +446,7 @@ export default function RoomJoinPage() {
       </main>
 
       {/* Subtle Spatial Footer */}
-      <footer className="w-full bg-[var(--bg-loft-base)]/90 backdrop-blur-md py-2.5 border-t border-[var(--border-loft)]">
+      <footer className="hidden sm:block w-full bg-[var(--bg-loft-base)]/90 backdrop-blur-md py-2.5 border-t border-[var(--border-loft)]">
         <div className="w-full max-w-7xl mx-auto px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-between text-[var(--text-loft-muted)] text-[11px] gap-1">
           <span>
             {l("Mingly • Realtime audio, video & screen share", "Mingly • Đồng bộ âm thanh và hình ảnh trực tiếp")}

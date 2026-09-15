@@ -74,12 +74,12 @@ export const api = {
   me: (token: string) => request<ApiIdentity>("/api/v1/users/me", {}, token),
   rooms: (token: string) =>
     request<{ rooms: ApiRoom[] }>("/api/v1/rooms", {}, token),
-  createRoom: (token: string, name: string, allowGuests: boolean) =>
+  createRoom: (token: string, name: string, allowGuests: boolean, passwordEnabled = false, password = "") =>
     request<ApiRoom>(
       "/api/v1/rooms",
       {
         method: "POST",
-        body: JSON.stringify({ name, allow_guests: allowGuests }),
+        body: JSON.stringify({ name, allow_guests: allowGuests, password_enabled: passwordEnabled, password }),
       },
       token,
     ),

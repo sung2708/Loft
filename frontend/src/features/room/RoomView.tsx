@@ -193,6 +193,17 @@ function RoomHeader() {
           )}
           <span className="hidden sm:inline">{tr("Invite")}</span>
         </button>
+        {self?.role === "host" && room && (
+          <button
+            type="button"
+            onClick={() => location.assign(`/home?settings=${encodeURIComponent(room.slug)}`)}
+            aria-label={tr("Room settings")}
+            title={tr("Room settings")}
+            className="h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center hover:bg-[var(--border-loft-light)]"
+          >
+            <Settings2 className="w-4 h-4" />
+          </button>
+        )}
         <div ref={appearanceRef} className="relative">
           <button
             type="button"

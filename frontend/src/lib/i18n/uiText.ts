@@ -14,6 +14,7 @@ const vietnamese: Record<string, string> = {
   "Syncing current room state.": "Đang đồng bộ trạng thái phòng.",
   "Try again": "Thử lại",
   "Mingly home": "Trang chủ Mingly",
+  "Room settings": "Cài đặt phòng",
   "Guests welcome": "Cho phép khách vào",
   "present": "đang có mặt",
   "Members only": "Chỉ thành viên",

@@ -18,6 +18,8 @@ export default function HomePage() {
   const [rooms, setRooms] = useState<ApiRoom[]>([]);
   const [name, setName] = useState("");
   const [allowGuests, setAllowGuests] = useState(true);
+  const [passwordEnabled, setPasswordEnabled] = useState(false);
+  const [password, setPassword] = useState("");
   const [creating, setCreating] = useState(false);
   const [deletingRoom, setDeletingRoom] = useState<ApiRoom | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -40,7 +42,10 @@ export default function HomePage() {
         ]);
         setIdentity(me);
         setRooms(list.rooms);
-        setCreating(new URLSearchParams(location.search).get("create") === "1");
+        const query = new URLSearchParams(location.search);
+        setCreating(query.get("create") === "1");
+        const settingsSlug = query.get("settings");
+        if (settingsSlug) setSettingsRoom(list.rooms.find((item) => item.slug === settingsSlug) ?? null);
       } catch (caught) {
         setError(
           caught instanceof Error ? caught.message : "Could not load home",
@@ -59,6 +64,8 @@ export default function HomePage() {
         session.access_token,
         name,
         allowGuests,
+        passwordEnabled,
+        password,
       );
       location.assign(`/room/${room.slug}`);
     } catch (caught) {
@@ -244,6 +251,12 @@ export default function HomePage() {
                   />
                 </button>
               </div>
+
+              <label className="flex items-center justify-between p-3.5 rounded-2xl bg-zinc-900/70 border border-zinc-800 text-sm">
+                <span>{locale === "vi" ? "Yêu cầu mật khẩu" : "Require password"}</span>
+                <input type="checkbox" checked={passwordEnabled} onChange={(e) => setPasswordEnabled(e.target.checked)} />
+              </label>
+              {passwordEnabled && <input type="password" minLength={4} value={password} onChange={(e) => setPassword(e.target.value)} placeholder={locale === "vi" ? "Mật khẩu (ít nhất 4 ký tự)" : "Password (at least 4 characters)"} required className="w-full h-11 px-3.5 rounded-xl bg-zinc-900 border border-zinc-700/80 text-white placeholder:text-zinc-500 text-sm focus:outline-none focus:border-[#0066CC]" />}
 
               {/* Actions */}
               <div className="mt-2 flex gap-2.5 justify-end items-center">

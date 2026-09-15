@@ -102,6 +102,13 @@
 - [ ] T039 Run backend race/vet/build and frontend test/lint/typecheck/build commands from `specs/001-persistent-rooms-room-access/quickstart.md`
 - [ ] T040 Run multi-instance, Redis outage, reconnect, media, and backward-compatibility acceptance matrix and record evidence in `specs/001-persistent-rooms-room-access/quickstart.md`
 
+## Phase 11: Password Setup UX Completion
+
+- [ ] T041 [US3] Add initial password-enabled/password fields to the authenticated create-room flow and pass the policy to the existing create-room endpoint in `frontend/src/app/home/page.tsx` and `frontend/src/lib/api.ts`.
+- [ ] T042 [US3] Hash and persist the initial room password during creation with the same validation and secret-free response rules as later settings updates in `backend/internal/httpapi/server.go`, `backend/internal/domain/domain.go`, and `backend/internal/store/postgres.go`.
+- [ ] T043 [US4] Expose the existing owner Room Settings entry point from the active-room host controls without exposing it to guests or non-owners in `frontend/src/features/room/RoomView.tsx`.
+- [ ] T044 [P] Update create-room, active-room settings, and password transition documentation and regression coverage in `README.md`, `docs/room-state.md`, and the feature quickstart.
+
 ## Dependencies & Execution Order
 
 - Setup → Foundational → US1/US2/US3/US4 P1 stories → US5/US6/US7 P2 stories → Polish.

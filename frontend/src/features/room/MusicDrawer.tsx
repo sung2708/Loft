@@ -851,10 +851,12 @@ export function MusicDrawer({
                   <div
                     ref={volumeRef}
                     className="relative flex items-center"
+                    onMouseEnter={() => setShowVolumeSlider(true)}
+                    onFocus={() => setShowVolumeSlider(true)}
                   >
                     <button
                       onClick={() => {
-                        setShowVolumeSlider((open) => !open);
+                        setShowVolumeSlider(true);
                         toggleMute();
                       }}
                       className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--border-loft)] transition-all cursor-pointer"
