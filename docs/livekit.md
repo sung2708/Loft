@@ -1,6 +1,8 @@
-# LiveKit SFU & WebRTC Media Architecture — Loft
+# LiveKit SFU & WebRTC Media Architecture — Mingly
 
-This document specifies the WebRTC media plane architecture, token minting contract, and **MVP 2 optimization strategy** for Loft's LiveKit integration.
+This document specifies the WebRTC media plane architecture, token minting contract, MVP2 optimization strategy, and SPEC 004 camera-processor extension for Mingly.
+
+SPEC 004 attaches one client-only processor to the current local camera track through `LocalVideoTrack.setProcessor()`. Effects-off and processor failure restore the raw sender through `stopProcessor()`. This preserves the existing Room, publication identity, adaptive stream, dynacast, and simulcast senders. Audio and screen share bypass the processor.
 
 ---
 

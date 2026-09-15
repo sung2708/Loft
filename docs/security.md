@@ -104,3 +104,14 @@ Room passwords are accepted only during the server-side guest admission flow. Th
 as a one-way verifier, never included in invite URLs, room previews, snapshots, logs, or metrics.
 Failed password attempts use bounded temporary rate limits and return generic user-facing errors.
 Any logged attribute matching these keys is replaced with `"[REDACTED]"`.
+
+## 8. Host moderation boundaries
+
+- Current realtime host authority is checked in the Go Hub; the client role is
+  presentation only.
+- Host transfer targets are authenticated connected participants. Guests are
+  not promoted to host because their room-scoped identity is weaker.
+- Kick and temporary-ban writes are room-scoped. Temporary bans expire in
+  PostgreSQL and are checked again during WebSocket and LiveKit admission.
+- Stale connection generations and exact connection IDs are required for
+  cleanup, so an old socket cannot remove or restore a newer session.

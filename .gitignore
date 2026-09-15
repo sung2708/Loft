@@ -11,7 +11,11 @@ node_modules/
 .pnpm-store/
 .next/
 out/
+dist/
+build/
 coverage/
+*.tsbuildinfo
+*.log
 *.tsbuildinfo
 pnpm-debug.log*
 npm-debug.log*
@@ -30,3 +34,4 @@ backend/coverage.out
 .DS_Store
 Thumbs.db
 *.swp
+*.tmp

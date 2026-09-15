@@ -60,12 +60,40 @@ type reactionEvent struct {
 	DisplayName  string `json:"display_name"`
 	Emoji        string `json:"emoji"`
 }
+type waveEvent struct {
+	ConnectionID string    `json:"connection_id"`
+	DisplayName  string    `json:"display_name"`
+	EmittedAt    time.Time `json:"emitted_at"`
+}
+type handSetPayload struct {
+	Raised                bool   `json:"raised"`
+	ExpectedSocialVersion uint64 `json:"expected_social_version"`
+}
+type handChangedPayload struct {
+	ConnectionID  string `json:"connection_id"`
+	IdentityID    string `json:"identity_id"`
+	Generation    uint64 `json:"generation"`
+	Raised        bool   `json:"raised"`
+	SocialVersion uint64 `json:"social_version"`
+}
 type roomLockPayload struct {
 	Locked          bool  `json:"locked"`
 	ExpectedVersion int64 `json:"expected_version"`
 }
 type kickPayload struct {
 	ConnectionID string `json:"connection_id"`
+}
+type transferHostPayload struct {
+	TargetConnectionID       string `json:"target_connection_id"`
+	ExpectedAuthorityVersion uint64 `json:"expected_authority_version"`
+}
+type temporaryBanPayload struct {
+	ConnectionID  string `json:"connection_id"`
+	DurationHours int    `json:"duration_hours"`
+}
+type hostChangedPayload struct {
+	Host   domain.HostAuthority `json:"host"`
+	Reason string               `json:"reason"`
 }
 type roomLockedPayload struct {
 	Locked   bool   `json:"locked"`
@@ -74,6 +102,7 @@ type roomLockedPayload struct {
 }
 type snapshotPayload struct {
 	Room         domain.Room          `json:"room"`
+	Host         domain.HostAuthority `json:"host"`
 	Self         domain.Participant   `json:"self"`
 	Participants []domain.Participant `json:"participants"`
 	Messages     []domain.Message     `json:"messages"`
@@ -101,17 +130,21 @@ type client struct {
 	generation        uint64
 	graceTimer        *time.Timer
 	replaced          *client
+	hostEvent         []byte
 }
 
 type roomState struct {
-	clients       map[string]*client
-	media         mediaState
-	room          domain.Room
-	evict         *time.Timer
-	mediaTimer    *time.Timer
-	reactionTimes []time.Time
-	kicked        map[string]struct{}
-	mediaOwner    bool
+	clients        map[string]*client
+	media          mediaState
+	room           domain.Room
+	evict          *time.Timer
+	mediaTimer     *time.Timer
+	reactionTimes  []time.Time
+	kicked         map[string]struct{}
+	temporaryBans  map[string]time.Time
+	mediaOwner     bool
+	host           domain.HostAuthority
+	hostFailedOver bool
 }
 
 type Hub struct {
@@ -122,6 +155,7 @@ type Hub struct {
 	disconnectGracePeriod time.Duration
 	mu                    sync.RWMutex
 	rooms                 map[string]*roomState
+	remoteHosts           map[string]domain.HostAuthority
 	deleting              map[string]struct{}
 	store                 domain.Store
 	guests                *auth.GuestTokens
@@ -182,6 +216,7 @@ func New(store domain.Store, guests *auth.GuestTokens, users *auth.SupabaseVerif
 		idleTimeout:           30 * time.Second,
 		disconnectGracePeriod: 15 * time.Second,
 		rooms:                 make(map[string]*roomState),
+		remoteHosts:           make(map[string]domain.HostAuthority),
 		deleting:              make(map[string]struct{}),
 		store:                 store,
 		guests:                guests,
@@ -413,6 +448,80 @@ func (h *Hub) roomSnapshot(roomID string, fallback domain.Room) domain.Room {
 	return fallback
 }
 
+func applyHostRolesLocked(state *roomState) {
+	for _, candidate := range state.clients {
+		if candidate.participant.ConnectionID == state.host.ConnectionID && state.host.ConnectionID != "" && state.host.State != "failed-over" {
+			candidate.participant.Role = "host"
+			continue
+		}
+		if candidate.identity.Type == domain.IdentityGuest {
+			candidate.participant.Role = "guest"
+		} else {
+			candidate.participant.Role = "member"
+		}
+	}
+}
+
+func hostEvent(roomID string, authority domain.HostAuthority, reason string) []byte {
+	return event("host.changed", roomID, hostChangedPayload{Host: authority, Reason: reason})
+}
+
+func newerHost(incoming, current domain.HostAuthority) bool {
+	if incoming.Version != current.Version {
+		return incoming.Version > current.Version
+	}
+	// Two independent Redis publishers can allocate the same local version.
+	// A stable public connection-ID tie-breaker makes both nodes converge
+	// without promoting Redis from coordination to durable authority.
+	return incoming.ConnectionID > current.ConnectionID
+}
+
+// setHostLocked mutates only in-memory authority. Callers must broadcast the
+// returned event after releasing h.mu; it deliberately performs no I/O.
+func setHostLocked(state *roomState, participant domain.Participant, generation uint64, status, reason string) []byte {
+	if participant.ConnectionID == "" {
+		state.host = domain.HostAuthority{Version: state.host.Version + 1, State: status}
+	} else {
+		state.host = domain.HostAuthority{
+			ConnectionID: participant.ConnectionID,
+			IdentityID:   participant.IdentityID,
+			IdentityType: participant.IdentityType,
+			Generation:   generation,
+			Version:      state.host.Version + 1,
+			State:        status,
+		}
+	}
+	applyHostRolesLocked(state)
+	return hostEvent(state.room.ID, state.host, reason)
+}
+
+func currentHostLocked(state *roomState, c *client) bool {
+	return state != nil && c != nil && !c.disconnected && state.host.State == "connected" &&
+		state.host.ConnectionID != "" && state.host.ConnectionID == c.participant.ConnectionID &&
+		state.host.IdentityID == c.identity.ID && state.host.IdentityType == c.identity.Type
+}
+
+func eligibleSuccessor(participants []domain.Participant) (domain.Participant, bool) {
+	for _, participant := range participants {
+		if domain.CanBeRealtimeHost(domain.Identity{ID: participant.IdentityID, Type: participant.IdentityType}) {
+			return participant, true
+		}
+	}
+	return domain.Participant{}, false
+}
+
+func (h *Hub) hostAuthority(roomID string) domain.HostAuthority {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if state := h.rooms[roomID]; state != nil {
+		return state.host
+	}
+	if host, ok := h.remoteHosts[roomID]; ok {
+		return host
+	}
+	return domain.HostAuthority{}
+}
+
 // CanIssueMediaToken is checked by HTTP after WebSocket admission succeeds.
 // Redis leases allow token requests routed to another backend instance.
 func (h *Hub) CanIssueMediaToken(ctx context.Context, roomID string, identity domain.Identity) (bool, error) {
@@ -420,6 +529,10 @@ func (h *Hub) CanIssueMediaToken(ctx context.Context, roomID string, identity do
 	state := h.rooms[roomID]
 	if state != nil {
 		if _, banned := state.kicked[identity.LiveKitIdentity()]; banned {
+			h.mu.RUnlock()
+			return false, nil
+		}
+		if until, banned := state.temporaryBans[identity.LiveKitIdentity()]; banned && until.After(time.Now().UTC()) {
 			h.mu.RUnlock()
 			return false, nil
 		}
@@ -450,7 +563,49 @@ func (h *Hub) PrometheusMetrics() string {
 // replicated media snapshot before local fan-out, and never republishes it.
 func (h *Hub) DeliverRemote(roomID string, data []byte) {
 	var envelope Envelope
-	if json.Unmarshal(data, &envelope) == nil && envelope.Type == "media.state" {
+	if json.Unmarshal(data, &envelope) == nil && envelope.Type == "participant.hand_changed" {
+		var incoming handChangedPayload
+		if json.Unmarshal(envelope.Payload, &incoming) == nil {
+			h.mu.Lock()
+			if state := h.rooms[roomID]; state != nil {
+				for _, current := range state.clients {
+					if current.participant.ConnectionID == incoming.ConnectionID &&
+						incoming.SocialVersion > current.participant.SocialVersion {
+						current.participant.RaisedHand = incoming.Raised
+						current.participant.SocialVersion = incoming.SocialVersion
+					}
+				}
+			}
+			h.mu.Unlock()
+		}
+	} else if json.Unmarshal(data, &envelope) == nil && envelope.Type == "host.changed" {
+		var incoming hostChangedPayload
+		if json.Unmarshal(envelope.Payload, &incoming) == nil {
+			h.mu.Lock()
+			if state := h.rooms[roomID]; state != nil {
+				if newerHost(incoming.Host, state.host) {
+					state.host = incoming.Host
+					if incoming.Host.State == "failed-over" {
+						state.hostFailedOver = true
+					}
+					applyHostRolesLocked(state)
+				}
+			} else if current, ok := h.remoteHosts[roomID]; !ok || newerHost(incoming.Host, current) {
+				h.remoteHosts[roomID] = incoming.Host
+			}
+			h.mu.Unlock()
+		}
+	} else if json.Unmarshal(data, &envelope) == nil && envelope.Type == "room.locked" {
+		var incoming roomLockedPayload
+		if json.Unmarshal(envelope.Payload, &incoming) == nil {
+			h.mu.Lock()
+			if state := h.rooms[roomID]; state != nil && incoming.Version > state.room.Version {
+				state.room.IsLocked = incoming.Locked
+				state.room.Version = incoming.Version
+			}
+			h.mu.Unlock()
+		}
+	} else if json.Unmarshal(data, &envelope) == nil && envelope.Type == "media.state" {
 		var incoming mediaState
 		if json.Unmarshal(envelope.Payload, &incoming) == nil {
 			h.mu.Lock()
@@ -603,9 +758,6 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if identity.Type == domain.IdentityGuest {
 		role = "guest"
 	}
-	if identity.Type == domain.IdentityUser && identity.ID == room.OwnerID {
-		role = "host"
-	}
 	c := &client{
 		id: uuid.NewString(), tabSessionID: tabSessionID, roomID: room.ID, identity: identity, conn: conn, send: make(chan []byte, outboundCapacity),
 		participant: domain.Participant{ConnectionID: "", IdentityID: identity.ID, IdentityType: identity.Type, DisplayName: identity.DisplayName, AvatarURL: identity.AvatarURL, Role: role, LiveKitIdentity: identity.LiveKitIdentity(), JoinedAt: time.Now().UTC()},
@@ -708,7 +860,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pumps.Add(1)
 	go func() { defer pumps.Done(); writeDone <- h.writePump(ctx, c) }()
 	defer func() { cancel(); _ = conn.CloseNow(); pumps.Wait() }()
-	if !h.enqueue(c, event("room.snapshot", room.ID, snapshotPayload{Room: h.roomSnapshot(room.ID, room), Self: c.participant, Participants: participants, Messages: messages, Media: media})) {
+	h.mu.RLock()
+	snapshotHost := domain.HostAuthority{}
+	if state := h.rooms[room.ID]; state != nil {
+		snapshotHost = state.host
+	}
+	h.mu.RUnlock()
+	if !h.enqueue(c, event("room.snapshot", room.ID, snapshotPayload{Room: h.roomSnapshot(room.ID, room), Host: snapshotHost, Self: c.participant, Participants: participants, Messages: messages, Media: media})) {
 		return
 	}
 	if !c.isReconnect {
@@ -716,6 +874,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Info("websocket joined", "connection_id", c.id, "room_id", room.ID, "identity_type", identity.Type)
 	} else {
 		h.logger.Info("websocket reconnected", "connection_id", c.id, "room_id", room.ID, "identity_type", identity.Type)
+	}
+	if c.hostEvent != nil {
+		// The joining socket already received the authoritative host in its
+		// snapshot; exclude it to avoid replaying an initial host event ahead of
+		// the next participant event while still publishing to other instances.
+		h.broadcast(room.ID, c.hostEvent, c.id)
 	}
 
 	readDone := make(chan error, 1)
@@ -790,7 +954,7 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			}
 			h.mu.RLock()
 			state := h.rooms[c.roomID]
-			allowed := state != nil && domain.CanChangeSettings(state.room, c.identity)
+			allowed := currentHostLocked(state, c)
 			h.mu.RUnlock()
 			if !allowed {
 				h.sendError(c, "ROOM_COMMAND_REJECTED", "room permission denied")
@@ -801,7 +965,13 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				h.sendError(c, "ROOM_COMMAND_REJECTED", "room governance unavailable")
 				continue
 			}
-			updated, err := governance.SetRoomLocked(ctx, c.roomID, c.identity.ID, payload.ExpectedVersion, payload.Locked)
+			var updated domain.Room
+			var err error
+			if hostGovernance, supportsHost := h.store.(domain.HostGovernanceStore); supportsHost {
+				updated, err = hostGovernance.SetRoomLockedByHost(ctx, c.roomID, payload.ExpectedVersion, payload.Locked)
+			} else {
+				updated, err = governance.SetRoomLocked(ctx, c.roomID, c.identity.ID, payload.ExpectedVersion, payload.Locked)
+			}
 			if err != nil {
 				h.logger.Warn("room lock rejected", "room_id", c.roomID, "connection_id", c.id, "locked", payload.Locked, "expected_version", payload.ExpectedVersion, "error", err)
 				h.sendError(c, "ROOM_COMMAND_REJECTED", "room state changed; retry")
@@ -813,15 +983,81 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			}
 			h.mu.Unlock()
 			h.broadcast(c.roomID, event("room.locked", c.roomID, roomLockedPayload{updated.IsLocked, c.identity.ID, updated.Version}), "")
-		case "participant.kick":
+		case "host.transfer":
+			var payload transferHostPayload
+			if json.Unmarshal(envelope.Payload, &payload) != nil || payload.TargetConnectionID == "" {
+				h.sendError(c, "INVALID_PAYLOAD", "Invalid host target")
+				continue
+			}
+			h.mu.RLock()
+			state := h.rooms[c.roomID]
+			allowed := currentHostLocked(state, c)
+			current := domain.HostAuthority{}
+			if state != nil {
+				current = state.host
+			}
+			var target *client
+			if allowed && (payload.ExpectedAuthorityVersion == 0 || payload.ExpectedAuthorityVersion == current.Version) && state != nil {
+				for _, candidate := range state.clients {
+					if candidate.participant.ConnectionID == payload.TargetConnectionID && !candidate.disconnected {
+						target = candidate
+						break
+					}
+				}
+			}
+			bus := h.bus
+			h.mu.RUnlock()
+			var targetParticipant domain.Participant
+			var targetGeneration uint64
+			if target != nil {
+				targetParticipant = target.participant
+				targetGeneration = target.generation
+			} else if allowed {
+				if routing, ok := bus.(presenceRoutingBus); ok {
+					lookupCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+					lease, found, lookupErr := routing.FindPresenceByConnection(lookupCtx, c.roomID, payload.TargetConnectionID)
+					cancel()
+					if lookupErr == nil && found {
+						targetParticipant = lease.Participant
+					}
+				}
+			}
+			if !allowed || targetParticipant.ConnectionID == "" || !domain.CanTransferHost(current, c.identity, targetParticipant) {
+				h.sendError(c, "ROOM_COMMAND_REJECTED", "host transfer is not allowed")
+				continue
+			}
+			h.mu.Lock()
+			state = h.rooms[c.roomID]
+			if !currentHostLocked(state, c) || (payload.ExpectedAuthorityVersion != 0 && payload.ExpectedAuthorityVersion != state.host.Version) {
+				h.mu.Unlock()
+				h.sendError(c, "ROOM_COMMAND_REJECTED", "room authority changed; retry")
+				continue
+			}
+			data := setHostLocked(state, targetParticipant, targetGeneration, "connected", "transfer")
+			h.mu.Unlock()
+			h.broadcast(c.roomID, data, "")
+		case "participant.kick", "participant.ban":
 			var payload kickPayload
-			if json.Unmarshal(envelope.Payload, &payload) != nil || payload.ConnectionID == "" {
+			banHours := 0
+			if envelope.Type == "participant.ban" {
+				var ban temporaryBanPayload
+				if json.Unmarshal(envelope.Payload, &ban) != nil || ban.ConnectionID == "" || ban.DurationHours < 1 || ban.DurationHours > 24 {
+					h.sendError(c, "INVALID_PAYLOAD", "Invalid temporary ban")
+					continue
+				}
+				payload.ConnectionID = ban.ConnectionID
+				banHours = ban.DurationHours
+			} else if json.Unmarshal(envelope.Payload, &payload) != nil || payload.ConnectionID == "" {
 				h.sendError(c, "INVALID_PAYLOAD", "Invalid participant target")
 				continue
 			}
 			h.mu.RLock()
 			state := h.rooms[c.roomID]
-			allowed := state != nil && domain.CanKick(state.room, c.identity)
+			allowed := currentHostLocked(state, c)
+			current := domain.HostAuthority{}
+			if state != nil {
+				current = state.host
+			}
 			var target *client
 			if allowed {
 				for _, candidate := range state.clients {
@@ -833,7 +1069,7 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			}
 			bus := h.bus
 			h.mu.RUnlock()
-			if !allowed || target == c || (target != nil && target.participant.Role == "host") {
+			if !allowed || target == c {
 				h.sendError(c, "ROOM_COMMAND_REJECTED", "participant cannot be removed")
 				continue
 			}
@@ -857,14 +1093,32 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				targetIdentity = domain.Identity{ID: lease.Participant.IdentityID, Type: lease.Participant.IdentityType, DisplayName: lease.Participant.DisplayName, AvatarURL: lease.Participant.AvatarURL, RoomID: c.roomID}
 				targetInstance = lease.InstanceID
 			}
+			targetParticipant := domain.Participant{ConnectionID: payload.ConnectionID, IdentityID: targetIdentity.ID, IdentityType: targetIdentity.Type, Role: "member"}
+			if target != nil {
+				targetParticipant = target.participant
+			}
+			if !domain.CanKickParticipant(current, c.identity, targetParticipant) {
+				h.sendError(c, "ROOM_COMMAND_REJECTED", "participant cannot be removed")
+				continue
+			}
 			governance, ok := h.store.(domain.GovernanceStore)
 			if !ok {
 				h.logger.Warn("participant kick rejected: governance store unavailable", "room_id", c.roomID, "connection_id", c.id)
 				h.sendError(c, "ROOM_COMMAND_REJECTED", "participant could not be removed")
 				continue
 			}
-			if err := governance.BanIdentity(ctx, c.roomID, c.identity.ID, targetIdentity); err != nil {
-				h.logger.Warn("participant kick persistence failed", "room_id", c.roomID, "connection_id", c.id, "target_identity", targetIdentity.LiveKitIdentity(), "error", err)
+			var banErr error
+			if hostGovernance, supportsHost := h.store.(domain.HostGovernanceStore); supportsHost {
+				if banHours > 0 {
+					banErr = hostGovernance.BanIdentityForHost(ctx, c.roomID, targetIdentity, time.Now().UTC().Add(time.Duration(banHours)*time.Hour))
+				} else {
+					banErr = hostGovernance.BanIdentityByHost(ctx, c.roomID, targetIdentity)
+				}
+			} else {
+				banErr = governance.BanIdentity(ctx, c.roomID, c.identity.ID, targetIdentity)
+			}
+			if banErr != nil {
+				h.logger.Warn("participant kick persistence failed", "room_id", c.roomID, "connection_id", c.id, "target_identity", targetIdentity.LiveKitIdentity(), "error", banErr)
 				h.sendError(c, "ROOM_COMMAND_REJECTED", "participant could not be removed")
 				continue
 			}
@@ -879,7 +1133,14 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				if state.kicked == nil {
 					state.kicked = make(map[string]struct{})
 				}
-				state.kicked[identityToRemove] = struct{}{}
+				if state.temporaryBans == nil {
+					state.temporaryBans = make(map[string]time.Time)
+				}
+				if banHours > 0 {
+					state.temporaryBans[identityToRemove] = time.Now().UTC().Add(time.Duration(banHours) * time.Hour)
+				} else {
+					state.kicked[identityToRemove] = struct{}{}
+				}
 				for _, candidate := range state.clients {
 					if candidate.participant.ConnectionID == payload.ConnectionID && candidate.identity.LiveKitIdentity() == identityToRemove {
 						target = candidate
@@ -953,7 +1214,7 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				continue
 			}
 			var payload reactionPayload
-			if json.Unmarshal(envelope.Payload, &payload) != nil || !validReaction(payload.Emoji) {
+			if json.Unmarshal(envelope.Payload, &payload) != nil || !domain.ValidReaction(payload.Emoji) {
 				h.sendError(c, "INVALID_REACTION", "Unsupported reaction")
 				continue
 			}
@@ -965,7 +1226,58 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				h.sendError(c, "REACTION_RATE_LIMITED", "Room reactions are busy")
 				continue
 			}
-			h.broadcastEphemeral(c.roomID, event("reaction.sent", c.roomID, reactionEvent{c.id, c.identity.DisplayName, payload.Emoji}))
+			h.broadcastEphemeral(c.roomID, event("reaction.sent", c.roomID, reactionEvent{c.participant.ConnectionID, c.identity.DisplayName, payload.Emoji}))
+		case "wave.send":
+			key := c.roomID + ":" + c.identity.LiveKitIdentity()
+			if len(envelope.Payload) > 0 && string(envelope.Payload) != "{}" && string(envelope.Payload) != "null" {
+				h.sendError(c, "INVALID_PAYLOAD", "Invalid wave")
+				continue
+			}
+			if !h.reactionLimit.AllowContext(ctx, key) {
+				h.sendError(c, "WAVE_RATE_LIMITED", "Too many waves")
+				continue
+			}
+			h.mu.Lock()
+			state := h.rooms[c.roomID]
+			allowed := state != nil && state.allowReaction(time.Now())
+			h.mu.Unlock()
+			if !allowed {
+				h.sendError(c, "WAVE_RATE_LIMITED", "Room social activity is busy")
+				continue
+			}
+			h.broadcastEphemeral(c.roomID, event("wave.sent", c.roomID, waveEvent{c.participant.ConnectionID, c.identity.DisplayName, time.Now().UTC()}))
+		case "participant.hand.set":
+			var payload handSetPayload
+			if json.Unmarshal(envelope.Payload, &payload) != nil {
+				h.sendError(c, "INVALID_PAYLOAD", "Invalid hand state")
+				continue
+			}
+			h.mu.Lock()
+			state := h.rooms[c.roomID]
+			current := state != nil && state.clients[c.id] == c && !c.disconnected
+			if !current || !domain.CanSetOwnHand(c.identity, c.participant) {
+				h.mu.Unlock()
+				h.sendError(c, "SOCIAL_ACTION_DENIED", "Social action is not allowed")
+				continue
+			}
+			if c.participant.RaisedHand == payload.Raised {
+				h.mu.Unlock()
+				continue
+			}
+			if c.participant.SocialVersion != payload.ExpectedSocialVersion {
+				h.mu.Unlock()
+				h.sendError(c, "SOCIAL_STATE_STALE", "Social state changed; retry")
+				continue
+			}
+			c.participant.RaisedHand = payload.Raised
+			c.participant.SocialVersion++
+			changed := event("participant.hand_changed", c.roomID, handChangedPayload{
+				ConnectionID: c.participant.ConnectionID, IdentityID: c.participant.IdentityID,
+				Generation: c.generation, Raised: c.participant.RaisedHand, SocialVersion: c.participant.SocialVersion,
+			})
+			h.mu.Unlock()
+			h.refreshPresence(ctx, c)
+			h.broadcast(c.roomID, changed, "")
 		case "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play", "media.pause", "media.seek", "media.duration", "media.repeat":
 			key := c.roomID + ":" + c.identity.LiveKitIdentity()
 			limiter := h.mediaLimit
@@ -1140,6 +1452,14 @@ func (h *Hub) roomParticipants(parent context.Context, roomID string, local []do
 	}
 	all := make([]domain.Participant, 0, len(byIdentity))
 	for _, participant := range byIdentity {
+		authority := h.hostAuthority(roomID)
+		if authority.ConnectionID != "" && participant.ConnectionID == authority.ConnectionID && authority.State != "failed-over" {
+			participant.Role = "host"
+		} else if participant.IdentityType == domain.IdentityGuest {
+			participant.Role = "guest"
+		} else {
+			participant.Role = "member"
+		}
 		all = append(all, participant)
 	}
 	slices.SortFunc(all, func(a, b domain.Participant) int { return a.JoinedAt.Compare(b.JoinedAt) })
@@ -1168,6 +1488,18 @@ func (h *Hub) writePump(ctx context.Context, c *client) error {
 func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if c.participant.ConnectionID == "" {
+		c.participant = domain.Participant{
+			ConnectionID:    c.id,
+			IdentityID:      c.identity.ID,
+			IdentityType:    c.identity.Type,
+			DisplayName:     c.identity.DisplayName,
+			AvatarURL:       c.identity.AvatarURL,
+			Role:            map[bool]string{true: "guest", false: "member"}[c.identity.Type == domain.IdentityGuest],
+			LiveKitIdentity: c.identity.LiveKitIdentity(),
+			JoinedAt:        time.Now().UTC(),
+		}
+	}
 	if h.closing {
 		c.joinError = "SERVER_SHUTTING_DOWN"
 		return nil, mediaState{}, false
@@ -1178,7 +1510,9 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 	}
 	state := h.rooms[c.roomID]
 	if state == nil {
-		state = &roomState{clients: make(map[string]*client), kicked: make(map[string]struct{}), mediaOwner: h.bus == nil, room: room, media: mediaState{Queue: []youtubeTrack{}, Status: "IDLE"}}
+		state = &roomState{clients: make(map[string]*client), kicked: make(map[string]struct{}), temporaryBans: make(map[string]time.Time), mediaOwner: h.bus == nil, room: room, media: mediaState{Queue: []youtubeTrack{}, Status: "IDLE"}}
+		state.host = h.remoteHosts[c.roomID]
+		state.hostFailedOver = state.host.State == "failed-over"
 		h.rooms[c.roomID] = state
 	}
 	if room.Version > state.room.Version {
@@ -1187,6 +1521,13 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 	if _, banned := state.kicked[c.identity.LiveKitIdentity()]; banned {
 		c.joinError = "ROOM_KICKED"
 		return nil, mediaState{}, false
+	}
+	if until, banned := state.temporaryBans[c.identity.LiveKitIdentity()]; banned {
+		if until.After(time.Now().UTC()) {
+			c.joinError = "ROOM_TEMPORARILY_BANNED"
+			return nil, mediaState{}, false
+		}
+		delete(state.temporaryBans, c.identity.LiveKitIdentity())
 	}
 	var reconnectedFrom *client
 	for _, existing := range state.clients {
@@ -1231,8 +1572,41 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 		c.participant.ConnectionID = reconnectedFrom.participant.ConnectionID
 		c.participant.JoinedAt = reconnectedFrom.participant.JoinedAt
 		c.participant.Role = reconnectedFrom.participant.Role
+		c.participant.RaisedHand = reconnectedFrom.participant.RaisedHand
+		c.participant.SocialVersion = reconnectedFrom.participant.SocialVersion
 	}
 	state.clients[c.id] = c
+	if state.host.ConnectionID == c.participant.ConnectionID && state.host.State == "grace-period" && !state.hostFailedOver {
+		c.hostEvent = setHostLocked(state, c.participant, c.generation, "connected", "reconnected")
+	} else if state.host.ConnectionID == "" {
+		var selected domain.Participant
+		selectedFound := false
+		for _, existing := range state.clients {
+			if existing.identity.Type == domain.IdentityUser && existing.identity.ID == state.room.OwnerID {
+				selected = existing.participant
+				selectedFound = true
+				break
+			}
+		}
+		if !selectedFound {
+			for _, existing := range state.clients {
+				if domain.CanBeRealtimeHost(existing.identity) {
+					selected = existing.participant
+					selectedFound = true
+					break
+				}
+			}
+		}
+		if selectedFound {
+			reason := "initial"
+			if state.hostFailedOver {
+				reason = "failover-recovery"
+			}
+			c.hostEvent = setHostLocked(state, selected, state.clients[c.id].generation, "connected", reason)
+		}
+	} else {
+		applyHostRolesLocked(state)
+	}
 	participants := make([]domain.Participant, 0, len(state.clients))
 	for _, existing := range state.clients {
 		participants = append(participants, existing.participant)
@@ -1318,7 +1692,15 @@ func (h *Hub) remove(c *client) {
 
 	if c.explicitLeave || h.closing || h.disconnectGracePeriod <= 0 {
 		suppressLeft := c.suppressLeave
+		hostLeaving := state.host.ConnectionID == c.participant.ConnectionID && state.host.State == "connected"
 		delete(state.clients, c.id)
+		remaining := make([]domain.Participant, 0, len(state.clients))
+		if hostLeaving {
+			state.hostFailedOver = true
+			for _, candidate := range state.clients {
+				remaining = append(remaining, candidate.participant)
+			}
+		}
 		if c.graceTimer != nil {
 			c.graceTimer.Stop()
 			c.graceTimer = nil
@@ -1341,6 +1723,26 @@ func (h *Hub) remove(c *client) {
 			})
 		}
 		h.mu.Unlock()
+		var hostData []byte
+		if hostLeaving {
+			all := h.roomParticipants(context.Background(), c.roomID, remaining)
+			if successor, ok := eligibleSuccessor(all); ok {
+				h.mu.Lock()
+				if h.rooms[c.roomID] == state && state.host.ConnectionID == c.participant.ConnectionID {
+					hostData = setHostLocked(state, successor, 0, "connected", "leave-failover")
+				}
+				h.mu.Unlock()
+			} else {
+				h.mu.Lock()
+				if h.rooms[c.roomID] == state && state.host.ConnectionID == c.participant.ConnectionID {
+					hostData = setHostLocked(state, domain.Participant{}, 0, "failed-over", "leave-no-eligible-participant")
+				}
+				h.mu.Unlock()
+			}
+		}
+		if hostData != nil {
+			h.broadcast(c.roomID, hostData, "")
+		}
 		if !suppressLeft {
 			h.broadcast(c.roomID, event("participant.left", c.roomID, struct {
 				ConnectionID string `json:"connection_id"`
@@ -1359,11 +1761,29 @@ func (h *Hub) remove(c *client) {
 
 	roomID := c.roomID
 	participantConnID := c.participant.ConnectionID
+	var graceData []byte
+	if state.host.ConnectionID == participantConnID && state.host.State == "connected" {
+		state.host.Version++
+		state.host.State = "grace-period"
+		graceData = hostEvent(roomID, state.host, "disconnect-grace")
+	}
 	c.graceTimer = time.AfterFunc(h.disconnectGracePeriod, func() {
 		var leftData []byte
+		var hostData []byte
+		var remaining []domain.Participant
+		hostExpired := false
 		h.mu.Lock()
 		if !h.closing && h.rooms[roomID] == state && state.clients[c.id] == c && c.generation == gen && c.disconnected {
+			hostExpiring := state.host.ConnectionID == participantConnID && state.host.State == "grace-period"
+			hostExpired = hostExpiring
 			delete(state.clients, c.id)
+			if hostExpiring {
+				state.hostFailedOver = true
+				remaining = make([]domain.Participant, 0, len(state.clients))
+				for _, candidate := range state.clients {
+					remaining = append(remaining, candidate.participant)
+				}
+			}
 			if len(state.clients) == 0 && !h.closing {
 				state.evict = time.AfterFunc(10*time.Minute, func() {
 					released := false
@@ -1387,21 +1807,42 @@ func (h *Hub) remove(c *client) {
 		}
 		h.mu.Unlock()
 
+		if hostExpired {
+			all := h.roomParticipants(context.Background(), roomID, remaining)
+			candidates := make([]domain.Participant, 0, len(all))
+			for _, candidate := range all {
+				if candidate.ConnectionID != participantConnID {
+					candidates = append(candidates, candidate)
+				}
+			}
+			if successor, ok := eligibleSuccessor(candidates); ok {
+				h.mu.Lock()
+				if !h.closing && h.rooms[roomID] == state && state.host.ConnectionID == participantConnID && state.host.State == "grace-period" {
+					hostData = setHostLocked(state, successor, 0, "connected", "failover")
+				}
+				h.mu.Unlock()
+			} else {
+				h.mu.Lock()
+				if !h.closing && h.rooms[roomID] == state && state.host.ConnectionID == participantConnID && state.host.State == "grace-period" {
+					hostData = setHostLocked(state, domain.Participant{}, 0, "failed-over", "failover-no-eligible-participant")
+				}
+				h.mu.Unlock()
+			}
+		}
+
 		if leftData != nil {
+			if hostData != nil {
+				h.broadcast(roomID, hostData, "")
+			}
 			h.broadcast(roomID, leftData, "")
 			h.logger.Info("websocket left (grace period expired)", "connection_id", c.id, "participant_conn_id", participantConnID, "room_id", roomID)
 		}
 	})
 	h.mu.Unlock()
-	h.logger.Info("websocket disconnected (grace period started)", "connection_id", c.id, "room_id", c.roomID, "grace_period", h.disconnectGracePeriod)
-}
-
-func validReaction(emoji string) bool {
-	switch emoji {
-	case "❤️", "🔥", "👏", "😂", "👍", "🎉":
-		return true
+	if graceData != nil {
+		h.broadcast(roomID, graceData, "")
 	}
-	return false
+	h.logger.Info("websocket disconnected (grace period started)", "connection_id", c.id, "room_id", c.roomID, "grace_period", h.disconnectGracePeriod)
 }
 
 func (h *Hub) broadcast(roomID string, data []byte, exclude string) {

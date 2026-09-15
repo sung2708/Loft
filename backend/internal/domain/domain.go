@@ -67,6 +67,16 @@ type GovernanceStore interface {
 	IsBanned(context.Context, string, Identity) (bool, error)
 }
 
+// HostGovernanceStore exposes host-authorized governance mutations. The
+// existing owner-scoped methods remain available for backwards compatibility;
+// these methods let the active realtime host govern an active room without
+// turning the host into the durable owner.
+type HostGovernanceStore interface {
+	SetRoomLockedByHost(context.Context, string, int64, bool) (Room, error)
+	BanIdentityByHost(context.Context, string, Identity) error
+	BanIdentityForHost(context.Context, string, Identity, time.Time) error
+}
+
 type RoomAccessStore interface {
 	UpdateRoomAccess(context.Context, string, string, int64, RoomAccessUpdate) (Room, error)
 }
@@ -80,6 +90,32 @@ type Participant struct {
 	Role            string       `json:"role"`
 	LiveKitIdentity string       `json:"livekit_identity"`
 	JoinedAt        time.Time    `json:"joined_at"`
+	RaisedHand      bool         `json:"raised_hand"`
+	SocialVersion   uint64       `json:"social_version"`
+}
+
+func ValidReaction(value string) bool {
+	switch value {
+	case "❤️", "😂", "🔥", "👏", "😭":
+		return true
+	}
+	return false
+}
+
+func CanSetOwnHand(identity Identity, participant Participant) bool {
+	return identity.ID != "" && participant.IdentityID == identity.ID &&
+		participant.IdentityType == identity.Type && participant.ConnectionID != ""
+}
+
+// HostAuthority is the public, non-sensitive description of the active
+// realtime host. It contains no token, secret, or database credential.
+type HostAuthority struct {
+	ConnectionID string       `json:"connection_id"`
+	IdentityID   string       `json:"identity_id"`
+	IdentityType IdentityType `json:"identity_type"`
+	Generation   uint64       `json:"generation"`
+	Version      uint64       `json:"version"`
+	State        string       `json:"state"`
 }
 
 type Message struct {
@@ -182,3 +218,24 @@ func CanManageQueue(room Room, identity Identity) bool {
 func CanChangeSettings(room Room, identity Identity) bool { return CanControlMedia(room, identity) }
 
 func CanKick(room Room, identity Identity) bool { return CanControlMedia(room, identity) }
+
+func CanBeRealtimeHost(identity Identity) bool {
+	return identity.Type == IdentityUser && identity.ID != ""
+}
+
+func CanTransferHost(current HostAuthority, actor Identity, target Participant) bool {
+	return current.ConnectionID != "" && current.IdentityID == actor.ID &&
+		current.IdentityType == actor.Type && CanBeRealtimeHost(actor) &&
+		target.ConnectionID != "" && target.ConnectionID != current.ConnectionID &&
+		CanBeRealtimeHost(Identity{ID: target.IdentityID, Type: target.IdentityType})
+}
+
+func CanModerateHost(current HostAuthority, actor Identity) bool {
+	return current.ConnectionID != "" && current.IdentityID == actor.ID &&
+		current.IdentityType == actor.Type && CanBeRealtimeHost(actor)
+}
+
+func CanKickParticipant(current HostAuthority, actor Identity, target Participant) bool {
+	return CanModerateHost(current, actor) && target.ConnectionID != "" &&
+		target.ConnectionID != current.ConnectionID && target.Role != "host"
+}

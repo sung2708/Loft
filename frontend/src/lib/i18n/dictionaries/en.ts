@@ -82,4 +82,21 @@ export const en: TranslationDictionary = {
     openInYouTube: "Open in YouTube",
     remove: "Remove",
   },
+  roomModeration: {
+    participantActions: "Participant actions",
+    makeHost: "Make host",
+    removeParticipant: "Remove participant",
+    temporaryBan: "Ban for 1 hour",
+    temporaryBanConfirmation: "Temporarily ban {name} for 1 hour?",
+  },
+  roomSocial: {
+    socialActions: "Social actions",
+    wave: "Wave to the room",
+    raiseHand: "Raise hand",
+    lowerHand: "Lower hand",
+    handRaised: "Hand raised",
+    soundEffects: "Sound effects",
+    roomSounds: "Room sounds",
+    effectsVolume: "Effects volume",
+  },
 };

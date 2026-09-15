@@ -1,12 +1,12 @@
-# Testing Strategy & Quality Assurance — Loft
+# Testing Strategy & Quality Assurance — Mingly
 
-This document specifies the testing methodology, automated test suites, and mandatory real-browser verification matrices for **Loft MVP 2**.
+This document specifies the testing methodology, automated test suites, and mandatory real-browser verification matrices for **Mingly MVP 2 and MVP 3**.
 
 ---
 
 ## 1. Automated vs Real-Browser Testing Boundary
 
-Realtime WebRTC cannot be fully validated through headless synthetic scripts alone. Loft strictly distinguishes what must be automated from what requires real physical device testing. Camera filters and background effects are deferred to MVP 3.
+Realtime WebRTC cannot be fully validated through headless synthetic scripts alone. Mingly strictly distinguishes automated checks from real physical-device testing. SPEC 004 adds release-blocking two-peer checks for effects, raw fallback, local/remote orientation, camera switching, screen/microphone isolation, weak-device degradation, privacy, and repeated lifecycle cleanup.
 
 ```
 +────────────────────────────────────────+────────────────────────────────────────+
@@ -48,6 +48,11 @@ Realtime WebRTC cannot be fully validated through headless synthetic scripts alo
 - `stageLayout.test.ts`: Tests responsive grid column/row derivations.
 - `useMusicStore.test.ts`, `useReactionStore.test.ts`: Tests Zustand store mutations and snapshot replacements.
 
+### D. Frontend End-to-End Tests (`pnpm test:e2e` / Playwright)
+- `lobby.spec.ts`: Validates Lobby landing page rendering, brand presentation, input validation, room navigation, and accessibility.
+- Chromium & Mobile Chrome emulation matrices.
+
+
 ---
 
 ## 3. Mandatory Real-Browser Quality Verification Matrix
@@ -75,9 +80,10 @@ go test -race -v ./...
 # 2. Run backend linter
 golangci-lint run
 
-# 3. Run frontend tests and typechecks
+# 3. Run frontend tests, E2E checks and typechecks
 cd ../frontend
 pnpm test
+pnpm test:e2e
 pnpm lint
 pnpm exec tsc --noEmit
 ```

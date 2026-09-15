@@ -1,6 +1,8 @@
 # Client-Side Media Processing Pipeline — Loft
 
-This document specifies the future client-side video processing pipeline for Loft. MVP 2 ships the raw camera path with deterministic orientation; vision effects and processed tracks remain deferred to MVP 3.
+This document specifies Mingly's client-side video processing pipeline. SPEC 004 extends the raw camera path with one optional LiveKit track processor while preserving deterministic orientation and raw fallback.
+
+Active effect selection and runtime status are participant-local. Background segmentation runs only for Blur/Custom, face landmarks run only for AR, and lightweight color work runs only for Warm/Black & White. A monotonic generation makes the newest asynchronous selection authoritative; each detector permits at most one inference in flight.
 
 ---
 
@@ -115,6 +117,8 @@ All ML inference executes client-side on the user's browser using WebAssembly an
 - **Models**:
   - Background Segmentation: `selfie_segmenter.tflite` (lightweight, ~250KB).
   - Face Landmarker: `face_landmarker.task` (sparse 468 3D landmarks, ~3.5MB).
+
+The production scheduler caps vision inference below output frame rate (15/10/6 FPS by quality tier), reuses the latest valid result between inference frames, and alternates segmentation with landmarks when both are active. Category masks use byte data to avoid a per-frame float-mask conversion. Selecting `None` for Background closes segmentation immediately; AR-only effects do not load or run the segmenter.
 
 ### Compositing: Canvas 2D vs WebGL
 - **Canvas 2D (MVP 3 baseline)**:

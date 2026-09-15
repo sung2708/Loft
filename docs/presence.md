@@ -6,6 +6,8 @@ Presence represents ephemeral user availability in a room.
 1. **Presence is NOT Durable:** Presence data is **never** written to PostgreSQL.
 2. **Crash Resilience via TTL:** The system must remain correct even if a Go backend node experiences a hard crash (`kill -9`). Presence entries in Redis expire automatically via TTL.
 3. **Single Active Session Per Identity:** A verified identity may have one active room session at a time. A reload in the same browser tab keeps its `tab_session_id` so the server can replace the stale socket without creating a duplicate participant; a different tab is rejected with `DUPLICATE_SESSION`.
+4. **Participant Social State:** Raise Hand extends the same typed participant lease with
+   `raised_hand` and monotonic `social_version`. Valid reconnect restores it; true removal clears it.
 
 ---
 
@@ -89,3 +91,5 @@ presence:room:<room_id>:members (Redis hash, TTL 30s)
 - `connection.ping` refreshes the 15-second lease. `room.snapshot` reads non-expired remote leases through `ListPresence` and merges them with local participants.
 - Explicit leave removes only the exact connection lease. Disconnect grace keeps the lease alive long enough for same-tab replacement.
 - If Redis is disconnected, the node falls back to local capacity, identity and rate-limit checks. Cross-instance presence and fan-out are temporarily unavailable, while same-node rooms continue without crashing.
+- Social state updates Go authority before Redis refresh outside room locks. Reactions/Waves are not
+  snapshot history, and LiveKit remains authoritative for speaking/mic/camera/share state.

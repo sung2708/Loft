@@ -117,3 +117,26 @@ In the Go backend, room state mutations are governed by strict thread-safety rul
       - Delete room state from Go RAM / Redis
       - Durable metadata and messages remain safely in PostgreSQL
 ```
+
+## 6. Owner and Realtime Host
+
+`rooms.owner_id` remains the durable owner and controls persistent room
+settings. The Go Hub separately tracks the current realtime host by public
+participant connection ID, identity, generation, and monotonic authority
+version. A host transfer changes only the active authority; it never changes
+the durable owner.
+
+Temporary transport loss keeps the host in `grace-period`. Reconnection from
+the same tab/generation restores the host. When grace expires, the Hub selects
+one deterministic authenticated participant by join order and connection ID;
+if none is eligible, the room has no active host until an eligible participant
+joins. Every transition is published as `host.changed` and included in the
+next `room.snapshot`.
+
+## 7. Participant Social State
+
+Raise Hand is self-controlled current participant state with a monotonic social version. Valid
+same-tab reconnect preserves it; stale sockets cannot overwrite a newer generation. True leave,
+grace expiry, kick, temporary ban, and room teardown clear it. Snapshots recover current hands,
+while reactions and room-level Waves remain ephemeral. LiveKit remains authoritative for speaking,
+microphone, camera, and screen share.

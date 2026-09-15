@@ -82,4 +82,21 @@ export interface TranslationDictionary {
     openInYouTube: string;
     remove: string;
   };
+  roomModeration: {
+    participantActions: string;
+    makeHost: string;
+    removeParticipant: string;
+    temporaryBan: string;
+    temporaryBanConfirmation: string;
+  };
+  roomSocial: {
+    socialActions: string;
+    wave: string;
+    raiseHand: string;
+    lowerHand: string;
+    handRaised: string;
+    soundEffects: string;
+    roomSounds: string;
+    effectsVolume: string;
+  };
 }
