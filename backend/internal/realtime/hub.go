@@ -1151,7 +1151,11 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				lookupCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 				lease, found, lookupErr := routing.FindPresenceByConnection(lookupCtx, c.roomID, payload.ConnectionID)
 				cancel()
-				if lookupErr != nil || !found || lease.Participant.Role == "host" || lease.InstanceID == "" || lease.Participant.IdentityID == "" || (lease.Participant.IdentityType != domain.IdentityUser && lease.Participant.IdentityType != domain.IdentityGuest) {
+				// Role is presentation state replicated through presence and can be
+				// stale after a reconnect or host hand-off. The active host authority
+				// is the only source of truth for moderation: never reject a member
+				// merely because its replicated role still says "host".
+				if lookupErr != nil || !found || lease.Participant.ConnectionID == current.ConnectionID || lease.InstanceID == "" || lease.Participant.IdentityID == "" || (lease.Participant.IdentityType != domain.IdentityUser && lease.Participant.IdentityType != domain.IdentityGuest) {
 					h.sendError(c, "ROOM_COMMAND_REJECTED", "participant cannot be removed")
 					continue
 				}
@@ -1161,6 +1165,15 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			targetParticipant := domain.Participant{ConnectionID: payload.ConnectionID, IdentityID: targetIdentity.ID, IdentityType: targetIdentity.Type, Role: "member"}
 			if target != nil {
 				targetParticipant = target.participant
+			}
+			// Canonicalize the target role from authority instead of trusting the
+			// replicated participant role. This preserves the prohibition on
+			// removing the active host without blocking a valid host from removing
+			// a participant carrying a stale role from a prior authority event.
+			if targetParticipant.ConnectionID == current.ConnectionID {
+				targetParticipant.Role = "host"
+			} else {
+				targetParticipant.Role = "member"
 			}
 			if !domain.CanKickParticipant(current, c.identity, targetParticipant) {
 				h.sendError(c, "ROOM_COMMAND_REJECTED", "participant cannot be removed")

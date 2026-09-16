@@ -117,6 +117,29 @@ export default function RoomJoinPage() {
     }
   };
 
+  if (error && !room) {
+    return (
+      <div className="min-h-dvh w-full bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)]">
+        <LobbyHeader />
+        <main className="flex min-h-dvh items-center justify-center px-4 pt-14">
+          <section className="w-full max-w-sm rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-6 text-center shadow-xl">
+            <h1 className="text-base font-medium">{l("This room is unavailable", "Phòng này không khả dụng")}</h1>
+            <p className="mt-2 text-[11px] text-[var(--text-loft-secondary)]">
+              {l("It may not exist or may have ended.", "Phòng có thể không tồn tại hoặc đã kết thúc.")}
+            </p>
+            <button
+              type="button"
+              onClick={() => router.push("/")}
+              className="mt-5 rounded-[6px] bg-[#101113] px-4 py-2 text-[11px] font-medium text-white"
+            >
+              {l("Back to home", "Về trang chủ")}
+            </button>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="h-dvh w-full flex flex-col bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)] relative overflow-hidden selection:bg-[#101113]/30">
       {/* Top Shared Lobby Header */}
@@ -174,10 +197,10 @@ export default function RoomJoinPage() {
               {/* Title & Topic Area */}
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-[11px] font-medium text-[var(--text-loft-primary)] tracking-tight">
+                  <h2 className="text-base font-medium text-[var(--text-loft-primary)] tracking-tight">
                     {room?.name ?? l("Loading room…", "Đang tải phòng…")}
                   </h2>
-                  <span className="bg-[var(--border-loft)] text-[var(--text-loft-secondary)] px-2 py-1 rounded-[6px] text-[11px] font-medium uppercase tracking-wider">
+                  <span className="bg-[var(--border-loft)] text-[var(--bg-loft-base)] px-2 py-1 rounded-[6px] text-[11px] font-medium uppercase tracking-wider">
                     {room?.allow_guests ? l("Public", "Công khai") : l("Private", "Riêng tư")}
                   </span>
                 </div>

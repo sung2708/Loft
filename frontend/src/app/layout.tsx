@@ -39,8 +39,25 @@ export default function RootLayout({
       className="h-full antialiased"
       suppressHydrationWarning
     >
+      <head>
+        <Script
+          id="theme-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                const theme = localStorage.getItem("loft.theme") || "system";
+                const resolved = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+                document.documentElement.classList.add(resolved);
+                document.documentElement.dataset.theme = theme;
+              } catch {
+                document.documentElement.classList.add("dark");
+              }
+            `,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col">
-        <Script src="/theme-init.js" strategy="beforeInteractive" />
         <I18nProvider><ThemeProvider>{children}</ThemeProvider></I18nProvider>
       </body>
     </html>

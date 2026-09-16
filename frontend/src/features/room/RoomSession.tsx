@@ -413,7 +413,16 @@ function LiveMediaContext({
       mediaConnected: connectionState === ConnectionState.Connected,
       sendChat,
       sendCommand,
-      leave: () => { void liveRoom.disconnect().then(leave, leave); },
+      leave: () => {
+        // Once signaling has already failed, LiveKit cannot send a leave
+        // request. Unmounting the provider is enough to close local media;
+        // attempting a second leave only produces a misleading console error.
+        if (connectionState !== ConnectionState.Connected) {
+          leave();
+          return;
+        }
+        void liveRoom.disconnect().catch(() => undefined).finally(leave);
+      },
       mediaError,
       clearMediaError: () => setMediaError(null),
       micEnabled: isMicrophoneEnabled,

@@ -217,8 +217,10 @@ export default function HomePage() {
                 >
                   <span
                     aria-hidden="true"
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-[var(--bg-loft-base)] shadow-md ring-0 transition duration-200 ease-in-out ${
-                      allowGuests ? "translate-x-5" : "translate-x-0"
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full shadow-md ring-0 transition duration-200 ease-in-out ${
+                      allowGuests
+                        ? "translate-x-5 bg-white dark:bg-[#101113]"
+                        : "translate-x-0 bg-[#101113] dark:bg-[#f4f5f7]"
                     }`}
                   />
                 </button>

@@ -560,17 +560,13 @@ export function MusicDrawer({
     control("media.seek", { position_ms: Math.round(newSec * 1000) });
   };
 
-  const toggleMute = () => {
-    if (!playerRef.current) return;
-    if (isMuted) {
-      playerRef.current.unMute?.();
-      playerRef.current.setVolume(volume);
-      setIsMuted(false);
-    } else {
-      playerRef.current.mute?.();
-      setIsMuted(true);
-    }
-  };
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
 
   useEffect(() => {
     if (!showVolumeSlider) return;
@@ -634,8 +630,8 @@ export function MusicDrawer({
     <aside
       aria-label={mq.sharedQueue}
       aria-hidden={!open}
-      className={`fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-0 w-full md:w-96 z-40 bg-[var(--bg-loft-card)] border-l border-[var(--border-loft)] shadow-2xl flex flex-col transition-transform duration-500 ${
-        open ? "translate-x-0" : "translate-x-full pointer-events-none"
+      className={`fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 flex w-full flex-col border-l border-[var(--border-loft)] bg-[var(--bg-loft-card)] shadow-2xl transition-transform duration-500 md:relative md:top-auto md:right-auto md:bottom-auto md:z-auto md:h-full md:w-96 md:shrink-0 ${
+        open ? "translate-x-0" : "translate-x-full pointer-events-none md:translate-x-0"
       }`}
     >
       {/* Header Bar */}
@@ -857,8 +853,8 @@ export function MusicDrawer({
                     <button
                       onClick={() => {
                         setShowVolumeSlider(true);
-                        toggleMute();
                       }}
+                      onMouseEnter={() => setShowVolumeSlider(true)}
                       className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                       title={mq.volume}
                       aria-label={mq.volume}

@@ -21,11 +21,11 @@ export function AppHeader({
     <header
       className={`${fixed ? "fixed top-0 left-0 right-0" : "relative"} z-50 w-full border-b border-[var(--border-loft)] bg-[var(--bg-loft-base)]/95 backdrop-blur-xl`}
     >
-      <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between gap-3 px-4 sm:px-8">
-        <Link href="/" aria-label="Mingly — Better when we’re together." className="flex min-w-0 items-center gap-3 text-[var(--text-loft-primary)]">
+      <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between gap-2 px-4 sm:gap-3 sm:px-8">
+        <Link href="/" aria-label="Mingly — Better when we’re together." className="flex shrink-0 items-center gap-2 sm:gap-3 text-[var(--text-loft-primary)]">
           <LoftMark className="h-10 w-10 shrink-0" />
-          <span className="flex min-w-0 flex-col select-none">
-            <span className="loft-wordmark truncate text-base">{title}</span>
+          <span className="hidden min-w-0 flex-col select-none min-[360px]:flex">
+            <span className="loft-wordmark text-base">{title}</span>
             {subtitle ? (
               <span className="hidden truncate text-[11px] leading-tight text-[var(--text-loft-muted)] sm:block">
                 {subtitle}
@@ -34,7 +34,7 @@ export function AppHeader({
           </span>
         </Link>
         {center ? <div className="hidden min-w-0 flex-1 justify-center md:flex">{center}</div> : null}
-        {actions ? <div className="flex shrink-0 items-center gap-3">{actions}</div> : null}
+        {actions ? <div className="flex shrink-0 items-center gap-2 sm:gap-3">{actions}</div> : null}
       </div>
     </header>
   );

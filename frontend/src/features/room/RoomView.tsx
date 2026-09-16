@@ -55,7 +55,7 @@ export function RoomView() {
         <motion.section
           layout
           transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
-          className={`flex-1 min-w-0 flex flex-col ${drawer ? "" : ""}`}
+          className={`room-stage-column flex-1 min-w-0 flex flex-col ${drawer ? "" : ""}`}
         >
           <div className="flex-1 min-h-0">
             {room && connection === "CONNECTED" ? <Stage /> : <RoomLoading />}
@@ -66,8 +66,10 @@ export function RoomView() {
           {drawer === "chat" && <ChatDrawer />}
           {drawer === "people" && <PeopleDrawer />}
           {drawer === "settings" && <SettingsDrawer />}
+          {drawer === "music" && (
+            <MusicDrawer open onClose={() => useUIStore.getState().closeDrawer()} />
+          )}
         </AnimatePresence>
-        <MusicDrawer open={drawer === "music"} onClose={() => useUIStore.getState().closeDrawer()} />
       </div>
     </main>
   );
@@ -345,15 +347,16 @@ function CallDock() {
     expected_social_version: self?.social_version ?? 0,
   });
   const control =
-    "btn-press relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
+    "room-dock-control btn-press relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
   return (
     <div className="flex-shrink-0 pb-[calc(.75rem+env(safe-area-inset-bottom))] px-2 flex justify-center">
-      <div className="relative glass-dock rounded-full shadow-2xl p-2 flex items-center gap-1 sm:gap-2">
+      <div className="room-call-dock relative glass-dock rounded-full shadow-2xl p-2 flex items-center gap-1 sm:gap-2">
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleMic()}
           className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.micEnabled ? "" : "bg-[#101113] text-white"}`}
           title={tr("Microphone")}
+          aria-label={tr("Microphone")}
         >
           {media.micEnabled ? (
             <Mic className="w-4 h-4" />
@@ -367,7 +370,7 @@ function CallDock() {
           onClick={() => setEffectsOpen(!effectsOpen)}
           aria-expanded={effectsOpen}
           aria-haspopup="dialog"
-          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${effectsOpen ? "bg-[#101113] text-white" : ""}`}
+          className={`room-dock-optional ${control} disabled:opacity-40 disabled:cursor-not-allowed ${effectsOpen ? "bg-[#101113] text-white" : ""}`}
           title={tr("Video effects")}
           aria-label={tr("Video effects")}
         >
@@ -379,6 +382,7 @@ function CallDock() {
           onClick={() => void media.toggleCamera()}
           className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.cameraEnabled ? "" : "bg-[#101113] text-white"}`}
           title={tr("Camera")}
+          aria-label={tr("Camera")}
         >
           {media.cameraEnabled ? (
             <Video className="w-4 h-4" />
@@ -391,14 +395,16 @@ function CallDock() {
           onClick={() => void media.toggleScreen()}
           className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.screenEnabled ? "bg-[#101113] text-white" : ""}`}
           title={tr("Share screen")}
+          aria-label={tr("Share screen")}
         >
           <MonitorUp className="w-4 h-4" />
         </button>
-        <span className="w-px h-6 bg-[var(--border-loft)]" />
+        <span className="room-dock-separator w-px h-6 bg-[var(--border-loft)]" />
         <button
           onClick={() => toggleDrawer("chat")}
           className={`${control} ${drawer === "chat" ? "bg-[#101113] text-white" : ""}`}
           title={tr("Chat")}
+          aria-label={tr("Chat")}
         >
           <MessageSquare className="w-4 h-4" />
           {unread > 0 && drawer !== "chat" && (
@@ -411,27 +417,31 @@ function CallDock() {
           onClick={() => toggleDrawer("people")}
           className={`${control} ${drawer === "people" ? "bg-[#101113] text-white" : ""}`}
           title={tr("People")}
+          aria-label={tr("People")}
         >
           <Users className="w-4 h-4" />
-          <b className="absolute -top-1 -right-1 bg-[var(--bg-loft-card)] border border-[var(--border-loft)] rounded-full min-w-4 h-4 text-[11px] flex items-center justify-center">
+          <b className="room-dock-count absolute -top-1 -right-1 min-w-4 h-4 rounded-full border text-[11px] flex items-center justify-center">
             {count}
           </b>
         </button>
-        <button onClick={() => toggleDrawer("music")} className={`${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
-        <span className="w-px h-6 bg-[var(--border-loft)]" />
-        <SocialActions
-          raised={self?.raised_hand ?? false}
-          disabled={useRoomStore.getState().connectionState !== "CONNECTED"}
-          onReaction={sendReaction}
-          onWave={sendWave}
-          onToggleHand={toggleHand}
-          controlClass={control}
-        />
-        <span className="w-px h-6 bg-[var(--border-loft)]" />
+        <button onClick={() => toggleDrawer("music")} className={`room-dock-optional ${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
+        <span className="room-dock-optional room-dock-separator w-px h-6 bg-[var(--border-loft)]" />
+        <div className="room-dock-optional contents">
+          <SocialActions
+            raised={self?.raised_hand ?? false}
+            disabled={useRoomStore.getState().connectionState !== "CONNECTED"}
+            onReaction={sendReaction}
+            onWave={sendWave}
+            onToggleHand={toggleHand}
+            controlClass={control}
+          />
+        </div>
+        <span className="room-dock-optional room-dock-separator w-px h-6 bg-[var(--border-loft)]" />
         <button
           onClick={media.leave}
           className={`${control} bg-[#101113]/15 text-[var(--text-loft-primary)] hover:bg-[#101113] hover:text-white`}
           title={tr("Leave")}
+          aria-label={tr("Leave")}
         >
           <PhoneOff className="w-4 h-4" />
         </button>
@@ -464,7 +474,7 @@ function DrawerFrame({
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
       transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
-      className="fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-0 w-full md:w-96 glass-drawer shadow-2xl z-40 flex flex-col"
+      className="glass-drawer fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 flex w-full min-h-0 flex-col bg-[var(--bg-loft-card)] shadow-2xl md:relative md:top-auto md:right-auto md:bottom-auto md:z-auto md:h-full md:w-96 md:shrink-0 md:border-l md:border-[var(--border-loft)]"
     >
       <div className="h-14 px-5 flex items-center justify-between border-b border-[var(--border-loft)]">
         <h3 className="font-medium text-[11px]">{title}</h3>
@@ -599,7 +609,7 @@ function ChatDrawer() {
         />
         <button
           disabled={!input.trim()}
-          className="px-4 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white text-[11px] disabled:opacity-40 transition-colors"
+          className="px-4 rounded-[6px] border border-transparent bg-[#101113] text-white text-[11px] transition-colors disabled:cursor-not-allowed disabled:border-[var(--border-loft)] disabled:bg-[var(--bg-loft-card)] disabled:text-[var(--text-loft-primary)] disabled:opacity-100"
         >
           {tr("Send")}
         </button>
@@ -613,9 +623,14 @@ function PeopleDrawer() {
   const people = useRoomStore((state) => state.participants);
   const room = useRoomStore((state) => state.room);
   const self = useRoomStore((state) => state.self);
+  const host = useRoomStore((state) => state.host);
   const connection = useRoomStore((state) => state.connectionState);
   const session = useRoomSession();
-  const isHost = self?.role === "host";
+  // The server-published host authority is authoritative. A participant role
+  // is display state and can lag during reconnect/failover.
+  const isHost = Boolean(
+    self && host && host.state === "connected" && host.connection_id === self.connection_id,
+  );
   const [pendingModeration, setPendingModeration] = useState<{ connectionId: string; name: string; action: "kick" | "ban" } | null>(null);
   const closeKickDialog = useCallback(() => setPendingModeration(null), []);
   const lockRoom = () => {
@@ -664,7 +679,7 @@ function PeopleDrawer() {
             </button>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-2">
           {people.map((person) => (
             <div
               key={person.connection_id}

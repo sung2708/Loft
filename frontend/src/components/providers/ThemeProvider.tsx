@@ -1,33 +1,33 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { useUIStore } from "@/stores/useUIStore";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const theme = useUIStore((state) => state.theme);
   const setTheme = useUIStore((state) => state.setTheme);
   const initialized = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
+    let activeTheme = theme;
     if (!initialized.current) {
       initialized.current = true;
       const stored = localStorage.getItem("loft.theme");
       if (
-        (stored === "system" || stored === "light" || stored === "dark") &&
-        stored !== theme
+        stored === "system" || stored === "light" || stored === "dark"
       ) {
-        setTheme(stored);
-        return;
+        activeTheme = stored;
+        if (stored !== theme) setTheme(stored);
       }
     }
     const root = document.documentElement;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       const resolved =
-        theme === "system" ? (media.matches ? "dark" : "light") : theme;
+        activeTheme === "system" ? (media.matches ? "dark" : "light") : activeTheme;
       root.classList.remove("dark", "light");
       root.classList.add(resolved);
-      root.dataset.theme = theme;
-      localStorage.setItem("loft.theme", theme);
+      root.dataset.theme = activeTheme;
+      localStorage.setItem("loft.theme", activeTheme);
     };
     apply();
     media.addEventListener("change", apply);

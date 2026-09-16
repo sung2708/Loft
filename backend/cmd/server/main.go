@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,30 +15,33 @@ import (
 	"loft/backend/internal/config"
 	"loft/backend/internal/httpapi"
 	"loft/backend/internal/livekit"
+	"loft/backend/internal/observability"
 	"loft/backend/internal/realtime"
 	"loft/backend/internal/store"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := godotenv.Load(".env"); err != nil && !os.IsNotExist(err) {
-		logger.Error("invalid .env file")
+		bootstrapLogger := observability.NewLogger("production", os.Stderr)
+		bootstrapLogger.Error().Err(err).Msg("invalid .env file")
 		os.Exit(1)
 	}
+	logger := observability.NewLogger(os.Getenv("APP_ENV"), os.Stdout)
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("invalid configuration", "error", err)
+		logger.Error().Err(err).Msg("invalid configuration")
 		os.Exit(1)
 	}
 	if cfg.InstanceID == "" {
 		cfg.InstanceID = uuid.NewString()
 	}
-	logger = logger.With("instance_id", cfg.InstanceID)
+	logger = logger.With().Str("instance_id", cfg.InstanceID).Logger()
+	slogLogger := observability.SlogLogger(logger)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	database, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
-		logger.Error("database initialization failed", "error", err)
+		logger.Error().Err(err).Msg("database initialization failed")
 		os.Exit(1)
 	}
 	defer database.Close()
@@ -47,16 +49,17 @@ func main() {
 	guests := auth.NewGuestTokens(cfg.GuestTokenSecret, cfg.GuestTokenTTL)
 	liveKitService := livekit.New(cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
 	if err := liveKitService.SetURL(cfg.LiveKitURL); err != nil {
-		logger.Error("invalid LiveKit URL", "error", err)
+		logger.Error().Err(err).Msg("invalid LiveKit URL")
 		os.Exit(1)
 	}
-	hub := realtime.New(database, guests, users, cfg.FrontendOrigins, logger)
+	hub := realtime.New(database, guests, users, cfg.FrontendOrigins, slogLogger)
 	hub.SetParticipantEvictor(liveKitService)
-	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, logger, hub)
+	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, slogLogger, hub)
+	api.ConfigureObservability(logger, observability.NewMetrics())
 	if cfg.RedisURL != "" {
-		bus, err := realtime.NewRedisBus(cfg.RedisURL, cfg.InstanceID, logger)
+		bus, err := realtime.NewRedisBus(cfg.RedisURL, cfg.InstanceID, slogLogger)
 		if err != nil {
-			logger.Error("redis disabled; serving local realtime only", "error", err)
+			logger.Error().Err(err).Msg("redis disabled; serving local realtime only")
 		} else {
 			hub.SetBus(bus)
 			hub.ConfigureDistributedRateLimits(bus)
@@ -67,9 +70,9 @@ func main() {
 	}
 	server := &http.Server{Addr: cfg.Address, Handler: api.Routes(hub), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
-		logger.Info("Loft API listening", "address", cfg.Address)
+		logger.Info().Str("address", cfg.Address).Msg("Mingly API listening")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server failed", "error", err)
+			logger.Error().Err(err).Msg("server failed")
 			stop()
 		}
 	}()
@@ -77,9 +80,9 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := hub.Shutdown(shutdownCtx); err != nil {
-		logger.Error("websocket shutdown failed", "error", err)
+		logger.Error().Err(err).Msg("websocket shutdown failed")
 	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error("graceful shutdown failed", "error", err)
+		logger.Error().Err(err).Msg("graceful shutdown failed")
 	}
 }

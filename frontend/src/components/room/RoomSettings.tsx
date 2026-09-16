@@ -426,7 +426,7 @@ export function RoomSettings({
                           className={`w-6 h-6 rounded-[6px] flex items-center justify-center ${
                             isSelected
                               ? "bg-[#101113] text-white"
-                              : "bg-[var(--border-loft)] text-[var(--text-loft-muted)]"
+                              : "bg-[var(--border-loft)] text-[var(--bg-loft-base)]"
                           }`}
                         >
                           <Icon className="w-3.5 h-3.5" />

@@ -490,6 +490,16 @@ func TestRoomLockAndParticipantKick(t *testing.T) {
 	if err := wsjson.Read(ctx, guest, &guestLock); err != nil || guestLock.Type != "room.locked" {
 		t.Fatalf("guest did not receive room lock: type=%s err=%v", guestLock.Type, err)
 	}
+	// Presence can briefly retain a participant's former display role after a
+	// host hand-off. Moderation must use the active host authority, not this
+	// replicated presentation field.
+	hub.mu.Lock()
+	for _, client := range hub.rooms[room.ID].clients {
+		if client.participant.ConnectionID == guestParticipant.ConnectionID {
+			client.participant.Role = "host"
+		}
+	}
+	hub.mu.Unlock()
 	kickPayload, _ := json.Marshal(kickPayload{ConnectionID: guestParticipant.ConnectionID})
 	if err := wsjson.Write(ctx, host, Envelope{Type: "participant.kick", Version: 1, RoomID: room.ID, Payload: kickPayload}); err != nil {
 		t.Fatal(err)

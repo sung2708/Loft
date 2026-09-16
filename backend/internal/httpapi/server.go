@@ -9,18 +9,19 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/zerolog"
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
 	"loft/backend/internal/livekit"
+	"loft/backend/internal/observability"
 	"loft/backend/internal/ratelimit"
-	"loft/backend/internal/telemetry"
 )
 
 type Server struct {
@@ -35,19 +36,23 @@ type Server struct {
 	roomLimit     *ratelimit.Limiter
 	origins       map[string]struct{}
 	logger        *slog.Logger
-	httpRequests  atomic.Uint64
-	httpDuration  telemetry.DurationHistogram
+	metrics       *observability.Metrics
+	httpLogger    *zerolog.Logger
 }
 
 type RoomDeletionGuard interface {
 	BeginDelete(roomID string) bool
 	FinishDelete(roomID string, deleted bool)
 }
+
+// metricsProvider keeps the existing realtime metrics available while HTTP
+// metrics are emitted by the Prometheus registry below.
+type metricsProvider interface {
+	PrometheusMetrics() string
+}
 type mediaAdmissionGuard interface {
 	CanIssueMediaToken(context.Context, string, domain.Identity) (bool, error)
 }
-type metricsProvider interface{ PrometheusMetrics() string }
-
 type roomPreview struct {
 	ID                      string                `json:"id"`
 	Slug                    string                `json:"slug"`
@@ -79,7 +84,17 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		guard = deletion[0]
 	}
 	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger}
+		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
+}
+
+// ConfigureObservability is called once during process bootstrap before routes
+// are served. It keeps test registries process-local and prevents duplicate
+// registrations when more than one server is instantiated in a test process.
+func (s *Server) ConfigureObservability(logger zerolog.Logger, metrics *observability.Metrics) {
+	if metrics != nil {
+		s.metrics = metrics
+	}
+	s.httpLogger = &logger
 }
 
 // ConfigureDistributedRateLimits shares abuse budgets across backend nodes.
@@ -92,9 +107,26 @@ func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
 }
 
 func (s *Server) Routes(ws http.Handler) http.Handler {
+	if s.metrics == nil {
+		s.metrics = observability.NewMetrics()
+	}
+	if s.httpLogger == nil {
+		logger := zerolog.Nop()
+		s.httpLogger = &logger
+	}
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, s.observeHTTP, middleware.Recoverer, s.cors)
+	r.Use(middleware.RequestID, observability.HTTPMiddleware(*s.httpLogger, s.metrics), middleware.Recoverer, s.cors)
 	r.Handle("/ws", ws)
+	// Realtime metrics are retained below until they are migrated into the
+	// registry. Disable compression because the two Prometheus text streams are
+	// deliberately combined in this compatibility handler.
+	prometheusHandler := promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{DisableCompression: true})
+	r.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prometheusHandler.ServeHTTP(w, r)
+		if realtimeMetrics, ok := ws.(metricsProvider); ok {
+			_, _ = fmt.Fprint(w, realtimeMetrics.PrometheusMetrics())
+		}
+	}))
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(15 * time.Second))
 		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -118,29 +150,7 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 			r.Delete("/rooms/{roomID}", s.deleteRoom)
 		})
 	})
-	if metrics, ok := ws.(metricsProvider); ok {
-		r.Get("/metrics", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-			_, _ = fmt.Fprint(w, s.prometheusMetrics(), metrics.PrometheusMetrics())
-		})
-	}
 	return r
-}
-
-func (s *Server) observeHTTP(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		defer func() {
-			s.httpRequests.Add(1)
-			s.httpDuration.Observe(time.Since(start))
-		}()
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *Server) prometheusMetrics() string {
-	return fmt.Sprintf("# HELP loft_http_requests_total HTTP requests served by this process.\n# TYPE loft_http_requests_total counter\nloft_http_requests_total %d\n", s.httpRequests.Load()) +
-		s.httpDuration.Prometheus("loft_http_request_duration_seconds", "HTTP handler duration in seconds.")
 }
 
 func (s *Server) deleteRoom(w http.ResponseWriter, r *http.Request) {

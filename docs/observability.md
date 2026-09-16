@@ -4,9 +4,14 @@ This document specifies the structured logging format, contextual correlation di
 
 ---
 
-## 1. Structured Logging with `log/slog`
+## 1. Structured Logging with Zerolog
 
-All backend logging is structured as JSON using Go's standard library `log/slog`. Plain text string formatting (`fmt.Printf`, `log.Println`) is strictly prohibited in production code.
+The process logger is configured by `APP_ENV` in `backend/internal/observability`:
+
+- `development`: Zerolog `ConsoleWriter` writes coloured, readable logs locally.
+- every other value (including `production`): Zerolog emits JSON to stdout with RFC3339 timestamps and `caller` (`file:line`).
+
+Existing packages use a small `slog` adapter backed by the same Zerolog instance while their constructors are migrated. There is still one structured output stream. Plain text string formatting (`fmt.Printf`, `log.Println`) is prohibited in production code.
 
 ### Mandatory Contextual Dimensions
 
@@ -60,29 +65,45 @@ Every log entry must carry correlation context injected through `context.Context
 
 All metrics are designed for low cardinality. Dynamic UUIDs (`room_id`, `user_id`, `client_ip`) are **strictly prohibited** as Prometheus labels to prevent collector memory exhaustion.
 
-### Registered Metrics
+### Metrics exported today
 
 | Metric Name | Type | Labels | Description |
 | :--- | :--- | :--- | :--- |
 | `http_requests_total` | Counter | `method`, `path`, `status` | Total HTTP requests handled. |
 | `http_request_duration_seconds` | Histogram | `method`, `path` | HTTP request latency distribution ($P_{50}, P_{95}, P_{99}$). |
-| `websocket_connections_active` | Gauge | `instance_id` | Current active WebSocket connections on this node. |
-| `websocket_rooms_active` | Gauge | `instance_id` | Current active in-memory rooms on this node. |
-| `websocket_slow_clients_dropped_total` | Counter | `reason` | Saturated slow consumer connections terminated. |
-| `realtime_broadcast_duration_seconds` | Histogram | `event_family` | Time taken to fan out events to room subscribers. |
-| `redis_pubsub_messages_total` | Counter | `direction` (`pub`/`sub`) | Cross-instance messages routed via Redis. |
-| `redis_operation_errors_total` | Counter | `operation` | Failures communicating with Redis. |
-| `database_query_duration_seconds` | Histogram | `query_name` | PostgreSQL query latencies. |
-| `livekit_token_grants_total` | Counter | `identity_type` | Successfully minted LiveKit tokens. |
-| `media_drift_corrections_total` | Counter | `tier` (`soft`/`hard`) | Client-side drift correction events. |
+| `loft_realtime_connections_accepted_total` | Counter | none | Realtime connections accepted by this process. |
+| `loft_realtime_broadcasts_total` | Counter | none | Local realtime broadcasts. |
+| `loft_realtime_slow_consumers_total` | Counter | none | Slow consumers terminated to protect room broadcasts. |
+| `loft_realtime_broadcast_duration_seconds` | Histogram | none | Local room broadcast fan-out latency. |
+
+The HTTP middleware uses chi route templates such as `/api/v1/rooms/{roomID}`, never raw URL paths. This keeps UUIDs, invite codes, and user input out of Prometheus labels.
+
+`/metrics` is served by `promhttp.HandlerFor` with a process-local Prometheus registry. The existing realtime exposition is appended for backward compatibility.
+
+### Planned metrics (not exported yet)
+
+`redis_*`, database query, LiveKit grant, active room, and media-drift metrics require a dedicated instrumentation task. Do not create alerts for them until they are exported.
+
+## 4. Better Stack
+
+### Logs
+
+Create a **Go/Docker log source** in Better Stack and retain its source token and ingesting host. Production logs are JSON on stdout, so do not add a second in-process HTTP log shipper.
+
+- **Docker or VM:** run the Better Stack Collector/Vector beside the service and configure it to read container stdout. Better Stack provides a source-specific Vector configuration at `https://telemetry.betterstack.com/vector-yaml/docker/$SOURCE_TOKEN`.
+- **Render:** keep JSON on stdout, then configure a Render log drain or Better Stack Collector to forward that stream to the log source. Stdout alone is not an external log archive; the platform drain/collector is the forwarding step.
+
+Never place a Better Stack source token in app logs, client-side variables, or Git. Store it in Render/Docker/Kubernetes secrets only.
+
+### Metrics
+
+Create a separate **Prometheus source** in Better Stack. Copy `deploy/prometheus/.env.example` to `deploy/prometheus/.env`, set `MINGLY_METRICS_TARGET`, `MINGLY_METRICS_SCHEME`, `APP_ENV`, `BETTER_STACK_INGESTING_HOST`, and `BETTER_STACK_METRICS_SOURCE_TOKEN`, then run Prometheus with `deploy/prometheus/prometheus.yml`. For the public Render URL `https://loft-ytxd.onrender.com`, use `MINGLY_METRICS_TARGET=loft-ytxd.onrender.com` and `MINGLY_METRICS_SCHEME=https`—do not append `:8080`. The file scrapes `/metrics` and forwards samples with Remote Write bearer authentication. Prometheus only expands `${VARIABLE}`; provide every variable explicitly through your deployment secret store.
+
+For a managed collector instead of a local Prometheus agent, Better Stack can scrape the protected `/metrics` URL directly. Allow only the collector/scraper and require bearer authentication at the proxy if the endpoint is publicly reachable.
 
 ---
 
-## 4. Alerting Thresholds (Production Playbook)
+## 5. Alerting Thresholds (Production Playbook)
 
-1. **Slow Consumer Spike**: `rate(websocket_slow_clients_dropped_total[5m]) > 10`
+1. **Slow Consumer Spike**: `rate(loft_realtime_slow_consumers_total[5m]) > 10`
    - *Investigation*: Inspect network congestion or frontend rendering freeze.
-2. **Redis Outage**: `redis_operation_errors_total > 0`
-   - *Behavior*: Backend falls back to local in-memory operation; investigate Redis cluster health.
-3. **Database Connection Saturation**: `pgxpool.AcquireDuration > 500ms`
-   - *Investigation*: Identify unindexed queries or connection pool exhaustion.

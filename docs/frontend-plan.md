@@ -73,12 +73,14 @@ src/lib/realtime.ts           WebSocket protocol client
 | Motion | `200ms`, `500ms`, or `1150ms`; `cubic-bezier(0.4, 0, 0.2, 1)` |
 | Body | `fiveYears`, then Syne/system fallback; 11px/500/1.5 |
 
-Controls that invert their background use `hover-invert`, which also updates nested labels and icons. Test light and dark themes whenever adding a hover surface.
+Controls using `hover-invert` receive a quiet semantic tint and preserve readable nested labels and icons. Test light and dark themes whenever adding a hover surface.
+
+Room appearance is previewed only in local UI state while the host edits it. `SettingsDrawer` clears the draft on close/Escape; only its explicit save sends `room.appearance.update` and updates the shared authoritative room state.
 
 ## UX rules
 
 - Lobby hierarchy: join first, create second, account state third.
-- Active rooms remain Stage-first; drawers overlay rather than permanently shrinking the stage.
+- Active rooms remain Stage-first. Desktop drawers take a layout column so the Stage resizes; mobile drawers overlay rather than forcing an unusably narrow Stage.
 - User-facing copy is functional and concise. Do not expose LiveKit, WebSocket, Redis, API, or database terms.
 - Action labels use one clear verb where possible.
 - Errors state what happened and the next useful action; raw server codes stay internal.

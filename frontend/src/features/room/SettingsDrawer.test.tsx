@@ -68,7 +68,7 @@ describe("SettingsDrawer", () => {
     expect(html).toContain("Âm thanh");
   });
 
-  it("hides atmosphere controls when self is not host", () => {
+  it("shows only personal audio controls when self is not host", () => {
     useRoomStore.getState().applySnapshot({
       ...mockSnapshot,
       self: {
@@ -80,8 +80,13 @@ describe("SettingsDrawer", () => {
     const html = renderToStaticMarkup(<SettingsDrawer />);
 
     expect(html).toContain("Cài đặt phòng");
-    expect(html).toContain("Tên phòng");
+    expect(html).toContain("Chỉ chủ phòng có thể thay đổi cài đặt phòng.");
+    expect(html).not.toContain("Tên phòng");
+    expect(html).not.toContain("Yêu cầu mật khẩu");
+    expect(html).not.toContain("Khóa phòng với người mới");
     expect(html).not.toContain("Không khí phòng");
+    expect(html).not.toContain("Lưu cho mọi người");
+    expect(html).toContain("Âm thanh");
   });
 
   it("renders with English labels when locale is en", () => {

@@ -13,7 +13,7 @@ Compared current documentation with the Go routes/configuration, frontend API cl
 | High | Deployment documentation advertised Dockerfile/Compose artifacts that are not committed | Repository has no Dockerfile or compose file | Replaced with actual Vercel/Go/Supabase/Redis/LiveKit flow and an explicit limitation |
 | High | Migration instructions stopped at `000004` | Repository contains `000005` and `000006` | README and deployment now require all migrations in numeric order |
 | High | API catalog omitted `PATCH /api/v1/rooms/{id}` and documented an unused invite-expiry error | Route exists in `server.go`; invite expiry route/code does not | API catalog corrected |
-| High | Hover surfaces changed background while nested labels/icons retained fixed colors | Repeated across Lobby, Home, drawers, settings, menus | Added and applied `hover-invert` invariant |
+| High | Hover surfaces changed background while nested labels/icons retained fixed colors | Repeated across Lobby, Home, drawers, settings, menus | `hover-invert` now applies a quiet semantic tint and preserves nested contrast |
 | Medium | Root README described video effects as deferred | Effects pipeline exists under `src/features/room/effects` | Scope text corrected |
 | Medium | Frontend README called the app “Loft MVP 1” and omitted variables/tests | Current app is Mingly with MVP3 features | Replaced with concise setup, environment, and verification tables |
 | Medium | Current architecture docs still used the old product name | Product identity is Mingly; lowercase compatibility identifiers remain intentional | Updated current docs from product-name “Loft” to “Mingly” |
@@ -27,7 +27,7 @@ Compared current documentation with the Go routes/configuration, frontend API cl
 - Lobby has the correct action order: Join, Create, account/recent rooms.
 - Join keeps authentication optional for guest-enabled rooms and reveals password only when needed.
 - Home exposes room management without adding analytics/dashboard clutter.
-- Active room remains Stage-first; drawers overlay the session.
+- Active room remains Stage-first; desktop drawers take a layout column while mobile drawers overlay the session.
 - Settings contain both durable room settings and local presentation settings without changing server authority.
 
 ### Copy findings
@@ -42,7 +42,7 @@ Compared current documentation with the Go routes/configuration, frontend API cl
 
 ### High
 
-1. Keep `hover-invert` on every control that uses `--border-loft` or `--border-loft-light` as its hover background.
+1. Keep `hover-invert` limited to controls that need a quiet hover tint; never use it to invert a static row or card.
 2. Add Playwright coverage that asserts computed foreground/background contrast for Lobby, Home, Join, and Room controls in light and dark themes.
 3. Protect `/metrics` with trusted ingress/network policy in production.
 

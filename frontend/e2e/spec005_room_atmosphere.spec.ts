@@ -195,6 +195,17 @@ async function setupDeterministicRoom(
 }
 
 test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
+  async function openRoomSettings(page: Page) {
+    const settingsButton = page.locator('button[aria-label="Room settings"], button[aria-label="Cài đặt phòng"]');
+    await expect(settingsButton).toBeVisible();
+    await settingsButton.click();
+    await expect(page.getByRole("radiogroup", { name: /room atmosphere|không khí phòng/i })).toBeVisible();
+  }
+
+  async function saveRoomSettings(page: Page) {
+    await page.getByRole("button", { name: /save|lưu/i }).click();
+  }
+
   test("Host can inspect and switch atmospheres (minimal, ambient, focus, party)", async ({ page }) => {
     await setupDeterministicRoom(page, "host");
     await page.goto(`/room/${TEST_SLUG}`);
@@ -205,26 +216,19 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
     await expect(atmosphereRoot).toHaveAttribute("data-atmosphere", "ambient");
     await expect(atmosphereRoot).toHaveAttribute("data-accent", "blue");
 
-    // Open Appearance menu
-    const appearanceBtn = page.locator('button[aria-label="Appearance"], button[aria-label="Giao diện"]').first();
-    await expect(appearanceBtn).toBeVisible();
-    await appearanceBtn.click();
+    await openRoomSettings(page);
 
     // Verify atmosphere options exist
-    const atmospheres = [
-      /minimal|tối giản/i,
-      /ambient|môi trường/i,
-      /focus|tập trung/i,
-      /party|tiệc tùng/i,
-    ] as const;
+    const atmospheres = ["minimal", "ambient", "focus", "party"] as const;
     for (const atmo of atmospheres) {
-      const option = page.locator(`button[role="menuitemradio"]`).filter({ hasText: atmo });
+      const option = page.locator(`button[role="radio"][data-atmosphere="${atmo}"]`);
       await expect(option).toBeVisible();
     }
 
     // Switch to Party
-    const partyOption = page.locator(`button[role="menuitemradio"]`).filter({ hasText: /party|tiệc tùng/i });
+    const partyOption = page.locator('button[role="radio"][data-atmosphere="party"]');
     await partyOption.click();
+    await saveRoomSettings(page);
 
     // Verify convergence to Party
     await expect(atmosphereRoot).toHaveAttribute("data-atmosphere", "party", { timeout: 5000 });
@@ -237,14 +241,14 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
     const atmosphereRoot = page.locator("[data-atmosphere]").first();
     await expect(atmosphereRoot).toBeVisible({ timeout: 15000 });
 
-    const appearanceBtn = page.locator('button[aria-label="Appearance"], button[aria-label="Giao diện"]').first();
-    await appearanceBtn.click();
+    await openRoomSettings(page);
 
     const accents = ["purple", "green", "orange", "rose", "blue"] as const;
     for (const acc of accents) {
-      const btn = page.locator(`button.room-accent-choice[data-accent="${acc}"]`);
+      const btn = page.locator(`button[role="radio"][data-accent="${acc}"]`);
       await expect(btn).toBeVisible();
       await btn.click();
+      await saveRoomSettings(page);
       await expect(atmosphereRoot).toHaveAttribute("data-accent", acc, { timeout: 5000 });
     }
   });
@@ -258,13 +262,11 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
 
     const appearanceBtn = page.locator('button[aria-label="Appearance"], button[aria-label="Giao diện"]').first();
     await appearanceBtn.click();
-
-    // Personal theme options (System, Light, Dark) should be visible
     await expect(page.locator(`button[role="menuitemradio"]`).filter({ hasText: /light|sáng/i })).toBeVisible();
 
-    // Room atmosphere section and accent buttons must NOT be rendered for participant
-    await expect(page.locator('[role="menu"]').getByText(/room atmosphere|không khí phòng/i)).toHaveCount(0);
-    await expect(page.locator("button.room-accent-choice")).toHaveCount(0);
+    // Only hosts receive room settings, so participants cannot reach room appearance controls.
+    await expect(page.locator('button[aria-label="Room settings"], button[aria-label="Cài đặt phòng"]')).toHaveCount(0);
+    await expect(page.locator('button[role="radio"][data-atmosphere], button[role="radio"][data-accent]')).toHaveCount(0);
   });
 
   test("Personal theme independence and localStorage loft.theme preservation", async ({ page }) => {
@@ -282,10 +284,10 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
     const storedTheme = await page.evaluate(() => localStorage.getItem("loft.theme"));
     expect(storedTheme).toBe("dark");
 
-    // Re-open appearance and switch atmosphere to Focus
-    await appearanceBtn.click();
-    const focusBtn = page.locator(`button[role="menuitemradio"]`).filter({ hasText: /focus|tập trung/i });
+    await openRoomSettings(page);
+    const focusBtn = page.locator('button[role="radio"][data-atmosphere="focus"]');
     await focusBtn.click();
+    await saveRoomSettings(page);
 
     // Atmosphere updated
     const atmosphereRoot = page.locator("[data-atmosphere]").first();
@@ -309,11 +311,10 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
     await setupDeterministicRoom(page, "host");
     await page.goto(`/room/${TEST_SLUG}`);
 
-    const appearanceBtn = page.locator('button[aria-label="Appearance"], button[aria-label="Giao diện"]').first();
-    await appearanceBtn.click();
-
-    const partyBtn = page.locator(`button[role="menuitemradio"]`).filter({ hasText: /party|tiệc tùng/i });
+    await openRoomSettings(page);
+    const partyBtn = page.locator('button[role="radio"][data-atmosphere="party"]');
     await partyBtn.click();
+    await saveRoomSettings(page);
 
     // Verify no background image upload or palette upload occurred
     const hasForbiddenUpload = uploadedUrls.some(
@@ -358,11 +359,10 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
     const atmosphereRoot = page.locator("[data-atmosphere]").first();
     await expect(atmosphereRoot).toBeVisible({ timeout: 15000 });
 
-    // Open appearance and switch to party
-    const appearanceBtn = page.locator('button[aria-label="Appearance"], button[aria-label="Giao diện"]').first();
-    await appearanceBtn.click();
-    const partyBtn = page.locator(`button[role="menuitemradio"]`).filter({ hasText: /party|tiệc tùng/i });
+    await openRoomSettings(page);
+    const partyBtn = page.locator('button[role="radio"][data-atmosphere="party"]');
     await partyBtn.click();
+    await saveRoomSettings(page);
 
     await expect(atmosphereRoot).toHaveAttribute("data-atmosphere", "party");
 

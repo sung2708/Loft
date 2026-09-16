@@ -35,11 +35,9 @@ test.describe("SPEC 001: Persistent Rooms & Room Access", () => {
     });
     await page.goto("/join/999999");
 
-    // Filter out Next.js internal #__next-route-announcer__ alert
-    const errorAlert = page.locator('[role="alert"]:not(#__next-route-announcer__)').first();
-    await expect(errorAlert).toBeVisible({ timeout: 10000 });
-    const text = await errorAlert.textContent();
-    expect(text?.toLowerCase()).toMatch(/không tìm thấy|not found|error/i);
+    await expect(page.getByRole("heading", { name: /phòng này không khả dụng|this room is unavailable/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /về trang chủ|back to home/i })).toBeVisible();
+    await expect(page.getByText(/không tồn tại|does not exist|đã kết thúc|may have ended/i)).toBeVisible();
   });
 
   test("should prevent submission of single-character display name", async ({ page }) => {

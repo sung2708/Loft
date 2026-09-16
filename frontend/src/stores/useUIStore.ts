@@ -2,6 +2,13 @@
 
 import { create } from "zustand";
 import { StageMode, DrawerType, ThemeMode } from "@/types/room";
+import type { RoomAccent, RoomAtmosphere } from "@/types/api";
+
+export interface RoomAppearancePreview {
+  atmosphere: RoomAtmosphere;
+  accent: RoomAccent;
+  adaptiveMediaBackground: boolean;
+}
 
 interface UIState {
   theme: ThemeMode;
@@ -11,6 +18,8 @@ interface UIState {
   isDevicePickerOpen: boolean;
   isLeaveModalOpen: boolean;
   isFocusMode: boolean;
+  /** Local-only draft while a host previews a shared room appearance. */
+  roomAppearancePreview: RoomAppearancePreview | null;
 
   // Actions
   setTheme: (theme: ThemeMode) => void;
@@ -23,16 +32,19 @@ interface UIState {
   setLeaveModalOpen: (open: boolean) => void;
   setIsFocusMode: (isFocusMode: boolean) => void;
   toggleFocusMode: () => void;
+  setRoomAppearancePreview: (preview: RoomAppearancePreview) => void;
+  clearRoomAppearancePreview: () => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
-  theme: "dark",
+  theme: "system",
   stageMode: "stage",
   activeDrawer: null,
   screenZoom: "fit",
   isDevicePickerOpen: false,
   isLeaveModalOpen: false,
   isFocusMode: false,
+  roomAppearancePreview: null,
 
   setTheme: (theme) => set({ theme }),
 
@@ -64,4 +76,8 @@ export const useUIStore = create<UIState>((set) => ({
   setIsFocusMode: (isFocusMode) => set({ isFocusMode }),
 
   toggleFocusMode: () => set((state) => ({ isFocusMode: !state.isFocusMode })),
+
+  setRoomAppearancePreview: (roomAppearancePreview) => set({ roomAppearancePreview }),
+
+  clearRoomAppearancePreview: () => set({ roomAppearancePreview: null }),
 }));

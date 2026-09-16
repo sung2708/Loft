@@ -43,12 +43,7 @@ test.describe("Lobby & Landing Page", () => {
     const roomInput = page.locator("#roomInput");
     const brand = page.getByRole("link", { name: "Mingly — Better when we’re together." });
 
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        localStorage.setItem("loft.theme", value);
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, theme);
-
+    const verifyStableHover = async () => {
       const inputBefore = await roomInput.evaluate((element) => {
         const style = getComputedStyle(element);
         return { background: style.backgroundColor, color: style.color };
@@ -58,10 +53,29 @@ test.describe("Lobby & Landing Page", () => {
       await roomInput.hover();
       await page.waitForTimeout(250);
       expect(await roomInput.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(inputBefore.background);
-      expect(await roomInput.evaluate((element) => getComputedStyle(element).color)).toBe(inputBefore.color);
+      const inputContrast = await roomInput.evaluate((element) => {
+        const rgb = (value: string) => value.match(/\d+/g)?.slice(0, 3).map(Number) ?? [0, 0, 0];
+        const luminance = ([red, green, blue]: number[]) => {
+          const channels = [red, green, blue].map((channel) => {
+            const value = channel / 255;
+            return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+          });
+          return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+        };
+        const style = getComputedStyle(element);
+        const foreground = luminance(rgb(style.color));
+        const background = luminance(rgb(style.backgroundColor));
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      });
+      expect(inputContrast).toBeGreaterThan(4.5);
 
       await brand.hover();
       expect(await brand.evaluate((element) => getComputedStyle(element).color)).toBe(brandBefore);
-    }
+    };
+
+    await verifyStableHover();
+    await page.locator('header button[title*="giao diện"]').click();
+    await page.waitForTimeout(250);
+    await verifyStableHover();
   });
 });

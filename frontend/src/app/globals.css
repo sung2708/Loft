@@ -35,7 +35,8 @@ input[role="switch"],
   --bg-loft-card: #ffffff;
   --bg-loft-dock: #ffffff;
   --border-loft: #101113;
-  --border-loft-light: #26282c;
+  /* A readable raised surface; never use the strong border token as a fill. */
+  --border-loft-light: #ffffff;
   --text-loft-primary: #101113;
   --text-loft-secondary: #26282c;
   --text-loft-muted: #26282c;
@@ -66,7 +67,7 @@ html.dark,
   --bg-loft-card: #26282c;
   --bg-loft-dock: #26282c;
   --border-loft: #f4f5f7;
-  --border-loft-light: #f4f5f7;
+  --border-loft-light: #26282c;
   --text-loft-primary: #f4f5f7;
   --text-loft-secondary: #f4f5f7;
   --text-loft-muted: #f4f5f7;
@@ -128,8 +129,8 @@ input,
 textarea {
   user-select: text;
 }
-.room-code-input,
-.room-code-input:hover {
+html .room-code-input,
+html .room-code-input:hover {
   background-color: var(--bg-loft-surface) !important;
   color: var(--text-loft-primary) !important;
 }
@@ -175,6 +176,55 @@ textarea {
 }
 .btn-press:hover {
   transform: none;
+}
+
+/* The call dock is an operational control surface, not part of the Stage.
+   In dark mode it deliberately inverts to the light token so its boundary,
+   inactive controls and keyboard focus are immediately legible. */
+.dark .room-call-dock {
+  background: #f4f5f7;
+  border-color: #f4f5f7;
+  color: #101113;
+  box-shadow: 0 12px 32px #101113 !important;
+}
+.dark .room-call-dock .room-dock-control {
+  border-color: #101113;
+}
+.dark .room-call-dock .room-dock-separator {
+  background: #101113;
+}
+.room-dock-count {
+  /* This badge must not inherit the colour of an active/inactive parent
+     control: its contrast stays explicit in both themes. */
+  background: #f4f5f7;
+  border-color: #101113;
+  color: #101113;
+}
+.dark .room-call-dock button:focus-visible {
+  outline: 2px solid #101113;
+  outline-offset: 2px;
+}
+
+/* Most primary actions were authored against the light surface. On the dark
+   surface, use the inverse Kott token so a primary action remains a distinct
+   target. The call dock already owns this inverse treatment. */
+.dark button.btn-press[class*="bg-[#101113]"] {
+  background-color: #f4f5f7;
+  color: #101113;
+}
+.dark .room-call-dock button.btn-press[class*="bg-[#101113]"] {
+  background-color: #101113;
+  color: #ffffff;
+}
+
+.room-stage-column { container-type: inline-size; }
+/* Keep every primary call control reachable when the Stage is narrowed by a
+   drawer or by a small phone. Secondary tools remain available from the
+   full-width layout; this avoids a horizontal scroller in an active call. */
+@container (max-width: 420px) {
+  .room-stage-column .room-dock-optional { display: none; }
+  .room-stage-column .room-call-dock { gap: 4px; padding: 8px; }
+  .room-stage-column .room-dock-control { width: 36px; height: 36px; }
 }
 .btn-press:hover svg {
   color: currentColor;
@@ -300,28 +350,36 @@ textarea:focus-visible,
     scroll-behavior: auto !important;
   }
 }
-/* Room atmosphere is scoped below the personal light/dark theme. */
-.room-atmosphere { --room-accent: #26282c; --room-media-primary: var(--room-accent); --room-media-secondary: var(--room-accent); isolation: isolate; }
-.room-atmosphere[data-accent], .room-accent-choice[data-accent] { --room-accent: #26282c; }
+/* Room atmosphere is scoped below the personal light/dark theme. It uses the
+   shared Kott palette; accents differ by composition, never by off-system hues. */
+.room-atmosphere, .appearance-preview { --room-accent: #2563eb; --room-accent-soft: #93c5fd; --room-media-primary: var(--room-accent); --room-media-secondary: var(--room-accent-soft); --room-origin: 50% 20%; isolation: isolate; }
+.room-atmosphere[data-accent="blue"], .appearance-preview[data-accent="blue"] { --room-accent: #2563eb; --room-accent-soft: #93c5fd; --room-origin: 50% 14%; }
+.room-atmosphere[data-accent="purple"], .appearance-preview[data-accent="purple"] { --room-accent: #7c3aed; --room-accent-soft: #c4b5fd; --room-origin: 82% 18%; }
+.room-atmosphere[data-accent="green"], .appearance-preview[data-accent="green"] { --room-accent: #16a34a; --room-accent-soft: #86efac; --room-origin: 18% 78%; }
+.room-atmosphere[data-accent="orange"], .appearance-preview[data-accent="orange"] { --room-accent: #ea580c; --room-accent-soft: #fdba74; --room-origin: 82% 78%; }
+.room-atmosphere[data-accent="rose"], .appearance-preview[data-accent="rose"] { --room-accent: #db2777; --room-accent-soft: #f9a8d4; --room-origin: 50% 52%; }
 .room-accent-choice { background: var(--room-accent, #26282c); }
-.room-atmosphere__backdrop { z-index: -1; background: radial-gradient(ellipse at 50% 20%, var(--room-media-primary), transparent 62%); transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1), background-color 500ms cubic-bezier(0.4, 0, 0.2, 1); }
-.room-atmosphere[data-atmosphere="minimal"] .room-atmosphere__backdrop { opacity: .12; }
-.room-atmosphere[data-atmosphere="ambient"] .room-atmosphere__backdrop { opacity: .55; }
-.room-atmosphere[data-atmosphere="focus"] .room-atmosphere__backdrop { opacity: .18; }
-.room-atmosphere[data-atmosphere="party"] .room-atmosphere__backdrop { opacity: .72; background: radial-gradient(ellipse at 20% 15%, var(--room-media-primary), transparent 55%), radial-gradient(ellipse at 80% 75%, var(--room-media-secondary), transparent 58%); }
+.room-atmosphere__backdrop { z-index: -1; background: radial-gradient(ellipse at var(--room-origin), var(--room-media-primary), transparent 62%); transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1), background 500ms cubic-bezier(0.4, 0, 0.2, 1); }
+.room-atmosphere[data-atmosphere="minimal"] .room-atmosphere__backdrop { opacity: .08; }
+.room-atmosphere[data-atmosphere="ambient"] .room-atmosphere__backdrop { opacity: .42; }
+.room-atmosphere[data-atmosphere="focus"] .room-atmosphere__backdrop { opacity: .38; background: radial-gradient(ellipse at var(--room-origin), var(--room-media-primary), transparent 42%), linear-gradient(180deg, var(--room-media-secondary), transparent 72%); }
+.room-atmosphere[data-atmosphere="party"] .room-atmosphere__backdrop { opacity: .78; background: radial-gradient(ellipse at var(--room-origin), var(--room-media-primary), transparent 52%), repeating-linear-gradient(-45deg, var(--room-media-secondary) 0 4px, transparent 4px 12px); }
 .room-atmosphere[data-screen-share="true"] .room-atmosphere__backdrop { opacity: .08; }
+.appearance-preview { display: flex; min-height: 80px; overflow: hidden; border: 1px solid var(--border-loft); border-radius: 6px; background: var(--bg-loft-surface); }
+.appearance-preview__stage { position: relative; width: 96px; flex: 0 0 96px; overflow: hidden; background: radial-gradient(ellipse at var(--room-origin), var(--room-accent), transparent 56%); transition: background 500ms cubic-bezier(0.4, 0, 0.2, 1); }
+.appearance-preview[data-atmosphere="minimal"] .appearance-preview__stage { background: radial-gradient(ellipse at var(--room-origin), var(--room-accent), transparent 65%), var(--bg-loft-base); }
+.appearance-preview[data-atmosphere="focus"] .appearance-preview__stage { background: radial-gradient(ellipse at var(--room-origin), var(--room-accent), transparent 42%), linear-gradient(180deg, var(--room-accent-soft), var(--bg-loft-base)); }
+.appearance-preview[data-atmosphere="party"] .appearance-preview__stage { background: radial-gradient(ellipse at var(--room-origin), var(--room-accent), transparent 52%), repeating-linear-gradient(-45deg, var(--room-accent-soft) 0 4px, var(--bg-loft-base) 4px 12px); }
+.appearance-preview__stage span { position: absolute; bottom: 12px; width: 20px; height: 20px; border: 1px solid var(--border-loft); border-radius: 6px; background: var(--bg-loft-card); }
+.appearance-preview__stage span:nth-child(1) { left: 12px; }.appearance-preview__stage span:nth-child(2) { left: 38px; }.appearance-preview__stage span:nth-child(3) { left: 64px; }
+.appearance-preview > div:last-child { padding: 12px; }
 @media (prefers-reduced-motion: reduce) { .room-atmosphere__backdrop { transition-duration: 200ms; } }
 
 /* Kott Studio component normalization. */
 .kott-settings {
-  --kott-primary: #101113;
-  --kott-on-primary: #ffffff;
-  --kott-background: #f4f5f7;
-  --kott-surface: #101113;
-  --kott-accent: #26282c;
-  background: var(--kott-background) !important;
-  border-color: var(--kott-primary) !important;
-  color: var(--kott-primary) !important;
+  background: var(--bg-loft-card) !important;
+  border-color: var(--border-loft) !important;
+  color: var(--text-loft-primary) !important;
   font-family: fiveYears, "fiveYears Fallback", Syne, "Syne Fallback", ui-sans-serif, system-ui, sans-serif;
   font-size: 11px;
   font-weight: 500;
@@ -334,15 +392,10 @@ textarea:focus-visible,
   transition-duration: 200ms !important;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
-.kott-settings [class*="text-"] { color: var(--kott-primary) !important; }
-.kott-settings [class*="border-"] { border-color: var(--kott-primary) !important; }
-.kott-settings [class*="bg-"] { background-color: transparent !important; }
-.kott-settings [class*="shadow"],
-.kott-settings [class*="ring-"] { box-shadow: none !important; }
 .kott-settings__header,
 .kott-settings__footer {
-  background: var(--kott-background) !important;
-  border-color: var(--kott-primary) !important;
+  background: var(--bg-loft-card) !important;
+  border-color: var(--border-loft) !important;
 }
 .kott-settings h3,
 .kott-settings h4,
@@ -356,40 +409,63 @@ textarea:focus-visible,
   line-height: 1.5;
 }
 .kott-settings input:not([type="checkbox"]):not([type="range"]) {
-  background: var(--kott-on-primary) !important;
-  border: 1px solid var(--kott-primary) !important;
-  color: var(--kott-primary) !important;
+  background: var(--bg-loft-surface) !important;
+  border: 1px solid var(--border-loft) !important;
+  color: var(--text-loft-primary) !important;
 }
 .kott-settings button[role="switch"] {
-  background: var(--kott-accent) !important;
-  border-color: var(--kott-primary) !important;
+  background: var(--bg-loft-surface) !important;
+  border-color: var(--border-loft) !important;
 }
-.kott-settings button[role="switch"][aria-checked="true"],
 .kott-settings button[role="radio"][aria-checked="true"],
 .kott-settings button[type="submit"] {
-  background: var(--kott-primary) !important;
-  color: var(--kott-on-primary) !important;
+  background: #101113 !important;
+  color: #ffffff !important;
 }
-.kott-settings button[role="switch"] > span {
-  background: var(--kott-on-primary) !important;
+.kott-settings button[role="switch"][aria-checked="true"] {
+  background: #101113 !important;
+  color: #ffffff !important;
+}
+.kott-settings button[role="switch"][aria-checked="false"] > span {
+  background: #101113 !important;
   border-radius: 6px !important;
 }
-.kott-settings button[role="radio"][aria-checked="true"] *,
-.kott-settings button[type="submit"] * {
-  color: var(--kott-on-primary) !important;
+.kott-settings button[role="switch"][aria-checked="true"] > span {
+  background: #ffffff !important;
+  border-radius: 6px !important;
 }
 .kott-settings button:focus-visible,
 .kott-settings input:focus-visible {
-  outline: 1px solid var(--kott-primary) !important;
+  outline: 2px solid var(--accent-blue) !important;
   outline-offset: 2px;
 }
-.kott-settings input[type="range"] { accent-color: var(--kott-primary); }
+.kott-settings input[type="range"] { accent-color: var(--accent-blue); }
 .kott-settings .kott-accent-option {
-  background: var(--kott-on-primary) !important;
-  color: var(--kott-primary) !important;
+  background: var(--bg-loft-surface) !important;
+  color: var(--text-loft-primary) !important;
   text-transform: capitalize;
 }
 .kott-settings .kott-accent-option[aria-checked="true"] {
-  background: var(--kott-primary) !important;
-  color: var(--kott-on-primary) !important;
+  background: var(--room-accent) !important;
+  color: #ffffff !important;
+}
+.kott-settings .kott-accent-option[data-accent="blue"] { --room-accent: #2563eb; }
+.kott-settings .kott-accent-option[data-accent="purple"] { --room-accent: #7c3aed; }
+.kott-settings .kott-accent-option[data-accent="green"] { --room-accent: #16a34a; }
+.kott-settings .kott-accent-option[data-accent="orange"] { --room-accent: #ea580c; }
+.kott-settings .kott-accent-option[data-accent="rose"] { --room-accent: #db2777; }
+
+/* Dark-mode controls must retain a visible track and a thumb with a distinct
+   luminance. Invert selected controls within the four-token Kott palette. */
+.dark .kott-settings button[role="switch"][aria-checked="true"],
+.dark .kott-settings button[role="radio"][aria-checked="true"],
+.dark .kott-settings button[type="submit"] {
+  background: #f4f5f7 !important;
+  color: #101113 !important;
+}
+.dark .kott-settings button[role="switch"][aria-checked="false"] > span {
+  background: #f4f5f7 !important;
+}
+.dark .kott-settings button[role="switch"][aria-checked="true"] > span {
+  background: #101113 !important;
 }

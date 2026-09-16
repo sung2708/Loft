@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   X,
@@ -68,7 +68,12 @@ export function SettingsDrawer() {
   const locale = useI18nStore((state) => state.locale);
   const vi = locale === "vi";
   const session = useRoomSession();
-  const close = () => useUIStore.getState().closeDrawer();
+  const setAppearancePreview = useUIStore((state) => state.setRoomAppearancePreview);
+  const clearAppearancePreview = useUIStore((state) => state.clearRoomAppearancePreview);
+  const close = useCallback(() => {
+    clearAppearancePreview();
+    useUIStore.getState().closeDrawer();
+  }, [clearAppearancePreview]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -76,7 +81,7 @@ export function SettingsDrawer() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [close]);
 
   const [name, setName] = useState(room?.name ?? "");
   const [allowGuests, setAllowGuests] = useState(room?.allow_guests ?? true);
@@ -98,10 +103,19 @@ export function SettingsDrawer() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const hasAppearancePreview = Boolean(
+    isHost && room && (
+      atmosphere !== room.atmosphere ||
+      accent !== room.accent ||
+      adaptiveMedia !== room.adaptive_media_background
+    ),
+  );
+
+  useEffect(() => () => clearAppearancePreview(), [clearAppearancePreview]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!room) return;
+    if (!room || !isHost) return;
     setPending(true);
     setError(null);
     setSavedSuccess(false);
@@ -156,6 +170,7 @@ export function SettingsDrawer() {
       }
 
       useRoomStore.getState().roomUpdated(updated);
+      clearAppearancePreview();
       setPassword("");
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 2500);
@@ -180,7 +195,7 @@ export function SettingsDrawer() {
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
       transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-      className="kott-settings fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-0 w-full md:w-96 z-40 flex flex-col border-l"
+      className="kott-settings fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 flex w-full flex-col border-l md:relative md:top-auto md:right-auto md:bottom-auto md:z-auto md:h-full md:w-96 md:shrink-0"
     >
       {/* Header */}
       <div className="kott-settings__header h-14 px-5 flex items-center justify-between border-b shrink-0">
@@ -203,6 +218,8 @@ export function SettingsDrawer() {
       {/* Form Content */}
       <form onSubmit={submit} className="flex-1 flex flex-col min-h-0">
         <div className="flex-1 overflow-y-auto p-4 space-y-5">
+          {isHost ? (
+            <>
           {/* Room Name & Access Section */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">
@@ -346,6 +363,15 @@ export function SettingsDrawer() {
             </div>
           </section>
 
+            </>
+          ) : (
+            <section className="rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 p-4">
+              <p className="text-[11px] text-[var(--text-loft-secondary)]">
+                {vi ? "Chỉ chủ phòng có thể thay đổi cài đặt phòng." : "Only the room host can change room settings."}
+              </p>
+            </section>
+          )}
+
           {/* Atmosphere & Theme (Host only) */}
           {isHost && (
             <section className="space-y-3">
@@ -407,7 +433,10 @@ export function SettingsDrawer() {
                       data-atmosphere={id}
                       aria-checked={isSelected}
                       disabled={pending}
-                      onClick={() => setAtmosphere(id)}
+                      onClick={() => {
+                        setAtmosphere(id);
+                        setAppearancePreview({ atmosphere: id, accent, adaptiveMediaBackground: adaptiveMedia });
+                      }}
                       className={`relative rounded-[6px] border p-3 text-left transition-all duration-200 cursor-pointer ${
                         isSelected
                           ? "border-[var(--border-loft)] bg-[#101113]/10 text-[var(--text-loft-primary)] shadow-sm ring-1 ring-[var(--accent-blue)]/40"
@@ -419,7 +448,7 @@ export function SettingsDrawer() {
                           className={`w-6 h-6 rounded-[6px] flex items-center justify-center ${
                             isSelected
                               ? "bg-[#101113] text-white"
-                              : "bg-[var(--border-loft)] text-[var(--text-loft-muted)]"
+                              : "bg-[var(--border-loft)] text-[var(--bg-loft-base)]"
                           }`}
                         >
                           <Icon className="w-3.5 h-3.5" />
@@ -434,6 +463,30 @@ export function SettingsDrawer() {
                     </button>
                   );
                 })}
+              </div>
+
+              <div
+                className="appearance-preview"
+                data-atmosphere={atmosphere}
+                data-accent={accent}
+                data-preview={hasAppearancePreview ? "true" : "false"}
+                aria-live="polite"
+              >
+                <div className="appearance-preview__stage" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div>
+                  <div className="font-medium text-[var(--text-loft-primary)]">
+                    {vi ? "Xem trước trên màn hình này" : "Preview on this screen"}
+                  </div>
+                  <p className="mt-1 text-[11px] text-[var(--text-loft-secondary)]">
+                    {hasAppearancePreview
+                      ? vi ? "Lưu để áp dụng cho mọi người trong phòng." : "Save to apply it for everyone in the room."
+                      : vi ? "Chọn một kiểu để xem thay đổi trước khi lưu." : "Choose a style to preview it before saving."}
+                  </p>
+                </div>
               </div>
 
               {/* Accent Color Picker */}
@@ -460,7 +513,10 @@ export function SettingsDrawer() {
                         role="radio"
                         aria-checked={isSelected}
                         disabled={pending}
-                        onClick={() => setAccent(opt)}
+                        onClick={() => {
+                          setAccent(opt);
+                          setAppearancePreview({ atmosphere, accent: opt, adaptiveMediaBackground: adaptiveMedia });
+                        }}
                         aria-label={vi ? ({ blue: "Xanh", purple: "Tím", green: "Lục", orange: "Cam", rose: "Hồng" } as const)[opt] : opt}
                         data-accent={opt}
                         className="kott-accent-option min-h-10 border px-1 cursor-pointer"
@@ -487,7 +543,10 @@ export function SettingsDrawer() {
                 <Switch
                   checked={adaptiveMedia}
                   disabled={pending}
-                  onChange={setAdaptiveMedia}
+                  onChange={(next) => {
+                    setAdaptiveMedia(next);
+                    setAppearancePreview({ atmosphere, accent, adaptiveMediaBackground: next });
+                  }}
                   aria-label={vi ? "Tự điều chỉnh theo media đang phát" : "Adapt to shared media"}
                 />
               </div>
@@ -586,20 +645,22 @@ export function SettingsDrawer() {
           >
             {vi ? "Đóng" : "Close"}
           </button>
-          <button
-            type="submit"
-            disabled={pending}
-            className="px-5 py-2 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white text-[11px] font-medium flex items-center gap-2 transition-all disabled:opacity-50 shadow-md shadow-[#101113]/20 active:scale-97 cursor-pointer"
-          >
-            {pending ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>{vi ? "Đang lưu…" : "Saving…"}</span>
-              </>
-            ) : (
-              <span>{vi ? "Lưu" : "Save"}</span>
-            )}
-          </button>
+          {isHost && (
+            <button
+              type="submit"
+              disabled={pending}
+              className="px-5 py-2 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white text-[11px] font-medium flex items-center gap-2 transition-all disabled:opacity-50 shadow-md shadow-[#101113]/20 active:scale-97 cursor-pointer"
+            >
+              {pending ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>{vi ? "Đang lưu…" : "Saving…"}</span>
+                </>
+              ) : (
+                <span>{vi ? "Lưu cho mọi người" : "Save for everyone"}</span>
+              )}
+            </button>
+          )}
         </div>
       </form>
     </motion.aside>
