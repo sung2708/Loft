@@ -19,63 +19,75 @@ input[role="switch"],
 
 :root {
   color-scheme: light;
-  --bg-loft-base: #f5f5f7;
-  --bg-loft-surface: rgba(255, 255, 255, 0.88);
+  --kott-primary: #101113;
+  --kott-on-primary: #ffffff;
+  --kott-background: #f4f5f7;
+  --kott-surface: #101113;
+  --kott-border: #101113;
+  --kott-text: #f4f5f7;
+  --kott-text-muted: #101113;
+  --kott-accent: #26282c;
+  --kott-font-display: Syne, "Syne Fallback", ui-sans-serif, system-ui, sans-serif;
+  --kott-font-body: fiveYears, "fiveYears Fallback", Syne, "Syne Fallback", ui-sans-serif, system-ui, sans-serif;
+  --kott-radius: 6px;
+  --bg-loft-base: #f4f5f7;
+  --bg-loft-surface: #ffffff;
   --bg-loft-card: #ffffff;
-  --bg-loft-dock: rgba(255, 255, 255, 0.82);
-  --border-loft: rgba(0, 0, 0, 0.08);
-  --border-loft-light: rgba(0, 0, 0, 0.04);
-  --text-loft-primary: #1d1d1f;
-  --text-loft-secondary: #6e6e73;
-  --text-loft-muted: #86868b;
-  --accent-blue: #0066cc;
-  --accent-blue-hover: #0071e3;
-  --accent-blue-glow: rgba(0, 102, 204, 0.25);
-  --brand-mark: #0066cc;
-  --status-green: #34c759;
-  --status-warning: #ff9500;
-  --status-danger: #ff3b30;
+  --bg-loft-dock: #ffffff;
+  --border-loft: #101113;
+  --border-loft-light: #26282c;
+  --text-loft-primary: #101113;
+  --text-loft-secondary: #26282c;
+  --text-loft-muted: #26282c;
+  --accent-blue: #101113;
+  --accent-blue-hover: #26282c;
+  --accent-blue-glow: #26282c;
+  --brand-mark: #101113;
+  --status-green: #101113;
+  --status-warning: #26282c;
+  --status-danger: #101113;
 
   /* Motion Tokens */
-  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spatial: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-entrance: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spatial: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
-  --duration-micro: 140ms;
-  --duration-fast: 180ms;
-  --duration-standard: 260ms;
-  --duration-stage: 340ms;
-  --duration-ambient: 1200ms;
+  --duration-micro: 200ms;
+  --duration-fast: 200ms;
+  --duration-standard: 500ms;
+  --duration-stage: 500ms;
+  --duration-ambient: 1150ms;
 }
 
 html.dark,
 .dark {
   color-scheme: dark;
-  --bg-loft-base: #131315;
-  --bg-loft-surface: rgba(28, 28, 30, 0.88);
-  --bg-loft-card: #1c1c1e;
-  --bg-loft-dock: rgba(24, 24, 27, 0.85);
-  --border-loft: rgba(255, 255, 255, 0.08);
-  --border-loft-light: rgba(255, 255, 255, 0.04);
-  --text-loft-primary: #f5f5f7;
-  --text-loft-secondary: #a1a1a6;
-  --text-loft-muted: #636366;
-  --accent-blue: #0066cc;
-  --accent-blue-hover: #2997ff;
-  --accent-blue-glow: rgba(0, 102, 204, 0.4);
-  --brand-mark: #2997ff;
-  --status-green: #34c759;
-  --status-warning: #ff9500;
-  --status-danger: #ff3b30;
+  --bg-loft-base: #101113;
+  --bg-loft-surface: #26282c;
+  --bg-loft-card: #26282c;
+  --bg-loft-dock: #26282c;
+  --border-loft: #f4f5f7;
+  --border-loft-light: #f4f5f7;
+  --text-loft-primary: #f4f5f7;
+  --text-loft-secondary: #f4f5f7;
+  --text-loft-muted: #f4f5f7;
+  --accent-blue: #f4f5f7;
+  --accent-blue-hover: #ffffff;
+  --accent-blue-glow: #f4f5f7;
+  --brand-mark: #f4f5f7;
+  --status-green: #f4f5f7;
+  --status-warning: #f4f5f7;
+  --status-danger: #ffffff;
 }
 
 body {
   background-color: var(--bg-loft-base);
   color: var(--text-loft-primary);
-  font-family:
-    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
+  font-family: var(--kott-font-body);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
   font-feature-settings: "kern" 1;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   min-height: 100%;
   transition:
     background-color var(--duration-fast) var(--ease-entrance),
@@ -83,9 +95,29 @@ body {
 }
 
 .loft-wordmark {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-  font-weight: 600;
-  letter-spacing: -0.03em;
+  font-family: var(--kott-font-body);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.5;
+}
+
+.kott-display {
+  font-family: var(--kott-font-display);
+  font-size: 218px;
+  font-weight: 100;
+  line-height: 0.92;
+  letter-spacing: -3.264px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+:where(button, input, textarea, select, [role="button"], [role="dialog"], [role="menu"], [role="menuitem"], .glass-card, .glass-dock, .glass-drawer) {
+  border-radius: var(--kott-radius) !important;
 }
 
 button,
@@ -95,6 +127,11 @@ button,
 input,
 textarea {
   user-select: text;
+}
+.room-code-input,
+.room-code-input:hover {
+  background-color: var(--bg-loft-surface) !important;
+  color: var(--text-loft-primary) !important;
 }
 .page-scroll {
   min-height: 100vh;
@@ -139,6 +176,35 @@ textarea {
 .btn-press:hover {
   transform: none;
 }
+.btn-press:hover svg {
+  color: currentColor;
+}
+
+/* Secondary controls use a quiet hover tint; never invert an entire surface. */
+.hover-invert:hover {
+  background-color: color-mix(in srgb, var(--text-loft-primary) 10%, transparent) !important;
+}
+.hover-invert:hover,
+.hover-invert:hover * {
+  color: var(--text-loft-primary) !important;
+}
+
+.create-room-modal {
+  background: var(--bg-loft-card) !important;
+  color: var(--text-loft-primary) !important;
+}
+.create-room-modal__text {
+  color: var(--text-loft-primary) !important;
+}
+.create-room-modal__muted {
+  color: var(--text-loft-muted) !important;
+}
+.create-room-modal__secondary-action {
+  color: var(--text-loft-primary) !important;
+}
+.create-room-modal__primary-action {
+  color: var(--bg-loft-base) !important;
+}
 .btn-press:active {
   transform: scale(0.95);
 }
@@ -152,16 +218,16 @@ textarea:focus-visible,
   outline-offset: 2px;
 }
 
-/* Active Speaker Ring with 120ms attack, 350ms decay */
+/* Active speaker ring uses the Kott motion scale. */
 .speaking-glow {
   box-shadow:
     0 0 0 2px var(--status-green),
-    0 0 16px rgba(52, 199, 89, 0.4);
-  transition: box-shadow 120ms var(--ease-entrance);
+    0 0 16px var(--kott-accent);
+  transition: box-shadow 200ms var(--ease-entrance);
 }
 .speaking-silent {
   box-shadow: 0 0 0 0px transparent;
-  transition: box-shadow 350ms var(--ease-standard);
+  transition: box-shadow 500ms var(--ease-standard);
 }
 
 /* Spinning vinyl with smooth transition */
@@ -203,7 +269,7 @@ textarea:focus-visible,
 }
 
 .animate-float-reaction {
-  animation: floatUpFade 1000ms var(--ease-entrance) forwards;
+  animation: floatUpFade 1150ms var(--ease-entrance) forwards;
 }
 
 /* Custom Sleek Scrollbars */
@@ -215,12 +281,12 @@ textarea:focus-visible,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(140, 140, 140, 0.25);
-  border-radius: 9999px;
+  background: var(--kott-accent);
+  border-radius: 6px;
   transition: background-color var(--duration-fast) var(--ease-entrance);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(140, 140, 140, 0.45);
+  background: var(--kott-primary);
 }
 
 /* Reduced Motion Override for Accessibility */
@@ -235,16 +301,95 @@ textarea:focus-visible,
   }
 }
 /* Room atmosphere is scoped below the personal light/dark theme. */
-.room-atmosphere { --room-accent-rgb: 0 102 204; --room-media-primary: var(--room-accent-rgb); --room-media-secondary: var(--room-accent-rgb); isolation: isolate; }
-.room-atmosphere[data-accent="purple"], .room-accent-choice[data-accent="purple"] { --room-accent-rgb: 124 92 191; }
-.room-atmosphere[data-accent="green"], .room-accent-choice[data-accent="green"] { --room-accent-rgb: 46 139 87; }
-.room-atmosphere[data-accent="orange"], .room-accent-choice[data-accent="orange"] { --room-accent-rgb: 196 105 36; }
-.room-atmosphere[data-accent="rose"], .room-accent-choice[data-accent="rose"] { --room-accent-rgb: 190 74 105; }
-.room-accent-choice { background: rgb(var(--room-accent-rgb, 0 102 204)); }
-.room-atmosphere__backdrop { z-index: -1; background: radial-gradient(ellipse at 50% 20%, rgb(var(--room-media-primary) / .18), transparent 62%); transition: opacity 300ms cubic-bezier(.16,1,.3,1), background-color 300ms cubic-bezier(.16,1,.3,1); }
+.room-atmosphere { --room-accent: #26282c; --room-media-primary: var(--room-accent); --room-media-secondary: var(--room-accent); isolation: isolate; }
+.room-atmosphere[data-accent], .room-accent-choice[data-accent] { --room-accent: #26282c; }
+.room-accent-choice { background: var(--room-accent, #26282c); }
+.room-atmosphere__backdrop { z-index: -1; background: radial-gradient(ellipse at 50% 20%, var(--room-media-primary), transparent 62%); transition: opacity 500ms cubic-bezier(0.4, 0, 0.2, 1), background-color 500ms cubic-bezier(0.4, 0, 0.2, 1); }
 .room-atmosphere[data-atmosphere="minimal"] .room-atmosphere__backdrop { opacity: .12; }
 .room-atmosphere[data-atmosphere="ambient"] .room-atmosphere__backdrop { opacity: .55; }
 .room-atmosphere[data-atmosphere="focus"] .room-atmosphere__backdrop { opacity: .18; }
-.room-atmosphere[data-atmosphere="party"] .room-atmosphere__backdrop { opacity: .72; background: radial-gradient(ellipse at 20% 15%, rgb(var(--room-media-primary) / .24), transparent 55%), radial-gradient(ellipse at 80% 75%, rgb(var(--room-media-secondary) / .18), transparent 58%); }
+.room-atmosphere[data-atmosphere="party"] .room-atmosphere__backdrop { opacity: .72; background: radial-gradient(ellipse at 20% 15%, var(--room-media-primary), transparent 55%), radial-gradient(ellipse at 80% 75%, var(--room-media-secondary), transparent 58%); }
 .room-atmosphere[data-screen-share="true"] .room-atmosphere__backdrop { opacity: .08; }
-@media (prefers-reduced-motion: reduce) { .room-atmosphere__backdrop { transition-duration: 120ms; } }
+@media (prefers-reduced-motion: reduce) { .room-atmosphere__backdrop { transition-duration: 200ms; } }
+
+/* Kott Studio component normalization. */
+.kott-settings {
+  --kott-primary: #101113;
+  --kott-on-primary: #ffffff;
+  --kott-background: #f4f5f7;
+  --kott-surface: #101113;
+  --kott-accent: #26282c;
+  background: var(--kott-background) !important;
+  border-color: var(--kott-primary) !important;
+  color: var(--kott-primary) !important;
+  font-family: fiveYears, "fiveYears Fallback", Syne, "Syne Fallback", ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.kott-settings *,
+.kott-settings *::before,
+.kott-settings *::after {
+  border-radius: 6px !important;
+  transition-duration: 200ms !important;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+.kott-settings [class*="text-"] { color: var(--kott-primary) !important; }
+.kott-settings [class*="border-"] { border-color: var(--kott-primary) !important; }
+.kott-settings [class*="bg-"] { background-color: transparent !important; }
+.kott-settings [class*="shadow"],
+.kott-settings [class*="ring-"] { box-shadow: none !important; }
+.kott-settings__header,
+.kott-settings__footer {
+  background: var(--kott-background) !important;
+  border-color: var(--kott-primary) !important;
+}
+.kott-settings h3,
+.kott-settings h4,
+.kott-settings legend,
+.kott-settings label,
+.kott-settings button,
+.kott-settings input {
+  font-family: inherit;
+  font-size: 11px !important;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.kott-settings input:not([type="checkbox"]):not([type="range"]) {
+  background: var(--kott-on-primary) !important;
+  border: 1px solid var(--kott-primary) !important;
+  color: var(--kott-primary) !important;
+}
+.kott-settings button[role="switch"] {
+  background: var(--kott-accent) !important;
+  border-color: var(--kott-primary) !important;
+}
+.kott-settings button[role="switch"][aria-checked="true"],
+.kott-settings button[role="radio"][aria-checked="true"],
+.kott-settings button[type="submit"] {
+  background: var(--kott-primary) !important;
+  color: var(--kott-on-primary) !important;
+}
+.kott-settings button[role="switch"] > span {
+  background: var(--kott-on-primary) !important;
+  border-radius: 6px !important;
+}
+.kott-settings button[role="radio"][aria-checked="true"] *,
+.kott-settings button[type="submit"] * {
+  color: var(--kott-on-primary) !important;
+}
+.kott-settings button:focus-visible,
+.kott-settings input:focus-visible {
+  outline: 1px solid var(--kott-primary) !important;
+  outline-offset: 2px;
+}
+.kott-settings input[type="range"] { accent-color: var(--kott-primary); }
+.kott-settings .kott-accent-option {
+  background: var(--kott-on-primary) !important;
+  color: var(--kott-primary) !important;
+  text-transform: capitalize;
+}
+.kott-settings .kott-accent-option[aria-checked="true"] {
+  background: var(--kott-primary) !important;
+  color: var(--kott-on-primary) !important;
+}

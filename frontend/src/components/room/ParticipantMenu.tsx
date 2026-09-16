@@ -53,7 +53,7 @@ export function ParticipantMenu({
         aria-expanded={open}
         title={tr("Participant actions")}
         onClick={() => setOpen((value) => !value)}
-        className="rounded-lg p-2 text-[var(--text-loft-secondary)] hover:bg-[var(--border-loft)] disabled:opacity-50"
+        className="rounded-[6px] p-2 text-[var(--text-loft-secondary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] disabled:opacity-50"
       >
         <MoreHorizontal className="w-4 h-4" />
       </button>
@@ -61,17 +61,17 @@ export function ParticipantMenu({
         <div
           role="menu"
           aria-label={`${tr("Participant actions")}: ${participant.display_name}`}
-          className="absolute right-0 bottom-full z-50 mb-2 min-w-44 rounded-xl border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-1 shadow-xl"
+          className="absolute right-0 bottom-full z-50 mb-2 min-w-44 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-1 shadow-xl"
         >
           {canTransfer && participant.identity_type === "user" && (
-            <button type="button" role="menuitem" onClick={() => choose("transfer")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-[var(--border-loft-light)]">
+            <button type="button" role="menuitem" onClick={() => choose("transfer")} className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-left text-[11px] hover-invert hover:bg-[var(--border-loft-light)]">
               <UserRoundCheck className="w-4 h-4" /> {tr("Make host")}
             </button>
           )}
-          <button type="button" role="menuitem" onClick={() => choose("kick")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[#FF3B30] hover:bg-[#FF3B30]/10">
+          <button type="button" role="menuitem" onClick={() => choose("kick")} className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-left text-[11px] text-[var(--text-loft-primary)] hover:bg-[#101113]/10">
             <UserX className="w-4 h-4" /> {tr("Remove participant")}
           </button>
-          <button type="button" role="menuitem" onClick={() => choose("ban")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[#FF9500] hover:bg-[#FF9500]/10">
+          <button type="button" role="menuitem" onClick={() => choose("ban")} className="flex w-full items-center gap-2 rounded-[6px] px-3 py-2 text-left text-[11px] text-[var(--text-loft-primary)] hover:bg-[#101113]/10">
             <Shield className="w-4 h-4" /> {tr("Ban for 1 hour")}
           </button>
         </div>

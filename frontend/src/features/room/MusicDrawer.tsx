@@ -634,24 +634,24 @@ export function MusicDrawer({
     <aside
       aria-label={mq.sharedQueue}
       aria-hidden={!open}
-      className={`fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-0 w-full md:w-96 z-40 bg-[var(--bg-loft-card)] border-l border-[var(--border-loft)] shadow-2xl flex flex-col transition-transform duration-300 ${
+      className={`fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-0 w-full md:w-96 z-40 bg-[var(--bg-loft-card)] border-l border-[var(--border-loft)] shadow-2xl flex flex-col transition-transform duration-500 ${
         open ? "translate-x-0" : "translate-x-full pointer-events-none"
       }`}
     >
       {/* Header Bar */}
       <div className="h-14 px-4 flex items-center justify-between border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/50 backdrop-blur-md">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold text-sm text-[var(--text-loft-primary)]">
+          <h3 className="font-medium text-[11px] text-[var(--text-loft-primary)]">
             {mq.sharedQueue}
           </h3>
-          <span className="px-2 py-0.5 rounded-full bg-[#0066CC]/15 text-[#0066CC] text-[11px] font-semibold">
+          <span className="px-2 py-1 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] text-[11px] font-medium">
             {totalTracksCount}
           </span>
         </div>
         <button
           onClick={onClose}
           aria-label={t.common.close}
-          className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--border-loft)] transition-colors cursor-pointer"
+          className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-colors cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -680,13 +680,13 @@ export function MusicDrawer({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={mq.pasteUrl}
-              className="w-full h-9 pl-9 pr-3 rounded-xl border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-xs text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] focus:outline-none focus:border-[#0066CC] transition-all"
+              className="w-full h-9 pl-10 pr-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[11px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] focus:outline-none focus:border-[var(--border-loft)] transition-all"
             />
           </div>
           <button
             type="submit"
             disabled={!available || !url.trim() || isAdding}
-            className="h-9 px-3.5 rounded-xl bg-[#0066CC] hover:bg-[#0077ED] disabled:opacity-40 text-white text-xs font-medium flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+            className="h-9 px-4 rounded-[6px] bg-[#101113] hover:bg-[#101113] disabled:opacity-40 text-white text-[11px] font-medium flex items-center gap-2 shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{isAdding ? mq.adding : mq.add}</span>
@@ -694,39 +694,39 @@ export function MusicDrawer({
         </form>
 
         {error && (
-          <div className="px-3 py-2 rounded-xl bg-[#FF3B30]/10 border border-[#FF3B30]/20 text-[#FF3B30] text-xs">
+          <div className="px-3 py-2 rounded-[6px] bg-[#101113]/10 border border-[var(--border-loft)]/20 text-[var(--text-loft-primary)] text-[11px]">
             {error}
           </div>
         )}
 
         {/* ---------------- 1. NOW PLAYING COMPACT CARD ---------------- */}
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between px-0.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-loft-muted)] flex items-center gap-1.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)] flex items-center gap-2">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   media.status === "PLAYING"
-                    ? "bg-[#0066CC] shadow-[0_0_6px_#0066CC] animate-pulse"
+                    ? "bg-[#101113] shadow-[0_0_6px_#101113] animate-pulse"
                     : "bg-[var(--text-loft-muted)]"
                 }`}
               />
               {mq.nowPlaying}
             </span>
             {media.current && (
-              <span className="text-[10px] font-medium text-[var(--text-loft-muted)]">
+              <span className="text-[11px] font-medium text-[var(--text-loft-muted)]">
                 {media.status === "PLAYING" ? "LIVE" : "PAUSED"}
               </span>
             )}
           </div>
 
-          <div className="rounded-2xl bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] shadow-md overflow-hidden p-3 flex flex-col gap-2.5">
+          <div className="rounded-[6px] bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] shadow-md overflow-hidden p-3 flex flex-col gap-3">
             {/* 16:9 Video Canvas Viewport */}
-            <div className="relative w-full aspect-video max-h-[190px] rounded-xl overflow-hidden bg-black border border-white/5 shadow-inner">
+            <div className="relative w-full aspect-video max-h-[190px] rounded-[6px] overflow-hidden bg-[#101113] border border-white/5 shadow-inner">
               <div ref={containerRef} className="w-full h-full" />
               {!media.current && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500 bg-zinc-950/80">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[var(--text-loft-secondary)] bg-[#26282c]/80">
                   <Music className="w-8 h-8 opacity-40" />
-                  <span className="text-xs">{mq.noMedia}</span>
+                  <span className="text-[11px]">{mq.noMedia}</span>
                 </div>
               )}
             </div>
@@ -735,17 +735,17 @@ export function MusicDrawer({
             {media.current ? (
               <div className="flex flex-col min-w-0">
                 <span
-                  className="font-semibold text-sm text-[var(--text-loft-primary)] truncate"
+                  className="font-medium text-[11px] text-[var(--text-loft-primary)] truncate"
                   title={activeTitle}
                 >
                   {activeTitle}
                 </span>
-                <span className="text-xs text-[var(--text-loft-secondary)] truncate">
+                <span className="text-[11px] text-[var(--text-loft-secondary)] truncate">
                   {activeChannel} · YouTube
                 </span>
               </div>
             ) : (
-              <span className="text-xs text-[var(--text-loft-muted)]">
+              <span className="text-[11px] text-[var(--text-loft-muted)]">
                 {mq.noMedia}
               </span>
             )}
@@ -755,7 +755,7 @@ export function MusicDrawer({
               <button
                 onClick={enableAudio}
                 disabled={!playerReady}
-                className="w-full py-1.5 rounded-lg bg-[#0066CC] hover:bg-[#0077ED] disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition-all"
+                className="w-full py-2 rounded-[6px] bg-[#101113] hover:bg-[#101113] disabled:opacity-50 text-white text-[11px] font-medium shadow-xs transition-all"
               >
                 {mq.enableAudio}
               </button>
@@ -780,7 +780,7 @@ export function MusicDrawer({
                 >
                   <div className="w-full h-1 bg-[var(--border-loft)] group-hover:h-1.5 rounded-full overflow-hidden transition-all">
                     <div
-                      className="h-full bg-[#0066CC] rounded-full transition-all duration-100"
+                      className="h-full bg-[#101113] rounded-full transition-all duration-200"
                       style={{ width: `${progressPercent}%` }}
                     />
                   </div>
@@ -791,7 +791,7 @@ export function MusicDrawer({
                   />
                 </div>
 
-                <div className="flex items-center justify-between text-[11px] font-mono text-[var(--text-loft-muted)] px-0.5">
+                <div className="flex items-center justify-between px-1 text-[11px] font-mono text-[var(--text-loft-muted)]">
                   <span>{formatTime(displayCurrentTime)}</span>
                   <span>{formatTime(effectiveDuration)}</span>
                 </div>
@@ -801,12 +801,12 @@ export function MusicDrawer({
             {/* Compact Control Button Toolbar */}
             {media.current && (
               <div className="flex items-center justify-between pt-1 border-t border-[var(--border-loft)]">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   {/* Previous / Restart */}
                   <button
                     onClick={() => control("media.seek", { position_ms: 0 })}
                     disabled={!canControl}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--border-loft)] transition-all cursor-pointer"
+                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                     title={mq.previous}
                   >
                     <SkipBack className="w-4 h-4" />
@@ -822,7 +822,7 @@ export function MusicDrawer({
                       )
                     }
                     disabled={!canControl}
-                    className="w-9 h-9 rounded-xl bg-[#0066CC] hover:bg-[#0077ED] text-white flex items-center justify-center shadow-sm active:scale-95 transition-all cursor-pointer"
+                    className="w-9 h-9 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white flex items-center justify-center shadow-sm active:scale-95 transition-all cursor-pointer"
                     title={
                       media.status === "PLAYING" ? mq.pause : mq.play
                     }
@@ -830,7 +830,7 @@ export function MusicDrawer({
                     {media.status === "PLAYING" ? (
                       <Pause className="w-4 h-4 fill-current" />
                     ) : (
-                      <Play className="w-4 h-4 fill-current ml-0.5" />
+                      <Play className="w-4 h-4 fill-current ml-1" />
                     )}
                   </button>
 
@@ -838,7 +838,7 @@ export function MusicDrawer({
                   <button
                     onClick={() => control("queue.next")}
                     disabled={!canControl}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--border-loft)] transition-all cursor-pointer"
+                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                     title={mq.next}
                   >
                     <SkipForward className="w-4 h-4" />
@@ -859,13 +859,13 @@ export function MusicDrawer({
                         setShowVolumeSlider(true);
                         toggleMute();
                       }}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--border-loft)] transition-all cursor-pointer"
+                      className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                       title={mq.volume}
                       aria-label={mq.volume}
                       aria-expanded={showVolumeSlider}
                     >
                       {isMuted || volume === 0 ? (
-                        <VolumeX className="w-4 h-4 text-[#FF3B30]" />
+                        <VolumeX className="w-4 h-4 text-[var(--text-loft-primary)]" />
                       ) : (
                         <Volume2 className="w-4 h-4" />
                       )}
@@ -873,7 +873,7 @@ export function MusicDrawer({
 
                     {/* Inline mini slider when hovered */}
                     {showVolumeSlider && (
-                      <div role="dialog" aria-label={mq.volume} className="absolute right-0 bottom-full mb-1 p-2 rounded-xl bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-xl z-50 flex items-center gap-2">
+                      <div role="dialog" aria-label={mq.volume} className="absolute right-0 bottom-full mb-1 p-2 rounded-[6px] bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-xl z-50 flex items-center gap-2">
                         <input
                           type="range"
                           min="0"
@@ -882,9 +882,9 @@ export function MusicDrawer({
                           onChange={(e) =>
                             handleVolumeChange(Number(e.target.value))
                           }
-                          className="w-20 accent-[#0066CC] cursor-pointer"
+                          className="w-20 accent-[#101113] cursor-pointer"
                         />
-                        <span className="text-[10px] font-mono w-6 text-right">
+                        <span className="text-[11px] font-mono w-6 text-right">
                           {isMuted ? 0 : volume}%
                         </span>
                       </div>
@@ -894,7 +894,7 @@ export function MusicDrawer({
                   {/* Fullscreen Video */}
                   <button
                     onClick={toggleFullscreen}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--border-loft)] transition-all cursor-pointer"
+                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                     title={mq.fullscreen}
                   >
                     <Maximize2 className="w-3.5 h-3.5" />
@@ -905,7 +905,7 @@ export function MusicDrawer({
                     href={`https://www.youtube.com/watch?v=${media.current.video_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[#0066CC] hover:bg-[var(--border-loft)] transition-all"
+                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all"
                     title={mq.openInYouTube}
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -918,15 +918,15 @@ export function MusicDrawer({
 
         {/* ---------------- 2. NEXT UP QUEUE SECTION ---------------- */}
         <div className="flex-1 flex flex-col gap-2 min-h-0">
-          <div className="flex items-center justify-between px-0.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-loft-muted)]">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
               {mq.nextUp} ({media.queue.length})
             </span>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5">
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
             {media.queue.length === 0 ? (
-              <div className="py-8 text-center text-xs text-[var(--text-loft-muted)] rounded-2xl border border-dashed border-[var(--border-loft)] flex flex-col items-center justify-center gap-1">
+              <div className="py-8 text-center text-[11px] text-[var(--text-loft-muted)] rounded-[6px] border border-dashed border-[var(--border-loft)] flex flex-col items-center justify-center gap-1">
                 <span>{mq.emptyQueue}</span>
               </div>
             ) : (
@@ -950,12 +950,12 @@ export function MusicDrawer({
                     onDragOver={(e) => handleDragOver(e, idx)}
                     onDrop={(e) => handleDrop(e, idx)}
                     onDragEnd={handleDragEnd}
-                    className={`group flex items-center gap-2.5 p-2 rounded-xl border transition-all cursor-grab active:cursor-grabbing select-none ${
+                    className={`group flex items-center gap-3 p-2 rounded-[6px] border transition-all cursor-grab active:cursor-grabbing select-none ${
                       isDragging
                         ? "opacity-30 bg-[var(--border-loft)]/40 border-dashed border-[var(--border-loft)] scale-[0.98]"
                         : isOver
-                          ? "bg-[#0066CC]/15 border-[#0066CC] ring-1 ring-[#0066CC]/40"
-                          : "bg-[var(--bg-loft-surface)]/60 hover:bg-[var(--border-loft)] border-transparent hover:border-[var(--border-loft)]"
+                          ? "bg-[#101113]/15 border-[var(--border-loft)] ring-1 ring-[var(--accent-blue)]/40"
+                          : "bg-[var(--bg-loft-surface)]/60 hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] border-transparent hover:border-[var(--border-loft)]"
                     }`}
                   >
                     {/* Drag Handle */}
@@ -967,13 +967,13 @@ export function MusicDrawer({
                     </div>
 
                     {/* 16:9 Mini Thumbnail */}
-                    <div className="relative w-14 h-9 rounded-lg overflow-hidden bg-black shrink-0 border border-white/5">
+                    <div className="relative w-14 h-9 rounded-[6px] overflow-hidden bg-[#101113] shrink-0 border border-white/5">
                       <img
                         src={`https://img.youtube.com/vi/${track.video_id}/mqdefault.jpg`}
                         alt=""
                         className="w-full h-full object-cover"
                       />
-                      <span className="absolute bottom-0.5 right-1 text-[9px] font-mono text-white/80 bg-black/60 px-1 rounded">
+                      <span className="absolute bottom-1 right-1 text-[11px] font-mono text-white/80 bg-[#101113]/60 px-1 rounded-[6px]">
                         #{idx + 1}
                       </span>
                     </div>
@@ -981,7 +981,7 @@ export function MusicDrawer({
                     {/* Track Info */}
                     <div className="flex flex-col min-w-0 flex-1">
                       <span
-                        className="text-xs font-semibold text-[var(--text-loft-primary)] truncate"
+                        className="text-[11px] font-medium text-[var(--text-loft-primary)] truncate"
                         title={trackTitle}
                       >
                         {trackTitle}
@@ -999,10 +999,10 @@ export function MusicDrawer({
                           control("queue.select", { track_id: track.id })
                         }
                         disabled={!canControl}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[#0066CC] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
+                        className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
                         title={mq.play}
                       >
-                        <Play className="w-3 h-3 fill-current ml-0.5" />
+                        <Play className="w-3 h-3 fill-current ml-1" />
                       </button>
 
                       {/* Remove from Queue */}
@@ -1010,7 +1010,7 @@ export function MusicDrawer({
                         onClick={() =>
                           control("queue.remove", { track_id: track.id })
                         }
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[#FF3B30] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
+                        className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
                         title={mq.remove}
                       >
                         <Trash2 className="w-3 h-3" />
@@ -1024,16 +1024,16 @@ export function MusicDrawer({
         </div>
 
         {/* ---------------- 3. BOTTOM TOOLBAR ---------------- */}
-        <div className="pt-2 border-t border-[var(--border-loft)] flex items-center justify-between text-xs text-[var(--text-loft-secondary)]">
-          <div className="flex items-center gap-1.5">
+        <div className="pt-2 border-t border-[var(--border-loft)] flex items-center justify-between text-[11px] text-[var(--text-loft-secondary)]">
+          <div className="flex items-center gap-2">
             {/* Shuffle */}
             <button
               onClick={() => control("queue.shuffle")}
               disabled={media.queue.length <= 1}
-              className="px-2.5 py-1 rounded-lg hover:bg-[var(--border-loft)] disabled:opacity-40 flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3 py-1 rounded-[6px] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] disabled:opacity-40 flex items-center gap-2 transition-colors cursor-pointer"
               title={mq.shuffle}
             >
-              <Shuffle className="w-3.5 h-3.5 text-[#0066CC]" />
+              <Shuffle className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
               <span>{mq.shuffle}</span>
             </button>
 
@@ -1041,10 +1041,10 @@ export function MusicDrawer({
           <button
               onClick={() => control("media.repeat", { repeat: !media.repeat })}
               disabled={!canControl}
-              className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-3 py-1 rounded-[6px] flex items-center gap-2 transition-colors cursor-pointer ${
                 media.repeat
-                  ? "bg-[#0066CC]/15 text-[#0066CC] font-semibold"
-                  : "hover:bg-[var(--border-loft)]"
+                  ? "bg-[#101113]/15 text-[var(--text-loft-primary)] font-medium"
+                  : "hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)]"
               }`}
               title={mq.repeat}
             >
@@ -1057,7 +1057,7 @@ export function MusicDrawer({
           <button
             onClick={() => control("queue.clear")}
             disabled={media.queue.length === 0}
-            className="px-2.5 py-1 rounded-lg hover:bg-[#FF3B30]/10 hover:text-[#FF3B30] disabled:opacity-40 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1 rounded-[6px] hover:bg-[#101113]/10 hover:text-[var(--text-loft-primary)] disabled:opacity-40 flex items-center gap-2 transition-colors cursor-pointer"
             title={mq.clearList}
           >
             <Trash2 className="w-3.5 h-3.5" />

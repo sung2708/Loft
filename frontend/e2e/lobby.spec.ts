@@ -38,4 +38,30 @@ test.describe("Lobby & Landing Page", () => {
     const buttons = header.locator("button");
     await expect(buttons.first()).toBeVisible();
   });
+
+  test("room input and brand stay visually stable on hover in both themes", async ({ page }) => {
+    const roomInput = page.locator("#roomInput");
+    const brand = page.getByRole("link", { name: "Mingly — Better when we’re together." });
+
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => {
+        localStorage.setItem("loft.theme", value);
+        document.documentElement.classList.toggle("dark", value === "dark");
+      }, theme);
+
+      const inputBefore = await roomInput.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { background: style.backgroundColor, color: style.color };
+      });
+      const brandBefore = await brand.evaluate((element) => getComputedStyle(element).color);
+
+      await roomInput.hover();
+      await page.waitForTimeout(250);
+      expect(await roomInput.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(inputBefore.background);
+      expect(await roomInput.evaluate((element) => getComputedStyle(element).color)).toBe(inputBefore.color);
+
+      await brand.hover();
+      expect(await brand.evaluate((element) => getComputedStyle(element).color)).toBe(brandBefore);
+    }
+  });
 });

@@ -1,6 +1,6 @@
-# Loft Engineering Roadmap — MVP 2 Execution Plan
+# Mingly Engineering Roadmap — MVP 2 Execution Plan
 
-This document outlines the sequential, dependency-ordered implementation roadmap for **Loft MVP 2**. Each sub-phase delivers a verifiable layer of functionality with concrete acceptance criteria and explicit dependency gates.
+This document outlines the sequential, dependency-ordered implementation roadmap for **Mingly MVP 2**. Each sub-phase delivers a verifiable layer of functionality with concrete acceptance criteria and explicit dependency gates.
 
 ---
 
@@ -82,7 +82,7 @@ Camera filters, background segmentation, and MediaPipe processing are explicitly
 ---
 
 ### MVP 2.5 — Redis & Multi-Instance Realtime
-- **Goals:** Allow Loft backend instances to scale horizontally behind a load balancer without room fragmentation.
+- **Goals:** Allow Mingly backend instances to scale horizontally behind a load balancer without room fragmentation.
 - **Key Deliverables:**
   - Redis Pub/Sub room bus (`room:<id>:events`) relaying events across Go instances.
   - Loop prevention using unique `origin_instance_id` in inter-node payloads.

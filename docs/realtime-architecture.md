@@ -1,4 +1,4 @@
-﻿# Realtime Architecture & WebSocket Engineering — Loft
+# Realtime Architecture & WebSocket Engineering — Mingly
 
 ## 1. WebSocket Connection Lifecycle Architecture
 

@@ -1,6 +1,6 @@
-# Architecture Decision Records (ADRs) — Loft
+# Architecture Decision Records (ADRs) — Mingly
 
-This directory records all critical architectural decisions for Loft. Each record documents the context, decision, alternatives evaluated, and engineering consequences.
+This directory records all critical architectural decisions for Mingly. Each record documents the context, decision, alternatives evaluated, and engineering consequences.
 
 ---
 

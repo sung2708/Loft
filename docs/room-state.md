@@ -1,6 +1,6 @@
-# Canonical Room State Management — Loft
+# Canonical Room State Management — Mingly
 
-This document establishes the state architecture, state domain boundaries, and concurrency locking rules for Loft rooms.
+This document establishes the state architecture, state domain boundaries, and concurrency locking rules for Mingly rooms.
 
 ---
 

@@ -1,4 +1,4 @@
-﻿# Skill: UI Design & Stage-First Experience
+# Skill: UI Design & Stage-First Experience
 
 ## Trigger
 Use this skill whenever styling, designing, or implementing user interfaces, stage layouts, video grids, call docks, flyout drawers, or micro-animations in Loft.
@@ -26,6 +26,31 @@ Use this skill whenever styling, designing, or implementing user interfaces, sta
 - ❌ **Google Meet / Zoom Clone:** No stark corporate white grids with bulky bottom control bands.
 - ❌ **Cyberpunk / Neon / Glass Everywhere:** Avoid tacky neon glows, transparent glass blur overload, and sticky-note textures.
 - ❌ **Purple SaaS Gradients:** Avoid generic marketing templates with rainbow borders.
+
+## UI/UX Copywriting & Anti-AI Slop Rules
+1. **App UI vs. Landing Page (Functional Utility First):**
+   - In-app copy must be strictly functional, task-oriented, and utilitarian (aligned with functional tools like Discord, Google Meet, Zoom).
+   - Strictly prohibit marketing copy, promotional slogans, or landing page feature descriptions inside the application.
+   - ❌ **Forbidden:** "Trò chuyện tức thì", "Sẵn sàng khi bạn muốn", "Đồng bộ chất lượng cao" ("Instant chat", "Ready when you want", "High-quality sync").
+
+2. **Action Labels (Buttons & Actions):**
+   - Use exactly 1 decisive action verb, strictly 1–3 words maximum.
+   - ✅ **Allowed:** "Tham gia" (Join), "Sao chép" (Copy), "Đăng nhập" (Sign in), "Rời phòng" (Leave).
+   - ❌ **Forbidden:** Attaching emotional or promotional badge/tag adjectives like "TỨC THÌ", "CỰC NHANH" ("INSTANT", "BLAZING FAST").
+
+3. **Strictly Conceal Backend & Architectural Terminology:**
+   - Never expose library names, protocol acronyms, or infrastructure stack details in the user-facing UI (e.g., LiveKit, WebRTC, WebSocket, Socket.IO, API status, SFU, Redis, PubSub).
+   - Network and connection health must be indicated solely through visual icons (signal bars) or minimal functional labels (e.g., "Đang kết nối...", "Đang kết nối lại...").
+
+4. **Titles & Entity Descriptions:**
+   - Always preserve the user-defined entity name verbatim (e.g., Room Name).
+   - Never auto-generate feature explanation subheadings or boilerplate promotional paragraphs beneath entity titles (e.g., ❌ "Trò chuyện video, chia sẻ màn hình...").
+   - Replace title descriptions with live contextual metadata (e.g., active participant count, creator/host name) or leave blank.
+   - Prohibit decorative footer feature cards ("Card tính năng thừa thãi") in application views.
+
+5. **UI Code Generation & Refactoring Discipline:**
+   - When generating, scaffolding, or refactoring UI components, automatically scan and eliminate all promotional copy, marketing slogans, and AI-slop filler text matching the above criteria without requiring explicit user reminders.
+
 
 ## Workflow
 1. Identify the active Stage Mode (`Idle`, `Voice`, `Video`, `WatchParty`, `ScreenShare`).

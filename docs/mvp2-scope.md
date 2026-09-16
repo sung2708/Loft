@@ -1,14 +1,14 @@
-# Loft MVP 2 — Scope & Architecture Boundaries
+# Mingly MVP 2 — Scope & Architecture Boundaries
 
-This document establishes the authoritative engineering boundaries for **Loft MVP 2**. Every technical decision, PR, and refactoring within MVP 2 must strictly adhere to these boundaries. Features outside the explicit in-scope list are deferred.
+This document establishes the authoritative engineering boundaries for **Mingly MVP 2**. Every technical decision, PR, and refactoring within MVP 2 must strictly adhere to these boundaries. Features outside the explicit in-scope list are deferred.
 
 ---
 
 ## 1. Executive Summary & Evolution
 
-Loft MVP 1 successfully established a working, single-node social room with low-latency WebRTC voice/video (LiveKit), a dedicated WebSocket control plane, Supabase authentication, durable PostgreSQL storage, and synchronized YouTube playback for small groups.
+Mingly MVP 1 successfully established a working, single-node social room with low-latency WebRTC voice/video (LiveKit), a dedicated WebSocket control plane, Supabase authentication, durable PostgreSQL storage, and synchronized YouTube playback for small groups.
 
-**MVP 2 evolves Loft into:**
+**MVP 2 evolves Mingly into:**
 1. A **visually polished social video experience** with camera mirror correctness and optimized raw camera capture. Face filters and background effects move to MVP 3.
 2. An **optimized WebRTC experience** utilizing LiveKit adaptive streaming, dynacast, and viewport-aware subscription quality.
 3. A **multi-instance-capable backend** backed by Redis Pub/Sub for realtime room fan-out and ephemeral presence coordination without compromising PostgreSQL data durability.
@@ -77,14 +77,14 @@ To ensure architectural discipline, rapid iteration, and maintainability by a si
 | Category | Excluded Technologies & Features | Rationale / Architectural Boundary |
 | :--- | :--- | :--- |
 | **Media Transport** | Custom WebRTC SFU, Pion SFU rewrite, Janus, Mediasoup, Kurento | LiveKit is the dedicated, production-tested SFU infrastructure. |
-| **Media Streaming** | Video transcoding server, FFmpeg restreaming, RTMP ingestion, HLS/DASH packaging | Loft synchronizes state, not bytes. Providers stream directly to clients. |
+| **Media Streaming** | Video transcoding server, FFmpeg restreaming, RTMP ingestion, HLS/DASH packaging | Mingly synchronizes state, not bytes. Providers stream directly to clients. |
 | **Third-Party Media** | Spotify Web SDK, SoundCloud Widget, Vimeo, Twitch | Deferred to MVP 3. MVP 2 focuses exclusively on perfecting YouTube. |
 | **Message Brokers** | Apache Kafka, RabbitMQ, NATS JetStream, Apache Pulsar | Massive operational overhead. Redis Pub/Sub is sufficient for ephemeral fan-out. |
 | **Orchestration** | Kubernetes, Istio/Linkerd service mesh, Nomad clusters | Modular monolith deploys via lightweight Docker Compose / Nomad / fly.io. |
-| **Architecture Styles** | Microservices, CQRS, Event Sourcing, Saga orchestrators | Loft uses a Go modular monolith with transactional PostgreSQL and Redis. |
+| **Architecture Styles** | Microservices, CQRS, Event Sourcing, Saga orchestrators | Mingly uses a Go modular monolith with transactional PostgreSQL and Redis. |
 | **Data Synchronization** | CRDTs (Yjs, Automerge), Operational Transformation (OT) | Unnecessary complexity for media queues; monotonic versioning with optimistic locking solves concurrency. |
 | **Advanced Moderation** | Automated ML text moderation, image hashing, report triage queues | Basic host lock, kick, and ban satisfy MVP 2 social hangout requirements. |
-| **Social / Discovery** | Friends lists, user-to-user DMs, push notifications, global lobby search | Loft hangouts are private/invite-link driven. |
+| **Social / Discovery** | Friends lists, user-to-user DMs, push notifications, global lobby search | Mingly hangouts are private/invite-link driven. |
 | **Billing & Monetization**| Stripe, subscriptions, tips, virtual gifts | Not part of core realtime room experience. |
 | **AI Features** | Speech-to-text, meeting summarization, LLM chat bots, avatars | Heavy computational distraction; orthogonal to low-latency media hangouts. |
 
@@ -101,8 +101,8 @@ To ensure architectural discipline, rapid iteration, and maintainability by a si
 ---
 
 ## 5. Related Documentation
-- [Implementation Roadmap (MVP 2 Execution)](file:///d:/git/Loft/docs/roadmap.md)
-- [Architecture Overview](file:///d:/git/Loft/docs/architecture.md)
-- [System Boundaries](file:///d:/git/Loft/docs/system-boundaries.md)
-- [Architecture Decision Records (ADR)](file:///d:/git/Loft/docs/adr/README.md)
-- [Engineering Constitution](file:///d:/git/Loft/AGENTS.md)
+- [Implementation Roadmap (MVP 2 Execution)](file:///d:/git/Mingly/docs/roadmap.md)
+- [Architecture Overview](file:///d:/git/Mingly/docs/architecture.md)
+- [System Boundaries](file:///d:/git/Mingly/docs/system-boundaries.md)
+- [Architecture Decision Records (ADR)](file:///d:/git/Mingly/docs/adr/README.md)
+- [Engineering Constitution](file:///d:/git/Mingly/AGENTS.md)

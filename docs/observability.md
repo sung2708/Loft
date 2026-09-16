@@ -1,6 +1,6 @@
-# Observability, Telemetry & Structured Logging — Loft
+# Observability, Telemetry & Structured Logging — Mingly
 
-This document specifies the structured logging format, contextual correlation dimensions, and bounded metric specifications for Loft.
+This document specifies the structured logging format, contextual correlation dimensions, and bounded metric specifications for Mingly.
 
 ---
 

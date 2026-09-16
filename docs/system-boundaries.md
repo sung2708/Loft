@@ -1,8 +1,8 @@
-﻿# System Boundaries & Ownership — Loft
+# System Boundaries & Ownership — Mingly
 
 ## 1. System Boundary Architecture
 
-Clear ownership boundaries prevent state drift, security vulnerabilities, and distributed race conditions. In Loft, every piece of state has exactly **one** primary owner.
+Clear ownership boundaries prevent state drift, security vulnerabilities, and distributed race conditions. In Mingly, every piece of state has exactly **one** primary owner.
 
 ```
 +---------------------------------------------------------------------------------------+

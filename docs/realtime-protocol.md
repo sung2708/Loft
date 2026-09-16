@@ -1,6 +1,6 @@
-# Realtime Protocol Specification — Loft
+# Realtime Protocol Specification — Mingly
 
-This document specifies the bidirectional WebSocket protocol currently implemented for Loft MVP 2. The envelope stays at protocol version `1`; the section labels group baseline events and governance extensions.
+This document specifies the bidirectional WebSocket protocol currently implemented for Mingly MVP 2. The envelope stays at protocol version `1`; the section labels group baseline events and governance extensions.
 
 ---
 
@@ -69,7 +69,7 @@ replay missed access events.
     "room": {
       "id": "uuid",
       "slug": "abc-xyz",
-      "name": "Loft Hangout",
+      "name": "Mingly Hangout",
       "owner_id": "uuid",
       "allow_guests": true,
       "max_participants": 12,
@@ -194,7 +194,7 @@ Domain Hierarchy:
   ```
 - **Validation**: Target must be an active participant and cannot be the host.
 - **Source of Truth**: PostgreSQL `room_bans` for the durable ban; Go tracks and closes the active WebSocket connection.
-- **Server Action**: Persists the ban, closes the target socket with `StatusPolicyViolation` (routing an exact remote connection through Redis when needed), calls LiveKit `RemoveParticipant`, and broadcasts `participant.left` when the socket leaves. Subsequent Loft admission and token requests reject the banned identity.
+- **Server Action**: Persists the ban, closes the target socket with `StatusPolicyViolation` (routing an exact remote connection through Redis when needed), calls LiveKit `RemoveParticipant`, and broadcasts `participant.left` when the socket leaves. Subsequent Mingly admission and token requests reject the banned identity.
 - **LiveKit limitation**: LiveKit Cloud revokes an existing token when `RemoveParticipant` is called with `revoke_token_ts`. Self-hosted LiveKit disconnects the active participant but does not revoke an already issued JWT; that JWT may remain usable directly against LiveKit until expiry. See [LiveKit participant management](https://docs.livekit.io/intro/basics/rooms-participants-tracks/participants/).
 
 #### `host.transfer`

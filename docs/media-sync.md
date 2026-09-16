@@ -1,12 +1,12 @@
-# Synchronized Media Playback Engine — Loft
+# Synchronized Media Playback Engine — Mingly
 
-This document defines the synchronized YouTube playback engine for Loft, detailing state authority, timestamp prediction, client drift correction, and playback state transitions.
+This document defines the synchronized YouTube playback engine for Mingly, detailing state authority, timestamp prediction, client drift correction, and playback state transitions.
 
 ---
 
 ## 1. Legal Architecture & Philosophy
 
-Loft provides a shared media social viewing experience with strict copyright and bandwidth safety:
+Mingly provides a shared media social viewing experience with strict copyright and bandwidth safety:
 1. **Zero Media Restreaming**: The Go backend and WebSocket layer **never** download, buffer, transcode, cache, or proxy YouTube audio/video frames.
 2. **Official Client Embed**: Media delivery is fulfilled directly between the client's browser and YouTube's CDN using the official YouTube IFrame Player API.
 3. **State Authority Only**: The Go backend acts solely as an authoritative timeline coordinator, synchronizing playback status (`PLAYING`, `PAUSED`, `IDLE`), anchor positions, and monotonic state versions.
@@ -41,7 +41,7 @@ type YouTubeTrack struct {
 ## 3. Timestamp-Based Prediction (Zero Periodic Ticks)
 
 ### The Anti-Pattern
-Broadcasting `currentTime` ticks every second or every frame generates severe network overhead, high CPU wakeups, and latency jitter across clients. Loft **strictly forbids** continuous playback broadcast ticks.
+Broadcasting `currentTime` ticks every second or every frame generates severe network overhead, high CPU wakeups, and latency jitter across clients. Mingly **strictly forbids** continuous playback broadcast ticks.
 
 ### The Authoritative Anchor Formula
 The server maintains a static anchor `(position_ms, started_at)`. Any client computes the canonical instantaneous playback position deterministically:

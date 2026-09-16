@@ -1,6 +1,6 @@
-# Concurrency, Thread Safety & Backpressure — Loft
+# Concurrency, Thread Safety & Backpressure — Mingly
 
-This document specifies the concurrency principles, channel buffering, backpressure policies, and locking scope rules for Loft's Go backend.
+This document specifies the concurrency principles, channel buffering, backpressure policies, and locking scope rules for Mingly's Go backend.
 
 ---
 

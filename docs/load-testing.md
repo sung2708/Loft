@@ -1,12 +1,12 @@
-# Load Testing & Performance Benchmarking — Loft
+# Load Testing & Performance Benchmarking — Mingly
 
-This document specifies realistic multi-user load testing profiles, benchmark scenarios, target metric thresholds, and profiling procedures for **Loft MVP 2**.
+This document specifies realistic multi-user load testing profiles, benchmark scenarios, target metric thresholds, and profiling procedures for **Mingly MVP 2**.
 
 ---
 
 ## 1. Realistic MVP 2 Scale Profiles
 
-Loft is engineered for high-concurrency social rooms without premature enterprise complexity. Load profiles are scaled to validate the product's actual operational limits:
+Mingly is engineered for high-concurrency social rooms without premature enterprise complexity. Load profiles are scaled to validate the product's actual operational limits:
 
 | Profile | Concurrent WS | Active Rooms | Typical Room Topology | Target Environment |
 | :--- | :---: | :---: | :--- | :--- |

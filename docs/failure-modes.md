@@ -1,6 +1,6 @@
-# Failure Modes, Resilience & Graceful Degradation — Loft
+# Failure Modes, Resilience & Graceful Degradation — Mingly
 
-This document specifies the failure modes, detection mechanics, user impact, and recovery behaviors for Loft.
+This document specifies the failure modes, detection mechanics, user impact, and recovery behaviors for Mingly.
 
 ---
 

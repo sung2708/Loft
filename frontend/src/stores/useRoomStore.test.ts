@@ -34,4 +34,22 @@ describe("room social state", () => {
     useRoomStore.getState().roomAppearanceUpdated({ atmosphere: "minimal", accent: "green", adaptive_media_background: true, version: 1 });
     expect(useRoomStore.getState().room).toMatchObject({ atmosphere: "party", accent: "rose", version: 2 });
   });
+
+  it("applies in-room settings update to room state", () => {
+    useRoomStore.getState().applySnapshot(snapshot);
+    useRoomStore.getState().roomUpdated({
+      ...snapshot.room,
+      name: "Updated Room Name",
+      password_required: true,
+      is_locked: true,
+      version: 2,
+    });
+    expect(useRoomStore.getState().room).toMatchObject({
+      name: "Updated Room Name",
+      password_required: true,
+      is_locked: true,
+      version: 2,
+    });
+  });
 });
+

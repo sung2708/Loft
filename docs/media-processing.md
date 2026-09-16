@@ -1,4 +1,4 @@
-# Client-Side Media Processing Pipeline — Loft
+# Client-Side Media Processing Pipeline — Mingly
 
 This document specifies Mingly's client-side video processing pipeline. SPEC 004 extends the raw camera path with one optional LiveKit track processor while preserving deterministic orientation and raw fallback.
 
@@ -172,8 +172,8 @@ function processFrame() {
 ---
 
 ## 7. Related Documentation
-- [Video Effects Architecture](file:///d:/git/Loft/docs/video-effects.md)
-- [LiveKit WebRTC Integration & Optimization](file:///d:/git/Loft/docs/livekit.md)
-- [Testing Strategy & Quality Assurance](file:///d:/git/Loft/docs/testing-strategy.md)
-- [ADR-007: Client-Side Video Effects](file:///d:/git/Loft/docs/adr/README.md#adr-007-client-side-video-effects-via-mediapipe--offscreencanvas)
-- [ADR-010: Camera Mirroring Separation](file:///d:/git/Loft/docs/adr/README.md#adr-010-camera-mirroring-separation-preview-vs-published-track)
+- [Video Effects Architecture](file:///d:/git/Mingly/docs/video-effects.md)
+- [LiveKit WebRTC Integration & Optimization](file:///d:/git/Mingly/docs/livekit.md)
+- [Testing Strategy & Quality Assurance](file:///d:/git/Mingly/docs/testing-strategy.md)
+- [ADR-007: Client-Side Video Effects](file:///d:/git/Mingly/docs/adr/README.md#adr-007-client-side-video-effects-via-mediapipe--offscreencanvas)
+- [ADR-010: Camera Mirroring Separation](file:///d:/git/Mingly/docs/adr/README.md#adr-010-camera-mirroring-separation-preview-vs-published-track)

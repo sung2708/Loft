@@ -18,7 +18,7 @@ Mingly is a shared space to talk, watch, listen, and hang out with your people. 
 - Redis Pub/Sub fan-out, distributed admission/rate limits, and ephemeral presence leases
 - System/light/dark appearance, responsive Stage-first room UI
 
-Camera filters and background effects, Spotify/SoundCloud, recording, discovery, billing, and host transfer remain out of scope for MVP 2 and are planned for later milestones.
+MVP3 also includes persistent room access, host lifecycle/moderation, social reactions, client-side video effects, and durable room appearance. Spotify/SoundCloud, recording, discovery, and billing remain out of scope.
 
 ## Architecture and authority
 
@@ -46,7 +46,7 @@ Requirements: Node 24+, pnpm 11+, Go 1.26+, Supabase project, and LiveKit Cloud 
 
 1. Copy `frontend/.env.example` to `frontend/.env.local` and set public values.
 2. Copy `backend/.env.example` to `backend/.env` and set server values. `go run ./cmd/server` loads this file when run from `backend`; exported shell variables take precedence.
-3. Apply `backend/migrations/000001_mvp.up.sql`, `backend/migrations/000002_governance.up.sql`, `backend/migrations/000003_short_room_codes.up.sql`, and `backend/migrations/000004_room_access.up.sql` through Supabase SQL Editor or your migration runner.
+3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000006`) through Supabase SQL Editor or your migration runner.
 4. Start backend:
 
    ```powershell
@@ -87,7 +87,7 @@ Migrations create `profiles`, `rooms`, `room_members`, `messages`, and MVP2 gove
 
 Tables have RLS enabled and direct access revoked from Supabase `anon`/`authenticated`; browser business mutations go through Go. Backend connection must use a trusted database role that owns/bypasses these policies.
 
-Rollback for a disposable development database: apply `backend/migrations/000003_short_room_codes.down.sql`, `backend/migrations/000002_governance.down.sql`, and then `backend/migrations/000001_mvp.down.sql` (destructive).
+Rollback only on a disposable database, applying matching `.down.sql` files in reverse numeric order. Rollback is destructive.
 
 ## Commands
 
@@ -118,16 +118,27 @@ go build ./...
   material is never placed in invite URLs, previews, snapshots, logs, or metrics.
 - React text rendering only; user chat is never inserted as HTML
 
-## Manual acceptance
+## Verification checklist
 
-Use two browser profiles. Create a room through Google, copy `/join/<invite-code>`, join as host and guest, verify presence/chat/audio/camera/screen share, lock the room and confirm existing guests stay while a new guest receives `ROOM_LOCKED`, kick the guest, paste a YouTube link, and play it from the host. Refresh one client and confirm snapshot recovery, synchronized playback, and persisted chat history. Cloud credentials, Redis/LiveKit services, and browser device permissions are required for the full matrix.
+Use two browser profiles:
+
+- Create a room through Google and copy `/join/<public-room-id>`.
+- Join once as host and once as guest; test both open and password-protected admission.
+- Verify presence, chat, reactions, voice, camera, screen share, YouTube playback, and queue controls.
+- Lock the room: existing guests remain; a new guest is rejected.
+- Test kick and temporary ban, then verify re-entry is rejected.
+- Change room appearance and confirm reconnect/late join receives the saved setting.
+- Refresh one client and confirm snapshot recovery, synchronized playback, and persisted chat history.
+- Toggle light/dark and inspect Lobby, Home, Join, Room, dialogs, drawers, hover, focus, and mobile layout.
+
+Cloud credentials, Redis/LiveKit services, and browser device permissions are required for the full matrix.
 
 ## Known MVP limits
 
 - Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage falls back to bounded local behavior.
 - A room admits one active connection per verified identity. A same-tab reload replaces the previous socket; a different tab receives `DUPLICATE_SESSION`. Idle application connections expire after roughly 30 seconds without traffic, and room capacity is enforced locally and through Redis leases.
 - Authenticated invite holders may join; durable non-owner membership is reserved for later product rules.
-- Advanced moderation dashboards, camera filters/background effects, Spotify/SoundCloud, recording, and discovery remain deferred. The current host can transfer realtime authority, lock admission, remove a participant, or apply a room-scoped one-hour temporary ban.
+- Advanced moderation dashboards, Spotify/SoundCloud, recording, and discovery remain deferred. The current host can transfer realtime authority, lock admission, remove a participant, or apply a room-scoped one-hour temporary ban.
 - LiveKit and Supabase availability depend on configured external projects.
 - Social reactions use ❤️, 😂, 🔥, 👏, and 😭. Wave is room-level and ephemeral; Raise Hand is
   self-controlled and reconnect-aware. Automatic AFK is intentionally not inferred.

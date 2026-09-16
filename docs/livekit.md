@@ -8,7 +8,7 @@ SPEC 004 attaches one client-only processor to the current local camera track th
 
 ## 1. WebRTC & Media Transport Boundary
 
-LiveKit serves as the dedicated Selective Forwarding Unit (SFU) for Loft.
+LiveKit serves as the dedicated Selective Forwarding Unit (SFU) for Mingly.
 1. **Zero Media via WebSocket:** The Go backend and its WebSocket connections **never** transport Opus audio frames, H.264/VP8 video streams, or screen-share pixels. All realtime media flows peer-to-server via WebRTC directly to the LiveKit SFU.
 2. **Control vs. Media Plane Separation:** The Go backend controls authentication, room lifecycle, and token minting; LiveKit manages RTP track ingestion, simulcast distribution, and client bandwidth adaptation.
 
@@ -46,7 +46,7 @@ LiveKit serves as the dedicated Selective Forwarding Unit (SFU) for Loft.
     "canPublishSources": ["microphone", "camera", "screen_share", "screen_share_audio"]
   }
   ```
-- Grants are minted after the Go Hub confirms WebSocket admission. The JWT is short-lived; room bans block both future Loft admission and future token requests. LiveKit Cloud can revoke an active token through the management API; self-hosted LiveKit may keep an already issued JWT valid until expiry.
+- Grants are minted after the Go Hub confirms WebSocket admission. The JWT is short-lived; room bans block both future Mingly admission and future token requests. LiveKit Cloud can revoke an active token through the management API; self-hosted LiveKit may keep an already issued JWT valid until expiry.
 
 ---
 
@@ -90,7 +90,7 @@ The following WebRTC optimizations are implemented in **MVP 2.3**:
   - Directs publishing clients to pause video layers when no remote participant is actively subscribing to that layer, drastically cutting uplink CPU and bandwidth.
 
 ### B. Viewport- & Layout-Aware Subscriptions
-Loft's `MediaStage` dynamically shifts between layouts (`grid`, `solo`, `screen-share`):
+Mingly's `MediaStage` dynamically shifts between layouts (`grid`, `solo`, `screen-share`):
 
 | Participant Visual State | Subscription Quality | Target Resolution | Target Bitrate |
 | :--- | :---: | :---: | :---: |

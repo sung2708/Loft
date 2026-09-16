@@ -1,12 +1,12 @@
-# Authentication, Identity & Permissions Architecture — Loft
+# Authentication, Identity & Permissions Architecture — Mingly
 
-This document specifies user and guest identity verification, server-side authorization evaluation, host governance, and permission policies for Loft.
+This document specifies user and guest identity verification, server-side authorization evaluation, host governance, and permission policies for Mingly.
 
 ---
 
 ## 1. Identity Separation: Authenticated Users vs Guests
 
-Loft supports instant, frictionless guest entry alongside permanent user accounts:
+Mingly supports instant, frictionless guest entry alongside permanent user accounts:
 
 ```
                   ┌──────────────────────────────────────────────┐
@@ -104,6 +104,6 @@ In MVP 2, room ownership is tied durably to the authenticated creator (`room.own
 
 ## 5. Kick Enforcement Across WebSocket and LiveKit
 
-The host's `participant.kick` command writes a durable room ban first, then closes the participant's WebSocket and asks LiveKit to remove the active media participant. Loft rejects future WebSocket admission and LiveKit token issuance for the banned identity. If the LiveKit management call fails, the ban and WebSocket eviction still stand, but the active SFU connection may remain until LiveKit disconnects it.
+The host's `participant.kick` command writes a durable room ban first, then closes the participant's WebSocket and asks LiveKit to remove the active media participant. Mingly rejects future WebSocket admission and LiveKit token issuance for the banned identity. If the LiveKit management call fails, the ban and WebSocket eviction still stand, but the active SFU connection may remain until LiveKit disconnects it.
 
-LiveKit Cloud revokes existing tokens on `RemoveParticipant`; this implementation supplies an explicit `revoke_token_ts`. Self-hosted LiveKit does not revoke an already issued JWT when a participant is removed. Such a cached token can be retried directly against the SFU until it expires, even though Loft will not issue a fresh one. See [LiveKit participant management](https://docs.livekit.io/intro/basics/rooms-participants-tracks/participants/) and [token revocation limits](https://docs.livekit.io/frontends/reference/tokens-grants/).
+LiveKit Cloud revokes existing tokens on `RemoveParticipant`; this implementation supplies an explicit `revoke_token_ts`. Self-hosted LiveKit does not revoke an already issued JWT when a participant is removed. Such a cached token can be retried directly against the SFU until it expires, even though Mingly will not issue a fresh one. See [LiveKit participant management](https://docs.livekit.io/intro/basics/rooms-participants-tracks/participants/) and [token revocation limits](https://docs.livekit.io/frontends/reference/tokens-grants/).

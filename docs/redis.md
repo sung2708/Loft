@@ -1,6 +1,6 @@
-# Redis Architecture & Ephemeral Distributed State — Loft
+# Redis Architecture & Ephemeral Distributed State — Mingly
 
-This document specifies the purpose, data structures, key conventions, and failure handling for Redis in Loft.
+This document specifies the purpose, data structures, key conventions, and failure handling for Redis in Mingly.
 
 ---
 
@@ -70,7 +70,7 @@ Every event published to Redis Pub/Sub includes the sender's `origin_instance_id
 
 ## 4. Single-Node vs Multi-Instance Mode
 
-To preserve Loft's world-class developer experience, the backend operates seamlessly with or without Redis:
+To preserve Mingly's world-class developer experience, the backend operates seamlessly with or without Redis:
 
 1. **Single-Node Mode (`REDIS_URL` empty)**:
    - Go backend uses standard in-memory maps and channels (`golang.org/x/time/rate`).

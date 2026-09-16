@@ -51,6 +51,8 @@ import { isFrontCameraSelfView } from "./cameraOrientation";
 const currentText = (english: string) => translateUI(useI18nStore.getState().locale, english);
 
 interface SessionValue {
+  token?: string;
+  credential?: RoomCredential;
   mediaConnected: boolean;
   sendChat: (content: string) => boolean;
   sendCommand: (
@@ -169,7 +171,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
               .then(({ token }) => { if (!disposed) setLiveKitToken(token); })
               .catch(() => {
                 mediaRequested = false;
-                if (!disposed) setMediaError(currentText("Unable to connect to media server."));
+                if (!disposed) setMediaError(currentText("Voice and video couldn’t connect. Check your connection and try again."));
               });
           }
         } else if (event.type === "participant.joined") {
@@ -293,12 +295,16 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           leave={leave}
           mediaError={mediaError}
           setMediaError={setMediaError}
+          token={credential.token}
+          credential={credential}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
     );
   }
   const value: SessionValue = {
+    token: credential.token,
+    credential,
     mediaConnected: false,
     sendChat,
     sendCommand,
@@ -325,7 +331,9 @@ function LiveMediaContext({
   leave,
   mediaError,
   setMediaError,
-}: Pick<SessionValue, "sendChat" | "sendCommand" | "leave" | "mediaError"> & {
+  token,
+  credential,
+}: Pick<SessionValue, "sendChat" | "sendCommand" | "leave" | "mediaError" | "token" | "credential"> & {
   setMediaError: (message: string | null) => void;
 }) {
   const {
@@ -400,6 +408,8 @@ function LiveMediaContext({
 
   const value = useMemo<SessionValue>(
     () => ({
+      token: token ?? credential?.token,
+      credential,
       mediaConnected: connectionState === ConnectionState.Connected,
       sendChat,
       sendCommand,
@@ -494,6 +504,8 @@ function LiveMediaContext({
       isCameraEnabled,
       isScreenShareEnabled,
       setMediaError,
+      token,
+      credential,
     ],
   );
   return (
@@ -552,13 +564,13 @@ export function MediaStage() {
     <div ref={stageRef} className="w-full h-full min-h-0 p-3 sm:p-6">
       {layout.mode === "screen-share" && screen ? (
         <div className="w-full h-full min-h-0 flex flex-col gap-3">
-        <div className="flex-1 min-h-0 rounded-2xl overflow-hidden bg-black shadow-2xl">
+        <div className="flex-1 min-h-0 rounded-[6px] overflow-hidden bg-[#101113] shadow-2xl">
           <VideoTrack
             trackRef={screen}
             className="w-full h-full object-contain"
           />
         </div>
-        <div className="text-xs text-center text-[var(--text-loft-secondary)]">
+        <div className="text-[11px] text-center text-[var(--text-loft-secondary)]">
           {screen.participant.name || screen.participant.identity} {tr("is sharing")}
         </div>
         <div
@@ -588,7 +600,7 @@ export function MediaStage() {
       ) : (
         <motion.div
           layout
-          transition={{ duration: 0.22 }}
+          transition={{ duration: 0.2 }}
           className="w-full h-full min-h-0 grid gap-3 overflow-y-auto"
           style={{
             gridTemplateColumns: `repeat(${layout.mode === "grid" ? layout.columns : 1}, minmax(0, 1fr))`,
@@ -641,12 +653,12 @@ function ParticipantMediaTile({
   return (
     <motion.div
       layout
-      transition={{ duration: 0.22 }}
-      className={`${compact ? "w-32 h-20 shrink-0" : "w-full h-full min-w-0 min-h-0"} rounded-2xl overflow-hidden bg-[var(--bg-loft-card)] shadow-lg relative border-2 transition-shadow duration-150 ${speaking ? "border-[#34c759] speaking-glow" : "border-transparent"}`}
+      transition={{ duration: 0.2 }}
+      className={`${compact ? "w-32 h-20 shrink-0" : "w-full h-full min-w-0 min-h-0"} rounded-[6px] overflow-hidden bg-[var(--bg-loft-card)] shadow-lg relative border-2 transition-shadow duration-200 ${speaking ? "border-[var(--border-loft)] speaking-glow" : "border-transparent"}`}
     >
       {raisedHand && (
         <span
-          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-[#FF9500]/90 px-2 py-1 text-[10px] font-semibold text-black shadow"
+          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-[#101113]/90 px-2 py-1 text-[11px] font-medium text-white shadow"
           aria-label={tr("Hand raised")}
           title={tr("Hand raised")}
         >
@@ -660,7 +672,7 @@ function ParticipantMediaTile({
           className={`w-full h-full object-cover ${isFrontCameraSelfView(camera) ? "-scale-x-100" : ""}`}
         />
       ) : (
-        <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-[#0066CC]/10">
+        <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-[#101113]/10">
           {avatarUrl && !avatarFailed ? (
             <img
               src={avatarUrl}
@@ -678,34 +690,34 @@ function ParticipantMediaTile({
               className="max-w-[40%] max-h-[65%] rounded-full object-cover shrink-0"
             />
           ) : (
-            <span className={`${compact ? "w-10 h-10 text-sm" : solo ? "w-24 h-24 text-3xl" : "w-16 h-16 text-xl"} rounded-full bg-[#0066CC]/20 text-[#0066CC] flex items-center justify-center font-semibold shrink-0`}>
+            <span className={`${compact ? "w-10 h-10 text-[11px]" : solo ? "w-24 h-24 text-[11px]" : "w-16 h-16 text-[11px]"} rounded-full bg-[#101113]/20 text-[var(--text-loft-primary)] flex items-center justify-center font-medium shrink-0`}>
               {name.slice(0, 1).toUpperCase()}
             </span>
           )}
           {solo && (
             <div className="text-center min-w-0 px-3">
-              <div className="font-semibold text-base truncate flex items-center justify-center gap-1.5">
+              <div className="font-medium text-[11px] truncate flex items-center justify-center gap-2">
                 <span>{name}</span>
                 {muted && (
                   <span title={tr("Muted")} className="inline-flex">
-                    <MicOff className="w-3.5 h-3.5 text-[#FF3B30] shrink-0" />
+                    <MicOff className="w-3.5 h-3.5 text-[var(--text-loft-primary)] shrink-0" />
                   </span>
                 )}
               </div>
-              <div className="text-xs text-[var(--text-loft-secondary)] mt-0.5">{tr("Camera off")}</div>
+              <div className="text-[11px] text-[var(--text-loft-secondary)] mt-1">{tr("Camera off")}</div>
             </div>
           )}
         </div>
       )}
       {(!solo || camera) && (
-        <div className="absolute left-2 bottom-2 max-w-[calc(100%-1rem)] flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-xs text-white text-xs">
+        <div className="absolute left-2 bottom-2 max-w-[calc(100%-1rem)] flex items-center gap-2 px-2 py-1 rounded-[6px] bg-[#101113]/60 backdrop-blur-xs text-white text-[11px]">
           {muted && (
             <span title={tr("Muted")} className="inline-flex">
-              <MicOff className="w-3 h-3 text-[#FF3B30] shrink-0" />
+              <MicOff className="w-3 h-3 text-[var(--text-loft-primary)] shrink-0" />
             </span>
           )}
           <span className="truncate">{name}</span>
-          <span aria-label={`Connection quality: ${quality}`} className={`w-2 h-2 rounded-full ${quality === ConnectionQuality.Excellent ? "bg-[#34c759]" : quality === ConnectionQuality.Good ? "bg-[#ff9500]" : quality === ConnectionQuality.Poor ? "bg-[#ff3b30]" : "bg-white/40"}`} />
+          <span aria-label={`Connection quality: ${quality}`} className={`w-2 h-2 rounded-full ${quality === ConnectionQuality.Excellent ? "bg-[#101113]" : quality === ConnectionQuality.Good ? "bg-[#101113]" : quality === ConnectionQuality.Poor ? "bg-[#101113]" : "bg-white/40"}`} />
         </div>
       )}
     </motion.div>
@@ -716,12 +728,12 @@ export function EmptyStage() {
   const tr = useUIText();
   return (
     <div className="w-full h-full flex items-center justify-center p-6">
-      <div className="glass-card rounded-3xl p-8 sm:p-12 text-center max-w-lg">
-        <div className="mx-auto w-16 h-16 rounded-full bg-[#0066CC]/15 flex items-center justify-center text-2xl mb-4">
+      <div className="glass-card rounded-[6px] p-8 sm:p-12 text-center max-w-lg">
+        <div className="mx-auto w-16 h-16 rounded-full bg-[#101113]/15 flex items-center justify-center text-[11px] mb-4">
           ⌁
         </div>
-        <h2 className="text-xl font-semibold mb-2">{tr("Room is ready")}</h2>
-        <p className="text-sm text-[var(--text-loft-secondary)]">
+        <h2 className="text-[11px] font-medium mb-2">{tr("Room is ready")}</h2>
+        <p className="text-[11px] text-[var(--text-loft-secondary)]">
           {tr("Turn on camera, share screen, or settle in with voice. You’re here together.")}
         </p>
       </div>

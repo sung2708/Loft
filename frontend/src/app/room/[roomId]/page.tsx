@@ -49,14 +49,14 @@ export default function ActiveRoomPage() {
   if (error)
     return (
       <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="glass-card rounded-3xl p-8 text-center">
-          <h1 className="text-xl font-semibold">{tr("Room unavailable")}</h1>
-          <p className="mt-2 text-sm text-[var(--text-loft-secondary)]">
+        <div className="glass-card rounded-[6px] p-8 text-center">
+          <h1 className="text-[11px] font-medium">{tr("Room unavailable")}</h1>
+          <p className="mt-2 text-[11px] text-[var(--text-loft-secondary)]">
             {tr(error)}
           </p>
           <a
             href="/"
-            className="inline-block mt-5 px-4 py-2 rounded-xl bg-[#0066CC] text-white"
+            className="inline-block mt-5 px-4 py-2 rounded-[6px] bg-[#101113] text-white"
           >
             {tr("Return home")}
           </a>
@@ -65,7 +65,7 @@ export default function ActiveRoomPage() {
     );
   if (!credential)
     return (
-      <main className="min-h-screen flex items-center justify-center text-sm text-[var(--text-loft-secondary)]">
+      <main className="min-h-screen flex items-center justify-center text-[11px] text-[var(--text-loft-secondary)]">
         {tr("Preparing room…")}
       </main>
     );

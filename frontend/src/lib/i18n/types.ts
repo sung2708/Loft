@@ -15,9 +15,7 @@ export interface TranslationDictionary {
     loading: string;
   };
   lobby: {
-    constellation: string;
     heroTitle: string;
-    heroSubtitle: string;
     inputPlaceholder: string;
     enterHint: string;
     roomTypeHint: string;
@@ -30,15 +28,9 @@ export interface TranslationDictionary {
     recentRooms: string;
     guestAccessEnabled: string;
     signInRequired: string;
-    guestInstantPass: string;
     authenticatedAccess: string;
     roomNotFound: string;
     enterValidRoom: string;
-    featureWebRTC: string;
-    featureSessions: string;
-    featureNoInstall: string;
-    footerText: string;
-    footerVersion: string;
     roomsHostBadge: string;
   };
   account: {

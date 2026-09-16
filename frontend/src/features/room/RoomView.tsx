@@ -25,14 +25,13 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EASE_ENTRANCE } from "@/lib/motion";
-import { LoftMark } from "@/components/brand/LoftMark";
+import { AppHeader } from "@/components/layout/AppHeader";
 import { useChatStore } from "@/stores/useChatStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { EmptyStage, MediaStage, useRoomSession } from "./RoomSession";
 import { MusicDrawer } from "./MusicDrawer";
 import { useReactionStore } from "@/stores/useReactionStore";
-import { useSfxStore } from "@/stores/useSfxStore";
 import { useUIText } from "@/lib/i18n/uiText";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
 import { KickParticipantDialog } from "@/components/room/KickParticipantDialog";
@@ -41,7 +40,7 @@ import { SocialActions } from "@/components/room/SocialActions";
 import { VideoEffectsPanel } from "@/components/room/VideoEffectsPanel";
 import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
 import { RoomAtmosphere } from "./RoomAtmosphere";
-import type { RoomAccent, RoomAtmosphere as RoomAtmosphereMode } from "@/types/api";
+import { SettingsDrawer } from "./SettingsDrawer";
 
 export function RoomView() {
   const drawer = useUIStore((state) => state.activeDrawer);
@@ -55,8 +54,8 @@ export function RoomView() {
       <div className="relative flex-1 min-h-0 flex">
         <motion.section
           layout
-          transition={{ duration: 0.3, ease: EASE_ENTRANCE }}
-          className={`flex-1 min-w-0 flex flex-col ${drawer ? "md:mr-96" : ""}`}
+          transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
+          className={`flex-1 min-w-0 flex flex-col ${drawer ? "" : ""}`}
         >
           <div className="flex-1 min-h-0">
             {room && connection === "CONNECTED" ? <Stage /> : <RoomLoading />}
@@ -66,6 +65,7 @@ export function RoomView() {
         <AnimatePresence mode="wait">
           {drawer === "chat" && <ChatDrawer />}
           {drawer === "people" && <PeopleDrawer />}
+          {drawer === "settings" && <SettingsDrawer />}
         </AnimatePresence>
         <MusicDrawer open={drawer === "music"} onClose={() => useUIStore.getState().closeDrawer()} />
       </div>
@@ -88,12 +88,12 @@ function Stage() {
       <div className="relative w-full h-full">
         {media.mediaConnected ? <MediaStage /> : <EmptyStage />}
         {media.mediaError && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-[#FF9500]/15 border border-[#FF9500]/30 text-[#FF9500] text-xs z-50 flex items-center gap-2 max-w-[90vw] text-center shadow-lg backdrop-blur-md">
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-[6px] bg-[#101113]/15 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[11px] z-50 flex items-center gap-2 max-w-[90vw] text-center shadow-lg backdrop-blur-md">
             <span>{media.mediaError.replace(/\.+$/, "")}. {tr("Chat remains available.")}</span>
             <button
               type="button"
               onClick={() => media.clearMediaError?.()}
-              className="ml-1 text-[#FF9500] hover:text-white transition-colors p-0.5 rounded-full hover:bg-white/10"
+              className="ml-1 p-1 rounded-[6px] text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] transition-colors"
               aria-label={tr("Close")}
             >
               <X className="w-3.5 h-3.5" />
@@ -101,7 +101,7 @@ function Stage() {
           </div>
         )}
         <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 max-w-[90%] overflow-hidden">
-          {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0.12 : 0.22 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-lg" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-xs font-semibold">×{reaction.count}</span>}</motion.div>)}
+          {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0.2 : 0.2 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-[11px]" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-[11px] font-medium">×{reaction.count}</span>}</motion.div>)}
         </div>
       </div>
     </RoomAtmosphere>
@@ -114,18 +114,18 @@ function RoomLoading() {
   const error = useRoomStore((item) => item.connectionError);
   return (
     <div className="h-full flex items-center justify-center p-6">
-      <div className="glass-card rounded-3xl p-8 text-center max-w-sm">
-        <div className="w-10 h-10 rounded-full border-2 border-[#0066CC]/20 border-t-[#0066CC] animate-spin mx-auto mb-4" />
-        <h2 className="font-semibold">
+      <div className="glass-card rounded-[6px] p-8 text-center max-w-sm">
+        <div className="w-10 h-10 rounded-full border-2 border-[var(--border-loft)]/20 border-t-[#101113] animate-spin mx-auto mb-4" />
+        <h2 className="font-medium">
           {tr(state === "FAILED" ? "Couldn’t join room" : "Opening your Mingly room…")}
         </h2>
-        <p className="text-sm text-[var(--text-loft-secondary)] mt-2">
+        <p className="text-[11px] text-[var(--text-loft-secondary)] mt-2">
           {tr(error ?? "Syncing current room state.")}
         </p>
         {state === "FAILED" && (
           <button
             onClick={() => location.reload()}
-            className="mt-4 px-4 py-2 rounded-xl bg-[#0066CC] text-white text-sm"
+            className="mt-4 px-4 py-2 rounded-[6px] bg-[#101113] text-white text-[11px]"
           >
             {tr("Try again")}
           </button>
@@ -139,24 +139,12 @@ function RoomHeader() {
   const tr = useUIText();
   const room = useRoomStore((state) => state.room);
   const self = useRoomStore((state) => state.self);
-  const session = useRoomSession();
   const count = useRoomStore((state) => state.participants.length);
   const { theme, setTheme } = useUIStore();
-  const soundEffectsEnabled = useSfxStore((state) => state.soundEffectsEnabled);
-  const roomSoundsEnabled = useSfxStore((state) => state.roomSoundsEnabled);
-  const sfxVolume = useSfxStore((state) => state.volume);
-  const setSoundEffectsEnabled = useSfxStore((state) => state.setSoundEffectsEnabled);
-  const setRoomSoundsEnabled = useSfxStore((state) => state.setRoomSoundsEnabled);
-  const setSfxVolume = useSfxStore((state) => state.setVolume);
-  const governanceError = useRoomStore((state) => state.governanceError);
+  const activeDrawer = useUIStore((state) => state.activeDrawer);
   const [copied, setCopied] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
-  const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const appearanceRef = useRef<HTMLDivElement>(null);
-  const appearancePending =
-    pendingVersion !== null &&
-    room?.version === pendingVersion &&
-    !governanceError;
   useEffect(() => {
     if (!appearanceOpen) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -180,48 +168,54 @@ function RoomHeader() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1600);
   };
+  const subtitle = (
+    <span className="flex min-w-0 items-center gap-1">
+      <span className="truncate">
+        {count} {tr("present")} · {tr(room?.allow_guests ? "Guests welcome" : "Members only")}
+      </span>
+      {room?.is_locked ? (
+        <span className="inline-flex shrink-0 items-center gap-1" title={tr("Room locked")}>
+          <Lock className="h-3 w-3" /> {tr("Locked")}
+        </span>
+      ) : null}
+    </span>
+  );
   return (
-    <header className="h-14 px-3 sm:px-5 flex items-center justify-between gap-3 z-50 border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] backdrop-blur-xl">
-      <div className="flex items-center gap-2.5 min-w-0">
-        <a href="/" aria-label={tr("Mingly home")} className="shrink-0">
-          <LoftMark className="w-8 h-8 text-[var(--brand-mark)]" />
-        </a>
-        <div className="min-w-0">
-          <div className="text-sm font-semibold truncate">
-            {room?.name ?? "Mingly"}
-          </div>
-          <div className="text-[10px] text-[var(--text-loft-muted)]">
-            {count} {tr("present")} ·{" "}
-            {tr(room?.allow_guests ? "Guests welcome" : "Members only")}
-            {room?.is_locked && (
-              <span className="inline-flex items-center gap-1 ml-1.5 text-amber-500" title={tr("Room locked")}>
-                <Lock className="w-3 h-3" /> {tr("Locked")}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
+    <AppHeader
+      fixed={false}
+      title={room?.name ?? "Mingly"}
+      subtitle={subtitle}
+      actions={
+        <>
         <button
           onClick={copy}
           aria-label={tr("Invite")}
           disabled={!room}
-          className="btn-press h-8 px-3 rounded-full border border-[var(--border-loft)] text-xs flex items-center gap-1.5"
+          className="btn-press h-8 px-3 rounded-full border border-[var(--border-loft)] text-[11px] flex items-center gap-2"
         >
           {copied ? (
-            <Check className="w-3.5 h-3.5 text-[#34C759]" />
+            <Check className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
           ) : (
             <Copy className="w-3.5 h-3.5" />
           )}
           <span className="hidden sm:inline">{tr("Invite")}</span>
         </button>
-        {self?.identity_type === "user" && self.identity_id === room?.owner_id && room && (
+        {Boolean(
+          room &&
+            ((self?.identity_type === "user" && self.identity_id === room.owner_id) ||
+              self?.role === "host"),
+        ) && (
           <button
             type="button"
-            onClick={() => location.assign(`/home?settings=${encodeURIComponent(room.slug)}`)}
+            onClick={() => useUIStore.getState().toggleDrawer("settings")}
             aria-label={tr("Room settings")}
+            aria-pressed={activeDrawer === "settings"}
             title={tr("Room settings")}
-            className="h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center hover:bg-[var(--border-loft-light)]"
+            className={`btn-press h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center transition-colors cursor-pointer ${
+              activeDrawer === "settings"
+                ? "bg-[#101113] text-white border-[var(--border-loft)] shadow-sm shadow-[#101113]/30"
+                : "hover-invert hover:bg-[var(--border-loft-light)]"
+            }`}
           >
             <Settings2 className="w-4 h-4" />
           </button>
@@ -233,7 +227,7 @@ function RoomHeader() {
             aria-haspopup="menu"
             aria-expanded={appearanceOpen}
             onClick={() => setAppearanceOpen((open) => !open)}
-            className="h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center hover:bg-[var(--border-loft-light)]"
+            className="h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center hover-invert hover:bg-[var(--border-loft-light)]"
           >
             <SunMoon className="w-4 h-4" />
           </button>
@@ -241,7 +235,7 @@ function RoomHeader() {
             <div
               role="menu"
               aria-label={tr("Appearance")}
-              className="absolute right-0 top-full mt-2 z-50 min-w-52 rounded-xl border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
+              className="absolute right-0 top-full mt-2 z-50 min-w-52 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
             >
               {(["system", "light", "dark"] as const).map((option) => (
                 <button
@@ -253,106 +247,20 @@ function RoomHeader() {
                     setTheme(option);
                     setAppearanceOpen(false);
                   }}
-                  className="w-full rounded-lg px-3 py-2 text-left text-xs capitalize text-[var(--text-loft-primary)] hover:bg-[var(--border-loft-light)] flex items-center justify-between gap-3"
+                  className="w-full rounded-[6px] px-3 py-2 text-left text-[11px] capitalize text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft-light)] flex items-center justify-between gap-3"
                 >
                   {tr(option.charAt(0).toUpperCase() + option.slice(1))}
                   {theme === option && (
-                    <Check className="w-3.5 h-3.5 text-[#0066CC]" />
+                    <Check className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
                   )}
                 </button>
               ))}
-              <div className="my-1 border-t border-[var(--border-loft)]" />
-              {self?.role === "host" && room && (
-                <>
-                  <div className="px-2 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-loft-muted)]">
-                    {tr("Room atmosphere")}
-                  </div>
-                  <div className="grid grid-cols-2 gap-1 p-1">
-                    {(["minimal", "ambient", "focus", "party"] as RoomAtmosphereMode[]).map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={(room.atmosphere ?? "ambient") === option}
-                        disabled={appearancePending}
-                        onClick={() => {
-                          if (appearancePending) return;
-                          setPendingVersion(room.version);
-                          session.sendCommand("room.appearance.update", {
-                            atmosphere: option,
-                            accent: room.accent ?? "blue",
-                            adaptive_media_background: room.adaptive_media_background ?? true,
-                            expected_version: room.version,
-                          });
-                        }}
-                        className="rounded-lg px-2 py-1.5 text-left text-xs capitalize hover:bg-[var(--border-loft-light)] disabled:opacity-50"
-                      >
-                        {tr(option.charAt(0).toUpperCase() + option.slice(1))}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex gap-1 px-2 py-1" aria-label={tr("Room accent")}>
-                    {(["blue", "purple", "green", "orange", "rose"] as RoomAccent[]).map((accent) => (
-                      <button
-                        key={accent}
-                        type="button"
-                        disabled={appearancePending}
-                        onClick={() => {
-                          if (appearancePending) return;
-                          setPendingVersion(room.version);
-                          session.sendCommand("room.appearance.update", {
-                            atmosphere: room.atmosphere ?? "ambient",
-                            accent,
-                            adaptive_media_background: room.adaptive_media_background ?? true,
-                            expected_version: room.version,
-                          });
-                        }}
-                        aria-label={tr(accent.charAt(0).toUpperCase() + accent.slice(1))}
-                        aria-pressed={(room.accent ?? "blue") === accent}
-                        className="room-accent-choice h-5 w-5 rounded-full border-2 border-transparent aria-pressed:border-[var(--text-loft-primary)] disabled:opacity-50"
-                        data-accent={accent}
-                      />
-                    ))}
-                  </div>
-                  <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs">
-                    {tr("Adapt to shared media")}
-                    <input
-                      type="checkbox"
-                      disabled={appearancePending}
-                      checked={room.adaptive_media_background ?? true}
-                      onChange={(event) => {
-                        if (appearancePending) return;
-                        setPendingVersion(room.version);
-                        session.sendCommand("room.appearance.update", {
-                          atmosphere: room.atmosphere ?? "ambient",
-                          accent: room.accent ?? "blue",
-                          adaptive_media_background: event.target.checked,
-                          expected_version: room.version,
-                        });
-                      }}
-                    />
-                  </label>
-                  <div className="my-1 border-t border-[var(--border-loft)]" />
-                </>
-              )}
-              <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs">
-                {tr("Sound effects")}
-                <input type="checkbox" checked={soundEffectsEnabled} onChange={(event) => setSoundEffectsEnabled(event.target.checked)} />
-              </label>
-              <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs">
-                {tr("Room sounds")}
-                <input type="checkbox" checked={roomSoundsEnabled} onChange={(event) => setRoomSoundsEnabled(event.target.checked)} />
-              </label>
-              <label className="block rounded-lg px-2 py-1.5 text-xs">
-                <span className="flex justify-between"><span>{tr("Effects volume")}</span><span>{sfxVolume}%</span></span>
-                <input className="mt-1 w-full" type="range" min={0} max={100} value={sfxVolume} onChange={(event) => setSfxVolume(Number(event.target.value))} />
-              </label>
             </div>
           )}
         </div>
         <div
           title={self?.display_name}
-          className="w-8 h-8 rounded-full bg-[#0066CC]/15 text-[#0066CC] flex items-center justify-center font-semibold text-xs overflow-hidden"
+          className="w-8 h-8 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center font-medium text-[11px] overflow-hidden"
         >
           {self?.avatar_url ? (
             <img
@@ -364,8 +272,9 @@ function RoomHeader() {
             (self?.display_name?.slice(0, 1).toUpperCase() ?? "?")
           )}
         </div>
-      </div>
-    </header>
+        </>
+      }
+    />
   );
 }
 
@@ -377,7 +286,7 @@ function ConnectionBadge() {
   const failed = state === "FAILED";
   return (
     <div
-      className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-3 py-1.5 rounded-full shadow-lg text-xs flex items-center gap-2 ${failed ? "bg-[#FF3B30] text-white" : "bg-[var(--bg-loft-card)] border border-[var(--border-loft)]"}`}
+      className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-3 py-2 rounded-full shadow-lg text-[11px] flex items-center gap-2 ${failed ? "bg-[#101113] text-white" : "bg-[var(--bg-loft-card)] border border-[var(--border-loft)]"}`}
     >
       {failed ? (
         <WifiOff className="w-3.5 h-3.5" />
@@ -402,14 +311,14 @@ function GovernanceNotice() {
   return (
     <div
       role="alert"
-      className="absolute top-24 left-1/2 -translate-x-1/2 z-50 max-w-[min(32rem,calc(100vw-2rem))] px-4 py-2 rounded-xl bg-[#FF3B30]/15 border border-[#FF3B30]/30 text-[#FF3B30] text-xs flex items-center gap-3 shadow-lg backdrop-blur-md"
+      className="absolute top-24 left-1/2 -translate-x-1/2 z-50 max-w-[min(32rem,calc(100vw-2rem))] px-4 py-2 rounded-[6px] bg-[#101113]/15 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[11px] flex items-center gap-3 shadow-lg backdrop-blur-md"
     >
       <span>{tr(error)}</span>
       <button
         type="button"
         onClick={() => useRoomStore.getState().setGovernanceError(null)}
         aria-label={tr("Close")}
-        className="shrink-0 p-0.5 rounded-full hover:bg-[#FF3B30]/10"
+        className="shrink-0 p-1 rounded-full hover:bg-[#101113]/10"
       >
         <X className="w-3.5 h-3.5" />
       </button>
@@ -439,11 +348,11 @@ function CallDock() {
     "btn-press relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
   return (
     <div className="flex-shrink-0 pb-[calc(.75rem+env(safe-area-inset-bottom))] px-2 flex justify-center">
-      <div className="relative glass-dock rounded-full shadow-2xl p-2 flex items-center gap-1 sm:gap-1.5">
+      <div className="relative glass-dock rounded-full shadow-2xl p-2 flex items-center gap-1 sm:gap-2">
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleMic()}
-          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.micEnabled ? "" : "bg-[#FF3B30] text-white"}`}
+          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.micEnabled ? "" : "bg-[#101113] text-white"}`}
           title={tr("Microphone")}
         >
           {media.micEnabled ? (
@@ -458,7 +367,7 @@ function CallDock() {
           onClick={() => setEffectsOpen(!effectsOpen)}
           aria-expanded={effectsOpen}
           aria-haspopup="dialog"
-          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${effectsOpen ? "bg-[#0066CC] text-white" : ""}`}
+          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${effectsOpen ? "bg-[#101113] text-white" : ""}`}
           title={tr("Video effects")}
           aria-label={tr("Video effects")}
         >
@@ -468,7 +377,7 @@ function CallDock() {
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleCamera()}
-          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.cameraEnabled ? "" : "bg-[#FF3B30] text-white"}`}
+          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.cameraEnabled ? "" : "bg-[#101113] text-white"}`}
           title={tr("Camera")}
         >
           {media.cameraEnabled ? (
@@ -480,7 +389,7 @@ function CallDock() {
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleScreen()}
-          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.screenEnabled ? "bg-[#0066CC] text-white" : ""}`}
+          className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.screenEnabled ? "bg-[#101113] text-white" : ""}`}
           title={tr("Share screen")}
         >
           <MonitorUp className="w-4 h-4" />
@@ -488,27 +397,27 @@ function CallDock() {
         <span className="w-px h-6 bg-[var(--border-loft)]" />
         <button
           onClick={() => toggleDrawer("chat")}
-          className={`${control} ${drawer === "chat" ? "bg-[#0066CC] text-white" : ""}`}
+          className={`${control} ${drawer === "chat" ? "bg-[#101113] text-white" : ""}`}
           title={tr("Chat")}
         >
           <MessageSquare className="w-4 h-4" />
           {unread > 0 && drawer !== "chat" && (
-            <b className="absolute -top-1 -right-1 bg-[#FF3B30] text-white rounded-full min-w-4 h-4 text-[9px] flex items-center justify-center">
+            <b className="absolute -top-1 -right-1 bg-[#101113] text-white rounded-full min-w-4 h-4 text-[11px] flex items-center justify-center">
               {unread}
             </b>
           )}
         </button>
         <button
           onClick={() => toggleDrawer("people")}
-          className={`${control} ${drawer === "people" ? "bg-[#0066CC] text-white" : ""}`}
+          className={`${control} ${drawer === "people" ? "bg-[#101113] text-white" : ""}`}
           title={tr("People")}
         >
           <Users className="w-4 h-4" />
-          <b className="absolute -top-1 -right-1 bg-[var(--bg-loft-card)] border border-[var(--border-loft)] rounded-full min-w-4 h-4 text-[9px] flex items-center justify-center">
+          <b className="absolute -top-1 -right-1 bg-[var(--bg-loft-card)] border border-[var(--border-loft)] rounded-full min-w-4 h-4 text-[11px] flex items-center justify-center">
             {count}
           </b>
         </button>
-        <button onClick={() => toggleDrawer("music")} className={`${control} ${drawer === "music" ? "bg-[#0066CC] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
+        <button onClick={() => toggleDrawer("music")} className={`${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
         <span className="w-px h-6 bg-[var(--border-loft)]" />
         <SocialActions
           raised={self?.raised_hand ?? false}
@@ -521,7 +430,7 @@ function CallDock() {
         <span className="w-px h-6 bg-[var(--border-loft)]" />
         <button
           onClick={media.leave}
-          className={`${control} bg-[#FF3B30]/15 text-[#FF3B30] hover:bg-[#FF3B30] hover:text-white`}
+          className={`${control} bg-[#101113]/15 text-[var(--text-loft-primary)] hover:bg-[#101113] hover:text-white`}
           title={tr("Leave")}
         >
           <PhoneOff className="w-4 h-4" />
@@ -554,15 +463,15 @@ function DrawerFrame({
       initial={{ x: "100%" }}
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
-      transition={{ duration: 0.3, ease: EASE_ENTRANCE }}
+      transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
       className="fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-0 w-full md:w-96 glass-drawer shadow-2xl z-40 flex flex-col"
     >
       <div className="h-14 px-5 flex items-center justify-between border-b border-[var(--border-loft)]">
-        <h3 className="font-semibold text-sm">{title}</h3>
+        <h3 className="font-medium text-[11px]">{title}</h3>
         <button
           onClick={close}
           aria-label={tr("Close")}
-          className="w-8 h-8 rounded-full hover:bg-[var(--border-loft)] flex items-center justify-center"
+          className="w-8 h-8 rounded-full hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] flex items-center justify-center"
         >
           <X className="w-4 h-4" />
         </button>
@@ -590,7 +499,7 @@ function renderMessageContent(content: string, isMine?: boolean) {
           className={`underline underline-offset-2 break-all transition-opacity hover:opacity-80 font-medium ${
             isMine
               ? "text-white hover:text-white/90"
-              : "text-[#0066CC] dark:text-[#2997ff]"
+              : "text-[var(--text-loft-primary)] dark:text-[var(--text-loft-primary)]"
           }`}
         >
           {part}
@@ -623,7 +532,7 @@ function ChatDrawer() {
     <DrawerFrame title={tr("Room chat")}>
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
-          <p className="text-sm text-center text-[var(--text-loft-muted)] mt-10">
+          <p className="text-[11px] text-center text-[var(--text-loft-muted)] mt-10">
             {tr("No messages yet. Say hello.")}
           </p>
         )}
@@ -631,7 +540,7 @@ function ChatDrawer() {
           const isSystem = message.sender_id === "system" || message.sender_id === "";
           if (isSystem) {
             return (
-              <div key={message.id} className="flex justify-center my-1.5">
+              <div key={message.id} className="flex justify-center my-2">
                 <span className="text-[11px] px-3 py-1 rounded-full bg-[var(--border-loft-light)] text-[var(--text-loft-muted)] border border-[var(--border-loft)] text-center max-w-[90%] break-words">
                   {renderMessageContent(message.content)}
                 </span>
@@ -646,7 +555,7 @@ function ChatDrawer() {
               className={`flex flex-col ${mine ? "items-end" : "items-start"}`}
             >
               <div
-                className={`flex items-center gap-1.5 mb-1 px-1 text-[10px] text-[var(--text-loft-muted)] ${
+                className={`flex items-center gap-2 mb-1 px-1 text-[11px] text-[var(--text-loft-muted)] ${
                   mine ? "flex-row-reverse" : ""
                 }`}
               >
@@ -662,10 +571,10 @@ function ChatDrawer() {
                 </span>
               </div>
               <div
-                className={`max-w-[85%] px-3.5 py-2 rounded-2xl text-sm break-words whitespace-pre-wrap leading-relaxed ${
+                className={`max-w-[85%] px-4 py-2 rounded-[6px] text-[11px] break-words whitespace-pre-wrap leading-relaxed ${
                   mine
-                    ? "bg-[#0066CC] text-white rounded-br-xs shadow-xs"
-                    : "bg-[var(--bg-loft-card)] text-[var(--text-loft-primary)] border border-[var(--border-loft)] rounded-bl-xs shadow-xs"
+                    ? "bg-[#101113] text-white rounded-br-[6px] shadow-xs"
+                    : "bg-[var(--bg-loft-card)] text-[var(--text-loft-primary)] border border-[var(--border-loft)] rounded-bl-[6px] shadow-xs"
                 }`}
               >
                 {renderMessageContent(message.content, mine)}
@@ -675,7 +584,7 @@ function ChatDrawer() {
         })}
         <div ref={end} />
       </div>
-      {error && <p className="px-4 pb-1 text-xs text-[#FF3B30]">{tr(error)}</p>}
+      {error && <p className="px-4 pb-1 text-[11px] text-[var(--text-loft-primary)]">{tr(error)}</p>}
       <form
         onSubmit={submit}
         className="p-3 border-t border-[var(--border-loft)] flex gap-2"
@@ -686,11 +595,11 @@ function ChatDrawer() {
           onChange={(event) => setInput(event.target.value)}
           aria-label={tr("Message")}
           placeholder={tr("Send a message…")}
-          className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-[var(--border-loft-light)] border border-[var(--border-loft)] outline-none focus:border-[#0066CC] text-sm"
+          className="flex-1 min-w-0 px-4 py-3 rounded-[6px] bg-[var(--border-loft-light)] border border-[var(--border-loft)] outline-none focus:border-[var(--border-loft)] text-[11px]"
         />
         <button
           disabled={!input.trim()}
-          className="px-4 rounded-xl bg-[#0066CC] hover:bg-[#0077ED] text-white text-sm disabled:opacity-40 transition-colors"
+          className="px-4 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white text-[11px] disabled:opacity-40 transition-colors"
         >
           {tr("Send")}
         </button>
@@ -748,7 +657,7 @@ function PeopleDrawer() {
               onClick={lockRoom}
               disabled={connection !== "CONNECTED"}
               aria-pressed={room.is_locked}
-              className="w-full flex items-center justify-center gap-2 rounded-xl border border-[var(--border-loft)] bg-[var(--border-loft-light)] px-3 py-2 text-sm font-medium hover:bg-[var(--bg-loft-card)] disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--border-loft-light)] px-3 py-2 text-[11px] font-medium hover:bg-[var(--bg-loft-card)] disabled:opacity-50"
             >
               {room.is_locked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
               {tr(room.is_locked ? "Unlock room" : "Lock room")}
@@ -759,9 +668,9 @@ function PeopleDrawer() {
           {people.map((person) => (
             <div
               key={person.connection_id}
-              className="p-3 rounded-2xl border border-[var(--border-loft)] bg-[var(--border-loft-light)] flex items-center gap-3"
+              className="p-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--border-loft-light)] flex items-center gap-3"
             >
-              <div className="w-10 h-10 rounded-full bg-[#0066CC]/15 text-[#0066CC] overflow-hidden flex items-center justify-center font-semibold">
+              <div className="w-10 h-10 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] overflow-hidden flex items-center justify-center font-medium">
                 {person.avatar_url ? (
                   <img
                     src={person.avatar_url}
@@ -773,17 +682,17 @@ function PeopleDrawer() {
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold truncate">
+                <div className="text-[11px] font-medium truncate">
                   {person.display_name}
                 </div>
-                <div className="text-xs text-[var(--text-loft-muted)] capitalize">
+                <div className="text-[11px] text-[var(--text-loft-muted)] capitalize">
                   {tr(person.identity_type === "guest" ? "Guest" : "User")}
                 </div>
               </div>
               {person.role === "host" && (
                 <span
                   title={tr("Host")}
-                  className="flex items-center gap-1 text-xs text-amber-500"
+                  className="flex items-center gap-1 text-[11px] text-[var(--text-loft-secondary)]"
                 >
                   <Crown className="w-3.5 h-3.5" /> {tr("Host")}
                 </span>
@@ -799,7 +708,7 @@ function PeopleDrawer() {
             </div>
           ))}
         </div>
-        <div className="p-4 border-t border-[var(--border-loft)] text-xs text-[var(--text-loft-secondary)] flex items-center gap-2">
+        <div className="p-4 border-t border-[var(--border-loft)] text-[11px] text-[var(--text-loft-secondary)] flex items-center gap-2">
           <Settings2 className="w-4 h-4" /> {tr("Presence follows active browser connections.")}
         </div>
       </DrawerFrame>

@@ -1,8 +1,8 @@
-﻿# Database Architecture & Persistence Design — Loft
+# Database Architecture & Persistence Design — Mingly
 
 ## 1. Relational Database Principles
 
-Loft utilizes **PostgreSQL** (hosted via Supabase) as its sole source of durable truth.
+Mingly utilizes **PostgreSQL** (hosted via Supabase) as its sole source of durable truth.
 1. **Direct Connection Pool:** The Go backend connects directly using `pgxpool` (`jackc/pgx/v5`). It does **not** make unnecessary REST requests through PostgREST for backend workflows.
 2. **Parameterized SQL Queries:** No dynamic SQL string concatenation. All queries use parameterized placeholders (`$1, $2`) to completely eliminate SQL injection.
 3. **Sequential Migrations:** Schema changes are tracked as forward-only SQL migration files in `backend/migrations/` (e.g., `000001_init.up.sql`).

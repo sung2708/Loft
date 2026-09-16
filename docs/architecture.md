@@ -1,8 +1,8 @@
-# Architecture Overview — Loft
+# Architecture Overview — Mingly
 
 ## 1. System Vision & Architecture Philosophy
 
-Loft is designed as a **Modular Monolith** in Go. Rather than adopting distributed microservices prematurely, all business domains (Rooms, Permissions, Chat, Presence, Media Sync, Moderation, Token Issuance) live in a single Go binary with clear package boundaries.
+Mingly is designed as a **Modular Monolith** in Go. Rather than adopting distributed microservices prematurely, all business domains (Rooms, Permissions, Chat, Presence, Media Sync, Moderation, Token Issuance) live in a single Go binary with clear package boundaries.
 
 Infrastructure services are strictly separated by responsibility:
 - **Client (Frontend):** Next.js (React + TypeScript, managed with `pnpm`), Stage-first UI, Zustand state, LiveKit Client SDK, WebSocket protocol handler.

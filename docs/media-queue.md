@@ -1,6 +1,6 @@
-# Collaborative Media Queue Architecture — Loft
+# Collaborative Media Queue Architecture — Mingly
 
-This document specifies the data model, mutation operations, concurrency control, and validation rules for Loft's collaborative media queue.
+This document specifies the data model, mutation operations, concurrency control, and validation rules for Mingly's collaborative media queue.
 
 ---
 
@@ -42,7 +42,7 @@ Queue operations are divided into **Member Contributions** (open to all admitted
 
 ## 3. Optimistic Concurrency Control (No CRDT)
 
-Loft explicitly rejects CRDTs (Conflict-Free Replicated Data Types) and Operational Transformation (OT) for media queues in MVP 2:
+Mingly explicitly rejects CRDTs (Conflict-Free Replicated Data Types) and Operational Transformation (OT) for media queues in MVP 2:
 - **Why No CRDT**: CRDTs introduce massive complexity (tombstones, vector clocks, state blowup) that is completely unjustified for a 12-person social room with a 50-track maximum queue.
 - **The Optimistic Version Solution**:
   - The server maintains monotonic sequence counter `MediaState.Version`.
@@ -94,8 +94,8 @@ func (m *mediaState) reorder(order []string) error {
 ---
 
 ## 6. Related Documentation
-- [Media Synchronization Engine](file:///d:/git/Loft/docs/media-sync.md)
-- [Authentication & Permissions Architecture](file:///d:/git/Loft/docs/auth-and-permissions.md)
-- [Realtime Protocol Specification](file:///d:/git/Loft/docs/realtime-protocol.md)
-- [ADR-008: Server-Authoritative Shared Media State](file:///d:/git/Loft/docs/adr/README.md#adr-008-server-authoritative-shared-media-state-with-timestamp-prediction)
-- [ADR-009: Official YouTube Client Embed](file:///d:/git/Loft/docs/adr/README.md#adr-009-official-youtube-client-embed-zero-backend-restreaming)
+- [Media Synchronization Engine](file:///d:/git/Mingly/docs/media-sync.md)
+- [Authentication & Permissions Architecture](file:///d:/git/Mingly/docs/auth-and-permissions.md)
+- [Realtime Protocol Specification](file:///d:/git/Mingly/docs/realtime-protocol.md)
+- [ADR-008: Server-Authoritative Shared Media State](file:///d:/git/Mingly/docs/adr/README.md#adr-008-server-authoritative-shared-media-state-with-timestamp-prediction)
+- [ADR-009: Official YouTube Client Embed](file:///d:/git/Mingly/docs/adr/README.md#adr-009-official-youtube-client-embed-zero-backend-restreaming)

@@ -1,4 +1,4 @@
-﻿# Realtime Presence & Ephemeral State Architecture — Loft
+# Realtime Presence & Ephemeral State Architecture — Mingly
 
 ## 1. Presence Philosophy & Distributed Invariants
 

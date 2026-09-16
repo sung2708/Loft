@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getSupabase } from "@/lib/supabase/client";
 import { safeAuthDestination } from "@/lib/authRedirect";
 import { useUIText } from "@/lib/i18n/uiText";
+import { LobbyHeader } from "@/components/lobby/LobbyHeader";
 
 export default function AuthCallbackPage() {
   const tr = useUIText();
@@ -34,14 +35,15 @@ export default function AuthCallbackPage() {
     })();
   }, []);
   return (
-    <main className="min-h-screen flex items-center justify-center p-6">
-      <div className="glass-card rounded-3xl p-8 text-center">
-        <div className="w-10 h-10 rounded-full border-2 border-[#0066CC]/20 border-t-[#0066CC] animate-spin mx-auto" />
-        <h1 className="mt-4 font-semibold">{tr("Finishing Google sign-in…")}</h1>
+    <main className="min-h-screen flex items-center justify-center p-6 pt-20">
+      <LobbyHeader />
+      <div className="glass-card rounded-[6px] p-8 text-center">
+        <div className="w-10 h-10 rounded-full border-2 border-[var(--border-loft)]/20 border-t-[#101113] animate-spin mx-auto" />
+        <h1 className="mt-4 font-medium">{tr("Finishing Google sign-in…")}</h1>
         {error && (
           <>
-            <p className="mt-2 text-sm text-[#FF3B30]">{tr(error)}</p>
-            <a href="/" className="inline-block mt-4 text-sm text-[#0066CC]">
+            <p className="mt-2 text-[11px] text-[var(--text-loft-primary)]">{tr(error)}</p>
+            <a href="/" className="inline-block mt-4 text-[11px] text-[var(--text-loft-primary)]">
               {tr("Return home")}
             </a>
           </>

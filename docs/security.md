@@ -1,8 +1,8 @@
-﻿# Security & Threat Model — Loft
+# Security & Threat Model — Mingly
 
 ## 1. Security Philosophy: Zero-Trust Client Boundary
 
-In Loft, the browser frontend is treated as an untrusted environment.
+In Mingly, the browser frontend is treated as an untrusted environment.
 1. **Never Trust Client Assertions:** The server never accepts client-provided user IDs, roles, or permissions. All state actions are evaluated against verified cryptographic tokens.
 2. **Strict Origin & Transport Security:** All traffic requires TLS in production (`wss://` and `https://`). Cross-Site WebSocket Hijacking (CSWSH) is prevented via strict origin validation.
 3. **Secret Isolation:** LiveKit API secrets, database credentials, and HMAC keys exist solely in the Go backend environment and are **never** delivered to client bundles.

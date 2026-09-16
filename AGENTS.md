@@ -85,6 +85,16 @@ Before designing or writing code, every engineer and autonomous agent must enfor
 
 ---
 
+## UI/UX Copywriting & Anti-AI Slop Rules
+
+1. **App UI vs. Landing Page (Functional Utility):** All in-app copy must be strictly functional, intuitive, and task-driven (like Discord, Google Meet, Zoom). Prohibit marketing slogans, promotional phrasing, or landing page pitches (forbidden: "Trò chuyện tức thì", "Sẵn sàng khi bạn muốn", "Đồng bộ chất lượng cao").
+2. **Action Labels (Buttons & Actions):** Exactly 1 decisive verb, 1–3 words maximum (e.g., "Tham gia", "Sao chép", "Đăng nhập", "Rời phòng"). Never attach emotional adjectives or promotional badges ("TỨC THÌ", "CỰC NHANH").
+3. **Conceal Backend/Architecture:** Never expose internal tech stack or protocol names (LiveKit, WebRTC, WebSocket, Socket.IO, API status) on user-facing interfaces. Connection states are represented by intuitive visual icons or minimal functional labels.
+4. **Titles & Descriptions:** Preserve user-defined entity names verbatim. Never auto-generate feature explanation subheadings beneath titles (e.g., "Trò chuyện video, chia sẻ màn hình..."). Use live contextual metadata (participant count, host) or leave blank. Never generate footer feature cards.
+5. **UI Code Generation Principle:** When generating or refactoring UI components, automatically scan and purge AI-slop filler, promotional copy, and marketing verbiage without requiring reminder.
+
+---
+
 ## Documentation Roadmap Index
 
 For detailed architectural specifications, reference the operational documentation in `docs/`:

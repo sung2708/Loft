@@ -1,4 +1,4 @@
-# Video Effects Architecture & Performance Strategy — Loft
+# Video Effects Architecture & Performance Strategy — Mingly
 
 This document defines Mingly's client-side video effects model, lifecycle management, and tiered performance degradation strategy for **MVP 3 / SPEC 004**. The raw MVP2 camera path remains the default and fallback.
 
@@ -8,7 +8,7 @@ The implemented integration extends the existing LiveKit `LocalVideoTrack` with 
 
 ## 1. Minimal Effect Configuration Model
 
-Loft intentionally avoids massive third-party plugin frameworks in favor of a lean, strongly typed configuration model:
+Mingly intentionally avoids massive third-party plugin frameworks in favor of a lean, strongly typed configuration model:
 
 ```typescript
 export type BackgroundEffectType = "none" | "blur" | "image";
@@ -133,7 +133,7 @@ class EffectPerformanceMonitor {
   }
 
   private triggerStepDown(reason: string) {
-    console.warn(`[Loft Video] Downgrading effect tier: ${reason}`);
+    console.warn(`[Mingly Video] Downgrading effect tier: ${reason}`);
     // Step down: HIGH -> MEDIUM -> LOW -> OFF
   }
 }
@@ -150,8 +150,8 @@ When background segmentation and face landmarks are both required, their inferen
 ---
 
 ## 5. Related Documentation
-- [Client-Side Media Processing Pipeline](file:///d:/git/Loft/docs/media-processing.md)
-- [LiveKit WebRTC Integration & Optimization](file:///d:/git/Loft/docs/livekit.md)
-- [Testing Strategy & Quality Assurance](file:///d:/git/Loft/docs/testing-strategy.md)
-- [ADR-007: Client-Side Video Effects](file:///d:/git/Loft/docs/adr/README.md#adr-007-client-side-video-effects-via-mediapipe--offscreencanvas)
-- [ADR-010: Camera Mirroring Separation](file:///d:/git/Loft/docs/adr/README.md#adr-010-camera-mirroring-separation-preview-vs-published-track)
+- [Client-Side Media Processing Pipeline](file:///d:/git/Mingly/docs/media-processing.md)
+- [LiveKit WebRTC Integration & Optimization](file:///d:/git/Mingly/docs/livekit.md)
+- [Testing Strategy & Quality Assurance](file:///d:/git/Mingly/docs/testing-strategy.md)
+- [ADR-007: Client-Side Video Effects](file:///d:/git/Mingly/docs/adr/README.md#adr-007-client-side-video-effects-via-mediapipe--offscreencanvas)
+- [ADR-010: Camera Mirroring Separation](file:///d:/git/Mingly/docs/adr/README.md#adr-010-camera-mirroring-separation-preview-vs-published-track)

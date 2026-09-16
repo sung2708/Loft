@@ -1,4 +1,4 @@
-# Multi-Instance Realtime Architecture — Loft
+# Multi-Instance Realtime Architecture — Mingly
 
 This document specifies the distributed communication topology, event propagation, and loop-prevention mechanics when multiple Go backend instances serve participants of the same room.
 
@@ -113,8 +113,8 @@ The Redis bus uses one bounded `room:*:events` wildcard subscription per backend
 ---
 
 ## 6. Related Documentation
-- [Redis Architecture & Ephemeral State Design](file:///d:/git/Loft/docs/redis.md)
-- [Canonical Room State Management](file:///d:/git/Loft/docs/room-state.md)
-- [Realtime Protocol Specification](file:///d:/git/Loft/docs/realtime-protocol.md)
-- [Concurrency, Thread Safety & Backpressure](file:///d:/git/Loft/docs/concurrency.md)
-- [ADR-004: Redis for Ephemeral State and Inter-Node Fan-Out](file:///d:/git/Loft/docs/adr/README.md#adr-004-redis-for-ephemeral-state-and-inter-node-fan-out)
+- [Redis Architecture & Ephemeral State Design](file:///d:/git/Mingly/docs/redis.md)
+- [Canonical Room State Management](file:///d:/git/Mingly/docs/room-state.md)
+- [Realtime Protocol Specification](file:///d:/git/Mingly/docs/realtime-protocol.md)
+- [Concurrency, Thread Safety & Backpressure](file:///d:/git/Mingly/docs/concurrency.md)
+- [ADR-004: Redis for Ephemeral State and Inter-Node Fan-Out](file:///d:/git/Mingly/docs/adr/README.md#adr-004-redis-for-ephemeral-state-and-inter-node-fan-out)

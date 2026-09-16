@@ -1,8 +1,8 @@
-﻿# Backend Architecture & Implementation Plan — Loft
+# Backend Architecture & Implementation Plan — Mingly
 
 ## 1. Backend Core Principles
 
-The Loft backend is implemented as an idiomatic, modular monolith in Go.
+The Mingly backend is implemented as an idiomatic, modular monolith in Go.
 - **Language Level:** Go 1.22+ (using standard library packages `net/http`, `context`, `sync`, `slog`).
 - **HTTP Routing:** `github.com/go-chi/chi/v5` for lightweight, idiomatic HTTP routing and middleware composition.
 - **PostgreSQL Client:** `github.com/jackc/pgx/v5/pgxpool` for high-performance connection pooling and native binary protocol encoding.

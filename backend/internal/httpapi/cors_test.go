@@ -22,9 +22,10 @@ func TestCORSAllowsConfiguredMinglyOriginsOnly(t *testing.T) {
 		wantStatus      int
 		wantAllowOrigin string
 		wantNextCalled  bool
+		requestMethod   string
 	}{
-		{name: "apex preflight", origin: "https://mingly.site", method: http.MethodOptions, wantStatus: http.StatusNoContent, wantAllowOrigin: "https://mingly.site"},
-		{name: "www preflight", origin: "https://www.mingly.site", method: http.MethodOptions, wantStatus: http.StatusNoContent, wantAllowOrigin: "https://www.mingly.site"},
+		{name: "apex patch preflight", origin: "https://mingly.site", method: http.MethodOptions, requestMethod: http.MethodPatch, wantStatus: http.StatusNoContent, wantAllowOrigin: "https://mingly.site"},
+		{name: "www patch preflight", origin: "https://www.mingly.site", method: http.MethodOptions, requestMethod: http.MethodPatch, wantStatus: http.StatusNoContent, wantAllowOrigin: "https://www.mingly.site"},
 		{name: "localhost request", origin: "http://localhost:3000", method: http.MethodGet, wantStatus: http.StatusOK, wantAllowOrigin: "http://localhost:3000", wantNextCalled: true},
 		{name: "unknown preflight", origin: "https://evil.example", method: http.MethodOptions, wantStatus: http.StatusForbidden},
 		{name: "similar hostname", origin: "https://evilmingly.site", method: http.MethodOptions, wantStatus: http.StatusForbidden},
@@ -41,7 +42,11 @@ func TestCORSAllowsConfiguredMinglyOriginsOnly(t *testing.T) {
 			req := httptest.NewRequest(test.method, "/api/v1/users/me", nil)
 			req.Header.Set("Origin", test.origin)
 			if test.method == http.MethodOptions {
-				req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+				requestMethod := test.requestMethod
+				if requestMethod == "" {
+					requestMethod = http.MethodGet
+				}
+				req.Header.Set("Access-Control-Request-Method", requestMethod)
 				req.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type")
 			}
 			response := httptest.NewRecorder()
@@ -51,6 +56,11 @@ func TestCORSAllowsConfiguredMinglyOriginsOnly(t *testing.T) {
 			}
 			if got := response.Header().Get("Access-Control-Allow-Origin"); got != test.wantAllowOrigin {
 				t.Fatalf("allow-origin = %q, want %q", got, test.wantAllowOrigin)
+			}
+			if test.requestMethod == http.MethodPatch {
+				if got := response.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, PATCH, DELETE, OPTIONS" {
+					t.Fatalf("allow-methods = %q, want PATCH allowlist", got)
+				}
 			}
 			if called != test.wantNextCalled {
 				t.Fatalf("next called = %v, want %v", called, test.wantNextCalled)

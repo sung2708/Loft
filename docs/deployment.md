@@ -1,138 +1,90 @@
-﻿# Deployment, Infrastructure & Packaging — Loft
+# Mingly deployment
 
-## 1. Deployment Philosophy: Keep It Simple & Production-Grade
+Production uses a Vercel frontend, a Go service, Supabase PostgreSQL/Auth, optional Redis coordination, and LiveKit media.
 
-We avoid premature Kubernetes or service-mesh complexity. Loft is packaged for clean, reliable deployment across containerized environments (Fly.io, Render, Railway, AWS ECS, or simple Docker hosts).
+## Production origins
 
-```
-   [User Browser]
-         │
-         ├── HTTPS ──► [Static Frontend CDN (Vercel / Cloudflare Pages)]
-         │
-         ├── WSS/HTTPS ──► [Reverse Proxy (Caddy / Cloudflare / Nginx)]
-         │                        │
-         │                        ▼
-         │                 [Go Backend Monolith (Docker Container)]
-         │                        │
-         │                 +------+------+
-         │                 │             │
-         │                 ▼             ▼
-         │           [PostgreSQL]     [Redis]
-         │           (Supabase)       (Upstash/Managed)
-         │
-         └── WebRTC ──► [LiveKit Cloud / Self-Hosted SFU]
-```
+| Service | Canonical value |
+| --- | --- |
+| Frontend | `https://mingly.site` |
+| Optional frontend alias | `https://www.mingly.site` |
+| Legacy frontend | `loft-amber.vercel.app` redirects through `vercel.json` |
 
----
+Preview deployments must keep their generated Vercel origin. Do not hard-code `mingly.site` into components.
 
-## 2. Environment Configuration Matrix
+## Backend environment
 
-All configuration is parsed from environment variables at startup:
+| Variable | Required | Default / purpose |
+| --- | :---: | --- |
+| `DATABASE_URL` | Yes | Trusted PostgreSQL connection |
+| `SUPABASE_URL` | Yes | JWT issuer/JWKS project URL |
+| `GUEST_TOKEN_SECRET` | Yes | At least 32 characters |
+| `HTTP_ADDR` | No | `:8080` |
+| `FRONTEND_ORIGINS` | No | `http://localhost:3000`; comma-separated exact CORS/WS origins |
+| `SUPABASE_JWT_SECRET` | Legacy only | HS256 projects; asymmetric projects use JWKS |
+| `SUPABASE_JWT_AUDIENCE` | No | `authenticated` |
+| `REDIS_URL` | Multi-node | Pub/Sub, leases, and distributed rate limits |
+| `INSTANCE_ID` | Multi-node | Stable node identifier |
+| `LIVEKIT_URL` | For calls | LiveKit WebSocket endpoint |
+| `LIVEKIT_API_KEY` | For calls | Server-side key |
+| `LIVEKIT_API_SECRET` | For calls | Server-side secret |
 
-| Variable | Description | Required | Example |
-| :--- | :--- | :---: | :--- |
-| `HTTP_ADDR` | HTTP/WS bind address | No | `:8080` |
-| `DATABASE_URL` | PostgreSQL connection string | Yes | `postgres://postgres:pass@db.supabase.co:5432/postgres` |
-| `REDIS_URL` | Redis connection URL (optional in single-node dev) | No | `redis://default:pass@redis.domain.com:6379` |
-| `SUPABASE_URL` | Supabase project URL | Yes | `https://xyzproject.supabase.co` |
-| `SUPABASE_JWT_SECRET` | Optional legacy HS256 secret; asymmetric projects use Supabase JWKS | No | `super-secret-jwt-key` |
-| `GUEST_TOKEN_SECRET` | Secret key for signing room-scoped guest tokens | Yes | `32-byte-cryptographic-random-secret` |
-| `LIVEKIT_URL` | LiveKit server WebRTC endpoint | No for chat-only local mode; required for media | `wss://loft.livekit.cloud` |
-| `LIVEKIT_API_KEY` | LiveKit server API key | Required for media | `APIKeyABC123` |
-| `LIVEKIT_API_SECRET` | LiveKit server API secret (Never sent to client) | Required for media | `SecretKeyXYZ789` |
-| `FRONTEND_ORIGINS` | Strict CORS and WebSocket origin allowlist | No | `https://mingly.site,https://www.mingly.site` |
-| `INSTANCE_ID` | Stable per-node ID for Redis origin guards | No | `loft-prod-1` |
-| `NEXT_PUBLIC_SITE_URL` | Public frontend origin used for canonical and social link metadata | Yes for production previews | `https://mingly.site` |
-
-The legacy Vercel hostname `loft-amber.vercel.app` is redirected at the Vercel
-edge to `https://mingly.site` with a permanent redirect. The redirect matches
-that exact host only, preserves the request path and query string, and does not
-affect Vercel preview hosts or local development.
-
-For the production Render service, set the backend environment variable to:
+Render production CORS:
 
 ```text
 FRONTEND_ORIGINS=https://mingly.site,https://www.mingly.site
 ```
 
-Restart or redeploy the Render service after changing this value.
+Redeploy the backend after changing environment variables.
 
-### Social link previews
+## Frontend environment
 
-Facebook Messenger and other crawlers read the server-rendered HTML and must be
-able to reach the public HTTPS frontend from outside the user's browser. A
-`localhost`, LAN-only, development tunnel, authentication-gated, or invalid
-TLS URL cannot produce a preview. Set `NEXT_PUBLIC_SITE_URL` and
-`NEXT_PUBLIC_API_URL` to public production origins before building the
-frontend; the invite route (`/join/<six-digit-code>`) generates its Open Graph
-metadata on the server.
+| Variable | Required | Purpose |
+| --- | :---: | --- |
+| `NEXT_PUBLIC_API_URL` | Production | Public Go API origin |
+| `NEXT_PUBLIC_SITE_URL` | Production | Canonical metadata and share origin |
+| `NEXT_PUBLIC_SUPABASE_URL` | For sign-in | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | For sign-in | Public anon key |
+| `NEXT_PUBLIC_LIVEKIT_URL` | For calls | Public LiveKit URL |
 
----
+Set frontend variables before the Vercel build; `NEXT_PUBLIC_*` values are embedded into the client bundle.
 
-## 3. Production Multi-Stage Dockerfile for Go
+## Database migrations
 
-The backend compiles into a minimal, scratch/distroless container with non-root security permissions:
+Apply in order:
 
-```dockerfile
-# Build Stage
-FROM golang:1.26-alpine AS builder
-WORKDIR /app
-RUN apk add --no-cache ca-certificates git
+1. `000001_mvp.up.sql`
+2. `000002_governance.up.sql`
+3. `000003_short_room_codes.up.sql`
+4. `000004_room_access.up.sql`
+5. `000005_temporary_room_bans.up.sql`
+6. `000006_room_appearance.up.sql`
 
-COPY go.mod go.sum ./
-RUN go mod download
+Do not edit applied migration files. Use a new numbered migration for schema changes.
 
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /app/bin/server ./cmd/server
+## Release verification
 
-# Final Stage (Minimal Security Profile)
-FROM gcr.io/distroless/static-debian12:nonroot
-WORKDIR /
-COPY --from=builder /app/bin/server /server
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+```powershell
+cd frontend
+pnpm lint
+pnpm exec tsc --noEmit
+pnpm test
+pnpm build
 
-USER nonroot:nonroot
-EXPOSE 8080
-ENTRYPOINT ["/server"]
+cd ../backend
+go vet ./...
+go test ./...
+go test -race ./...
+go build ./...
 ```
 
----
+After deployment:
 
-## 4. Local Development via Docker Compose
+- `GET /health` returns 200.
+- `GET /ready` returns 200.
+- Frontend API requests use the production backend and pass CORS preflight for GET, POST, PATCH, and DELETE.
+- Google callback returns to `https://mingly.site/auth/callback`.
+- Create, join, password admission, room settings, LiveKit token issuance, WebSocket reconnect, and invite metadata work.
+- `/metrics` is reachable only through trusted monitoring infrastructure.
 
-A developer can launch the complete local stack with a single command:
-
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: loft-postgres
-    environment:
-      POSTGRES_USER: loft
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: loft
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    container_name: loft-redis
-    ports:
-      - "6379:6379"
-
-  livekit:
-    image: livekit/livekit-server:latest
-    container_name: loft-livekit
-    command: --dev
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "7882:7882/udp"
-
-volumes:
-  pgdata:
-```
+There is currently no committed Dockerfile or Docker Compose stack. Do not advertise a one-command container setup until those artifacts exist.

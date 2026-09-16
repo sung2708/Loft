@@ -34,6 +34,7 @@ Use this skill whenever modifying Next.js 16 components, React 19 hooks, Zustand
 - Strictly typed discriminated unions for all events (`ServerEvent` in `types/api.ts`). Zero `any` usage.
 - Separate local self-preview mirroring (`transform: scaleX(-1)`) from published video tracks.
 - Always clean up event listeners, timers, and `requestAnimationFrame` loops in `useEffect` cleanup returns.
+- Enforce UI/UX Copywriting & Anti-AI Slop Rules: functional task-oriented copy only (no marketing fluff, 1–3 word action labels, no backend protocol terms exposed).
 
 ## FAILURE CASES
 - **Connection Interruption**: Transition to `RECONNECTING`, apply exponential backoff with jitter (`reconnectDelay`), show subtle status indicator, and recover via `room.snapshot`.
@@ -47,6 +48,7 @@ Use this skill whenever modifying Next.js 16 components, React 19 hooks, Zustand
 - DO NOT grant user permissions optimistically on the client without server confirmation.
 - DO NOT remount `<LiveKitRoom>` or the stage grid when toggling camera filters.
 - DO NOT use `any` or untyped JSON objects.
+- DO NOT generate promotional slogans, emotional badge adjectives ("TỨC THÌ", "CỰC NHANH"), or auto-generated title subheadings (strict Anti-AI Slop).
 
 ## DONE WHEN
 - Components render without flicker or duplicate-mount bugs.

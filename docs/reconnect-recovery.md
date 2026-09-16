@@ -1,6 +1,6 @@
-# Reconnect & Snapshot Recovery Architecture — Loft
+# Reconnect & Snapshot Recovery Architecture — Mingly
 
-This document specifies the client connection lifecycle, exponential backoff strategy, and authoritative snapshot state recovery for Loft.
+This document specifies the client connection lifecycle, exponential backoff strategy, and authoritative snapshot state recovery for Mingly.
 
 ---
 

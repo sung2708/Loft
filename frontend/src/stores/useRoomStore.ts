@@ -23,6 +23,7 @@ interface RoomStoreState {
   participantLeft: (connectionId: string) => void;
   roomLocked: (locked: boolean, version: number) => void;
   roomAppearanceUpdated: (appearance: RoomAppearance) => void;
+  roomUpdated: (room: ApiRoom) => void;
   hostChanged: (host: HostAuthority) => void;
   handChanged: (connectionId: string, raised: boolean, socialVersion: number) => void;
   setGovernanceError: (error: string | null) => void;
@@ -83,6 +84,11 @@ export const useRoomStore = create<RoomStoreState>((set, _get, api) => {
     set((state) => state.room && appearance.version > state.room.version
       ? { room: { ...state.room, ...appearance }, governanceError: null }
       : state),
+  roomUpdated: (updated) =>
+    set((state) => ({
+      room: state.room ? { ...state.room, ...updated } : updated,
+      governanceError: null,
+    })),
   hostChanged: (host) =>
     set((state) => {
       if (state.host && host.version < state.host.version) return state;
