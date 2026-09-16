@@ -229,7 +229,7 @@ export default function HomePage() {
 
               <label className="create-room-modal__text flex items-center justify-between p-4 rounded-[6px] bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] text-[11px]">
                 <span>{locale === "vi" ? "Yêu cầu mật khẩu" : "Require password"}</span>
-                <input className="h-5 w-5 cursor-pointer appearance-none rounded-[4px] border-2 border-[#101113] bg-white checked:border-[#101113] checked:bg-[#101113] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] dark:border-[#f4f5f7] dark:bg-transparent dark:checked:border-[#f4f5f7] dark:checked:bg-[#f4f5f7]" type="checkbox" checked={passwordEnabled} onChange={(e) => setPasswordEnabled(e.target.checked)} />
+                <input className="h-5 w-5 cursor-pointer rounded-[4px] accent-[#101113] outline outline-1 outline-[#101113] outline-offset-1 focus-visible:outline-2 focus-visible:outline-[var(--accent-blue)] dark:accent-[#f4f5f7] dark:outline-[#f4f5f7]" type="checkbox" checked={passwordEnabled} onChange={(e) => setPasswordEnabled(e.target.checked)} />
               </label>
               {passwordEnabled && <input type="password" minLength={4} value={password} onChange={(e) => setPassword(e.target.value)} placeholder={locale === "vi" ? "Mật khẩu (ít nhất 4 ký tự)" : "Password (at least 4 characters)"} required className="w-full h-11 px-4 rounded-[6px] bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] text-[11px] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]" />}
 
