@@ -47,14 +47,14 @@ function Switch({
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:ring-offset-2 focus:ring-offset-[var(--bg-loft-card)] disabled:opacity-40 disabled:cursor-not-allowed ${
-        checked ? "bg-[#101113]" : "bg-[#26282c]/40 dark:bg-[#26282c]/60"
+      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:ring-offset-2 focus:ring-offset-[var(--bg-loft-card)] disabled:opacity-40 disabled:cursor-not-allowed ${
+        checked ? "border-[#101113] bg-[#101113] dark:border-[#f4f5f7] dark:bg-[#f4f5f7]" : "border-[#101113] bg-[#d1d5db] dark:border-[#f4f5f7] dark:bg-[#4a4d52]"
       }`}
     >
       <span
         aria-hidden="true"
-        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
-          checked ? "translate-x-5" : "translate-x-0"
+        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full shadow-md ring-0 transition duration-200 ease-in-out ${
+          checked ? "translate-x-5 bg-white dark:bg-[#101113]" : "translate-x-0 bg-[#101113] dark:bg-[#f4f5f7]"
         }`}
       />
     </button>

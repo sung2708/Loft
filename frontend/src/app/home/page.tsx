@@ -210,9 +210,10 @@ export default function HomePage() {
                   type="button"
                   role="switch"
                   aria-checked={allowGuests}
+                  aria-label={t.createModal.allowGuests}
                   onClick={() => setAllowGuests(!allowGuests)}
-                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-[var(--border-loft)] transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:ring-offset-2 focus:ring-offset-[var(--bg-loft-card)] ${
-                    allowGuests ? "bg-[var(--accent-blue)]" : "bg-[var(--bg-loft-surface)]"
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:ring-offset-2 focus:ring-offset-[var(--bg-loft-card)] ${
+                    allowGuests ? "border-[#101113] bg-[#101113] dark:border-[#f4f5f7] dark:bg-[#f4f5f7]" : "border-[#101113] bg-[#d1d5db] dark:border-[#f4f5f7] dark:bg-[#4a4d52]"
                   }`}
                 >
                   <span
@@ -228,7 +229,7 @@ export default function HomePage() {
 
               <label className="create-room-modal__text flex items-center justify-between p-4 rounded-[6px] bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] text-[11px]">
                 <span>{locale === "vi" ? "Yêu cầu mật khẩu" : "Require password"}</span>
-                <input className="accent-[var(--accent-blue)]" type="checkbox" checked={passwordEnabled} onChange={(e) => setPasswordEnabled(e.target.checked)} />
+                <input className="h-5 w-5 cursor-pointer appearance-none rounded-[4px] border-2 border-[#101113] bg-white checked:border-[#101113] checked:bg-[#101113] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] dark:border-[#f4f5f7] dark:bg-transparent dark:checked:border-[#f4f5f7] dark:checked:bg-[#f4f5f7]" type="checkbox" checked={passwordEnabled} onChange={(e) => setPasswordEnabled(e.target.checked)} />
               </label>
               {passwordEnabled && <input type="password" minLength={4} value={password} onChange={(e) => setPassword(e.target.value)} placeholder={locale === "vi" ? "Mật khẩu (ít nhất 4 ký tự)" : "Password (at least 4 characters)"} required className="w-full h-11 px-4 rounded-[6px] bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] text-[11px] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]" />}
 
