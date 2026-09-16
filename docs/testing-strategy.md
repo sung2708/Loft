@@ -87,3 +87,10 @@ pnpm test:e2e
 pnpm lint
 pnpm exec tsc --noEmit
 ```
+
+## 5. SPEC 005 degradation and accessibility gates
+
+- Verify every room atmosphere in Light, Dark, and System without changing the persisted personal theme.
+- With reduced motion, data saver, or a constrained device signal, disable adaptive palette work and retain a static semantic treatment.
+- Screen share suppresses decorative prominence; camera, effects, participant identity, reactions, drawers, and Call Dock retain their established ownership and layout.
+- Test 1440, 1280, 1024, 768, 430, and 375 pixel widths for horizontal overflow and control overlap. Physical-device results must be recorded as `NOT VERIFIED` until actually executed.

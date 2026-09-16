@@ -23,6 +23,18 @@ import (
 
 type realtimeStore struct{ room domain.Room }
 
+func (s *realtimeStore) UpdateRoomAppearanceByHost(_ context.Context, roomID string, expectedVersion int64, update domain.RoomAppearanceUpdate) (domain.Room, error) {
+	if s.room.ID != roomID || s.room.Version != expectedVersion {
+		return domain.Room{}, domain.ErrConflict
+	}
+	if !update.Atmosphere.Valid() || !update.Accent.Valid() {
+		return domain.Room{}, domain.ErrInvalidRoomAppearance
+	}
+	s.room.Atmosphere, s.room.Accent, s.room.AdaptiveMediaBackground = update.Atmosphere, update.Accent, update.AdaptiveMediaBackground
+	s.room.Version++
+	return s.room, nil
+}
+
 type governedRealtimeStore struct {
 	realtimeStore
 	mu   sync.Mutex
@@ -107,6 +119,20 @@ func TestConcurrentRoomAdmission(t *testing.T) {
 		if admitted.Load() != want {
 			t.Fatalf("duplicate=%v admitted=%d want=%d", duplicate, admitted.Load(), want)
 		}
+	}
+}
+
+func TestRemoteAppearanceAppliesOnlyNewerValidState(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), Version: 3, Atmosphere: domain.AtmosphereAmbient, Accent: domain.AccentBlue}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hub.rooms[room.ID] = &roomState{room: room, clients: map[string]*client{}}
+	hub.DeliverRemote(room.ID, event("room.appearance.updated", room.ID, roomAppearanceUpdatedPayload{domain.AtmosphereParty, domain.AccentRose, false, 4}))
+	if got := hub.rooms[room.ID].room; got.Version != 4 || got.Atmosphere != domain.AtmosphereParty || got.Accent != domain.AccentRose {
+		t.Fatalf("new appearance not applied: %+v", got)
+	}
+	hub.DeliverRemote(room.ID, event("room.appearance.updated", room.ID, roomAppearanceUpdatedPayload{domain.RoomAtmosphere("<style>"), domain.AccentGreen, true, 5}))
+	if got := hub.rooms[room.ID].room; got.Version != 4 {
+		t.Fatalf("invalid appearance applied: %+v", got)
 	}
 }
 
@@ -782,5 +808,306 @@ func TestSlowConsumerDoesNotBlockBroadcast(t *testing.T) {
 	case <-fast.send:
 	default:
 		t.Fatal("healthy client did not receive broadcast")
+	}
+}
+
+func TestRoomAppearanceRealtimeWorkflow(t *testing.T) {
+	ownerID := uuid.NewString()
+	memberID := uuid.NewString()
+	room := domain.Room{ID: uuid.NewString(), OwnerID: ownerID, AllowGuests: true, MaxParticipants: 4, Version: 0}
+	room = domain.NormalizeRoomAppearance(room)
+	store := &realtimeStore{room: room}
+	secret := "12345678901234567890123456789012"
+	guests := auth.NewGuestTokens(secret, time.Hour)
+	users := auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret)
+
+	guestToken, _, _, err := guests.Issue(room.ID, "Guest Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": ownerID, "iss": "https://test.supabase.co/auth/v1", "aud": "authenticated", "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": memberID, "iss": "https://test.supabase.co/auth/v1", "aud": "authenticated", "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hub := New(store, guests, users, []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hub.SetDisconnectGracePeriod(50 * time.Millisecond)
+	server := httptest.NewServer(hub)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	dial := func(token string) (*websocket.Conn, Envelope) {
+		t.Helper()
+		conn, _, dialErr := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), &websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{"http://localhost:3000"}}})
+		if dialErr != nil {
+			t.Fatal(dialErr)
+		}
+		payload, _ := json.Marshal(authPayload{Token: token, RoomID: room.ID, TabSessionID: uuid.NewString()})
+		if writeErr := wsjson.Write(ctx, conn, Envelope{Type: "connection.auth", Version: 1, RoomID: room.ID, Payload: payload}); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		var snapshot Envelope
+		if readErr := wsjson.Read(ctx, conn, &snapshot); readErr != nil {
+			t.Fatal(readErr)
+		}
+		return conn, snapshot
+	}
+
+	hostConn, hostSnap := dial(hostToken)
+	defer hostConn.CloseNow()
+
+	guestConn, guestSnap := dial(guestToken)
+	defer guestConn.CloseNow()
+
+	// 1. Verify snapshot appearance
+	var snapPayload struct {
+		Room domain.Room `json:"room"`
+	}
+	if err := json.Unmarshal(hostSnap.Payload, &snapPayload); err != nil {
+		t.Fatalf("unmarshaling snapshot: %v", err)
+	}
+	if snapPayload.Room.Atmosphere != domain.AtmosphereAmbient || snapPayload.Room.Accent != domain.AccentBlue || !snapPayload.Room.AdaptiveMediaBackground {
+		t.Fatalf("unexpected snapshot appearance: %+v", snapPayload.Room)
+	}
+
+	var guestSnapPayload struct {
+		Room domain.Room `json:"room"`
+	}
+	if err := json.Unmarshal(guestSnap.Payload, &guestSnapPayload); err != nil {
+		t.Fatalf("unmarshaling guest snapshot: %v", err)
+	}
+	if guestSnapPayload.Room.Atmosphere != domain.AtmosphereAmbient || guestSnapPayload.Room.Accent != domain.AccentBlue || !guestSnapPayload.Room.AdaptiveMediaBackground {
+		t.Fatalf("unexpected guest snapshot appearance: %+v", guestSnapPayload.Room)
+	}
+
+	// Drain participant.joined on hostConn
+	var eventEnv Envelope
+	if err := wsjson.Read(ctx, hostConn, &eventEnv); err != nil || eventEnv.Type != "participant.joined" {
+		t.Fatalf("expected participant.joined on host: %s, err: %v", eventEnv.Type, err)
+	}
+
+	// 2. Guest attempts appearance update -> must be rejected
+	guestCmd, _ := json.Marshal(roomAppearanceUpdatePayload{
+		Atmosphere:              domain.AtmosphereParty,
+		Accent:                  domain.AccentRose,
+		AdaptiveMediaBackground: false,
+		ExpectedVersion:         0,
+	})
+	if err := wsjson.Write(ctx, guestConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: guestCmd}); err != nil {
+		t.Fatal(err)
+	}
+	var guestErr Envelope
+	if err := wsjson.Read(ctx, guestConn, &guestErr); err != nil || guestErr.Type != "error" {
+		t.Fatalf("expected error for guest update, got: %s %v", guestErr.Type, err)
+	}
+	var errPayload errorPayload
+	if err := json.Unmarshal(guestErr.Payload, &errPayload); err != nil || errPayload.Code != "ROOM_COMMAND_REJECTED" {
+		t.Fatalf("expected ROOM_COMMAND_REJECTED for guest, got: %+v", errPayload)
+	}
+
+	// 3. Host sends invalid JSON payload structure -> INVALID_PAYLOAD
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: json.RawMessage(`"not-an-object"`)}); err != nil {
+		t.Fatal(err)
+	}
+	var invalidJsonErr Envelope
+	if err := wsjson.Read(ctx, hostConn, &invalidJsonErr); err != nil || invalidJsonErr.Type != "error" {
+		t.Fatalf("expected error for invalid JSON, got: %s", invalidJsonErr.Type)
+	}
+	if err := json.Unmarshal(invalidJsonErr.Payload, &errPayload); err != nil || errPayload.Code != "INVALID_PAYLOAD" {
+		t.Fatalf("expected INVALID_PAYLOAD, got: %+v", errPayload)
+	}
+
+	// 4. Host sends invalid atmosphere/accent -> INVALID_ROOM_APPEARANCE
+	badAtmoCmd, _ := json.Marshal(map[string]any{
+		"atmosphere":                "<style>",
+		"accent":                    "blue",
+		"adaptive_media_background": true,
+		"expected_version":          0,
+	})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: badAtmoCmd}); err != nil {
+		t.Fatal(err)
+	}
+	var badAtmoErr Envelope
+	if err := wsjson.Read(ctx, hostConn, &badAtmoErr); err != nil || badAtmoErr.Type != "error" {
+		t.Fatalf("expected error for bad atmosphere, got: %s", badAtmoErr.Type)
+	}
+	if err := json.Unmarshal(badAtmoErr.Payload, &errPayload); err != nil || errPayload.Code != "INVALID_ROOM_APPEARANCE" {
+		t.Fatalf("expected INVALID_ROOM_APPEARANCE, got: %+v", errPayload)
+	}
+
+	badAccentCmd, _ := json.Marshal(map[string]any{
+		"atmosphere":                "ambient",
+		"accent":                    "#FF0000",
+		"adaptive_media_background": true,
+		"expected_version":          0,
+	})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: badAccentCmd}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, hostConn, &badAtmoErr); err != nil || badAtmoErr.Type != "error" {
+		t.Fatalf("expected error for bad accent, got: %s", badAtmoErr.Type)
+	}
+	if err := json.Unmarshal(badAtmoErr.Payload, &errPayload); err != nil || errPayload.Code != "INVALID_ROOM_APPEARANCE" {
+		t.Fatalf("expected INVALID_ROOM_APPEARANCE, got: %+v", errPayload)
+	}
+
+	// 5. Host sends stale expected_version -> ROOM_VERSION_CONFLICT
+	staleCmd, _ := json.Marshal(roomAppearanceUpdatePayload{
+		Atmosphere:              domain.AtmosphereParty,
+		Accent:                  domain.AccentRose,
+		AdaptiveMediaBackground: false,
+		ExpectedVersion:         99,
+	})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: staleCmd}); err != nil {
+		t.Fatal(err)
+	}
+	var staleErr Envelope
+	if err := wsjson.Read(ctx, hostConn, &staleErr); err != nil || staleErr.Type != "error" {
+		t.Fatalf("expected error for stale version, got: %s", staleErr.Type)
+	}
+	if err := json.Unmarshal(staleErr.Payload, &errPayload); err != nil || errPayload.Code != "ROOM_VERSION_CONFLICT" {
+		t.Fatalf("expected ROOM_VERSION_CONFLICT, got: %+v", errPayload)
+	}
+
+	// 6. Host sends valid update -> success event broadcast to host and guest
+	validCmd, _ := json.Marshal(roomAppearanceUpdatePayload{
+		Atmosphere:              domain.AtmosphereParty,
+		Accent:                  domain.AccentRose,
+		AdaptiveMediaBackground: false,
+		ExpectedVersion:         0,
+	})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: validCmd}); err != nil {
+		t.Fatal(err)
+	}
+
+	var hostUpdated Envelope
+	if err := wsjson.Read(ctx, hostConn, &hostUpdated); err != nil || hostUpdated.Type != "room.appearance.updated" {
+		t.Fatalf("expected room.appearance.updated on host, got: %s %v", hostUpdated.Type, err)
+	}
+	var guestUpdated Envelope
+	if err := wsjson.Read(ctx, guestConn, &guestUpdated); err != nil || guestUpdated.Type != "room.appearance.updated" {
+		t.Fatalf("expected room.appearance.updated on guest, got: %s %v", guestUpdated.Type, err)
+	}
+
+	var updatedPayload roomAppearanceUpdatedPayload
+	if err := json.Unmarshal(hostUpdated.Payload, &updatedPayload); err != nil {
+		t.Fatalf("unmarshaling updated payload: %v", err)
+	}
+	if updatedPayload.Atmosphere != domain.AtmosphereParty || updatedPayload.Accent != domain.AccentRose || updatedPayload.AdaptiveMediaBackground || updatedPayload.Version != 1 {
+		t.Fatalf("unexpected updated payload: %+v", updatedPayload)
+	}
+
+	// 7. Test all 4 atmospheres and 5 accents
+	atmospheres := []domain.RoomAtmosphere{domain.AtmosphereMinimal, domain.AtmosphereAmbient, domain.AtmosphereFocus, domain.AtmosphereParty}
+	accents := []domain.RoomAccent{domain.AccentBlue, domain.AccentPurple, domain.AccentGreen, domain.AccentOrange, domain.AccentRose}
+
+	currentVersion := int64(1)
+	for i, atmo := range atmospheres {
+		acc := accents[i%len(accents)]
+		cmd, _ := json.Marshal(roomAppearanceUpdatePayload{
+			Atmosphere:              atmo,
+			Accent:                  acc,
+			AdaptiveMediaBackground: true,
+			ExpectedVersion:         currentVersion,
+		})
+		if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: cmd}); err != nil {
+			t.Fatal(err)
+		}
+		if err := wsjson.Read(ctx, hostConn, &hostUpdated); err != nil || hostUpdated.Type != "room.appearance.updated" {
+			t.Fatalf("expected room.appearance.updated for atmo=%s acc=%s, got: %s", atmo, acc, hostUpdated.Type)
+		}
+		_ = wsjson.Read(ctx, guestConn, &guestUpdated)
+		currentVersion++
+	}
+
+	// 8. Host transfer test
+	memberConn, memberSnap := dial(memberToken)
+	defer memberConn.CloseNow()
+	_ = wsjson.Read(ctx, hostConn, &eventEnv) // drain participant.joined
+	_ = wsjson.Read(ctx, guestConn, &eventEnv)
+
+	var memberSnapPayload struct {
+		Self domain.Participant `json:"self"`
+	}
+	_ = json.Unmarshal(memberSnap.Payload, &memberSnapPayload)
+
+	// Transfer host to member
+	transferCmd, _ := json.Marshal(transferHostPayload{TargetConnectionID: memberSnapPayload.Self.ConnectionID})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "host.transfer", Version: 1, RoomID: room.ID, Payload: transferCmd}); err != nil {
+		t.Fatal(err)
+	}
+	// Drain host.changed
+	_ = wsjson.Read(ctx, hostConn, &eventEnv)
+	_ = wsjson.Read(ctx, guestConn, &eventEnv)
+	_ = wsjson.Read(ctx, memberConn, &eventEnv)
+
+	// Former host attempts appearance update -> must be rejected
+	formerHostCmd, _ := json.Marshal(roomAppearanceUpdatePayload{
+		Atmosphere:              domain.AtmosphereMinimal,
+		Accent:                  domain.AccentBlue,
+		AdaptiveMediaBackground: true,
+		ExpectedVersion:         currentVersion,
+	})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: formerHostCmd}); err != nil {
+		t.Fatal(err)
+	}
+	var formerHostErr Envelope
+	if err := wsjson.Read(ctx, hostConn, &formerHostErr); err != nil || formerHostErr.Type != "error" {
+		t.Fatalf("expected error for former host, got: %s", formerHostErr.Type)
+	}
+
+	// New host updates appearance -> succeeds!
+	newHostCmd, _ := json.Marshal(roomAppearanceUpdatePayload{
+		Atmosphere:              domain.AtmosphereFocus,
+		Accent:                  domain.AccentGreen,
+		AdaptiveMediaBackground: true,
+		ExpectedVersion:         currentVersion,
+	})
+	if err := wsjson.Write(ctx, memberConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: newHostCmd}); err != nil {
+		t.Fatal(err)
+	}
+	var newHostUpdated Envelope
+	if err := wsjson.Read(ctx, memberConn, &newHostUpdated); err != nil || newHostUpdated.Type != "room.appearance.updated" {
+		t.Fatalf("expected success for new host, got: %s", newHostUpdated.Type)
+	}
+}
+
+func TestConcurrentRoomAppearanceMutationsRace(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), Version: 1, Atmosphere: domain.AtmosphereAmbient, Accent: domain.AccentBlue}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hub.rooms[room.ID] = &roomState{room: room, clients: map[string]*client{}}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(v int64) {
+			defer wg.Done()
+			hub.DeliverRemote(room.ID, event("room.appearance.updated", room.ID, roomAppearanceUpdatedPayload{
+				Atmosphere:              domain.AtmosphereParty,
+				Accent:                  domain.AccentRose,
+				AdaptiveMediaBackground: true,
+				Version:                 v,
+			}))
+			_ = hub.roomSnapshot(room.ID, room)
+		}(int64(i + 2))
+	}
+	wg.Wait()
+
+	hub.mu.RLock()
+	finalVersion := hub.rooms[room.ID].room.Version
+	hub.mu.RUnlock()
+
+	if finalVersion < 2 {
+		t.Fatalf("expected version to advance, got %d", finalVersion)
 	}
 }

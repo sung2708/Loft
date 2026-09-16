@@ -40,6 +40,8 @@ import { ParticipantMenu, type ParticipantAction } from "@/components/room/Parti
 import { SocialActions } from "@/components/room/SocialActions";
 import { VideoEffectsPanel } from "@/components/room/VideoEffectsPanel";
 import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
+import { RoomAtmosphere } from "./RoomAtmosphere";
+import type { RoomAccent, RoomAtmosphere as RoomAtmosphereMode } from "@/types/api";
 
 export function RoomView() {
   const drawer = useUIStore((state) => state.activeDrawer);
@@ -82,25 +84,27 @@ function Stage() {
     return () => clearInterval(timer);
   }, [reactions.length]);
   return (
-    <div className="relative w-full h-full">
-      {media.mediaConnected ? <MediaStage /> : <EmptyStage />}
-      {media.mediaError && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-[#FF9500]/15 border border-[#FF9500]/30 text-[#FF9500] text-xs z-50 flex items-center gap-2 max-w-[90vw] text-center shadow-lg backdrop-blur-md">
-          <span>{media.mediaError.replace(/\.+$/, "")}. {tr("Chat remains available.")}</span>
-          <button
-            type="button"
-            onClick={() => media.clearMediaError?.()}
-            className="ml-1 text-[#FF9500] hover:text-white transition-colors p-0.5 rounded-full hover:bg-white/10"
-            aria-label={tr("Close")}
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+    <RoomAtmosphere screenShare={media.screenEnabled}>
+      <div className="relative w-full h-full">
+        {media.mediaConnected ? <MediaStage /> : <EmptyStage />}
+        {media.mediaError && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-[#FF9500]/15 border border-[#FF9500]/30 text-[#FF9500] text-xs z-50 flex items-center gap-2 max-w-[90vw] text-center shadow-lg backdrop-blur-md">
+            <span>{media.mediaError.replace(/\.+$/, "")}. {tr("Chat remains available.")}</span>
+            <button
+              type="button"
+              onClick={() => media.clearMediaError?.()}
+              className="ml-1 text-[#FF9500] hover:text-white transition-colors p-0.5 rounded-full hover:bg-white/10"
+              aria-label={tr("Close")}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+        <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 max-w-[90%] overflow-hidden">
+          {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0.12 : 0.22 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-lg" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-xs font-semibold">×{reaction.count}</span>}</motion.div>)}
         </div>
-      )}
-      <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 max-w-[90%] overflow-hidden">
-        {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0.12 : 0.22 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-lg" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-xs font-semibold">×{reaction.count}</span>}</motion.div>)}
       </div>
-    </div>
+    </RoomAtmosphere>
   );
 }
 
@@ -135,6 +139,7 @@ function RoomHeader() {
   const tr = useUIText();
   const room = useRoomStore((state) => state.room);
   const self = useRoomStore((state) => state.self);
+  const session = useRoomSession();
   const count = useRoomStore((state) => state.participants.length);
   const { theme, setTheme } = useUIStore();
   const soundEffectsEnabled = useSfxStore((state) => state.soundEffectsEnabled);
@@ -143,9 +148,15 @@ function RoomHeader() {
   const setSoundEffectsEnabled = useSfxStore((state) => state.setSoundEffectsEnabled);
   const setRoomSoundsEnabled = useSfxStore((state) => state.setRoomSoundsEnabled);
   const setSfxVolume = useSfxStore((state) => state.setVolume);
+  const governanceError = useRoomStore((state) => state.governanceError);
   const [copied, setCopied] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const appearanceRef = useRef<HTMLDivElement>(null);
+  const appearancePending =
+    pendingVersion !== null &&
+    room?.version === pendingVersion &&
+    !governanceError;
   useEffect(() => {
     if (!appearanceOpen) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -251,6 +262,79 @@ function RoomHeader() {
                 </button>
               ))}
               <div className="my-1 border-t border-[var(--border-loft)]" />
+              {self?.role === "host" && room && (
+                <>
+                  <div className="px-2 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-loft-muted)]">
+                    {tr("Room atmosphere")}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 p-1">
+                    {(["minimal", "ambient", "focus", "party"] as RoomAtmosphereMode[]).map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={(room.atmosphere ?? "ambient") === option}
+                        disabled={appearancePending}
+                        onClick={() => {
+                          if (appearancePending) return;
+                          setPendingVersion(room.version);
+                          session.sendCommand("room.appearance.update", {
+                            atmosphere: option,
+                            accent: room.accent ?? "blue",
+                            adaptive_media_background: room.adaptive_media_background ?? true,
+                            expected_version: room.version,
+                          });
+                        }}
+                        className="rounded-lg px-2 py-1.5 text-left text-xs capitalize hover:bg-[var(--border-loft-light)] disabled:opacity-50"
+                      >
+                        {tr(option.charAt(0).toUpperCase() + option.slice(1))}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-1 px-2 py-1" aria-label={tr("Room accent")}>
+                    {(["blue", "purple", "green", "orange", "rose"] as RoomAccent[]).map((accent) => (
+                      <button
+                        key={accent}
+                        type="button"
+                        disabled={appearancePending}
+                        onClick={() => {
+                          if (appearancePending) return;
+                          setPendingVersion(room.version);
+                          session.sendCommand("room.appearance.update", {
+                            atmosphere: room.atmosphere ?? "ambient",
+                            accent,
+                            adaptive_media_background: room.adaptive_media_background ?? true,
+                            expected_version: room.version,
+                          });
+                        }}
+                        aria-label={tr(accent.charAt(0).toUpperCase() + accent.slice(1))}
+                        aria-pressed={(room.accent ?? "blue") === accent}
+                        className="room-accent-choice h-5 w-5 rounded-full border-2 border-transparent aria-pressed:border-[var(--text-loft-primary)] disabled:opacity-50"
+                        data-accent={accent}
+                      />
+                    ))}
+                  </div>
+                  <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs">
+                    {tr("Adapt to shared media")}
+                    <input
+                      type="checkbox"
+                      disabled={appearancePending}
+                      checked={room.adaptive_media_background ?? true}
+                      onChange={(event) => {
+                        if (appearancePending) return;
+                        setPendingVersion(room.version);
+                        session.sendCommand("room.appearance.update", {
+                          atmosphere: room.atmosphere ?? "ambient",
+                          accent: room.accent ?? "blue",
+                          adaptive_media_background: event.target.checked,
+                          expected_version: room.version,
+                        });
+                      }}
+                    />
+                  </label>
+                  <div className="my-1 border-t border-[var(--border-loft)]" />
+                </>
+              )}
               <label className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-xs">
                 {tr("Sound effects")}
                 <input type="checkbox" checked={soundEffectsEnabled} onChange={(event) => setSoundEffectsEnabled(event.target.checked)} />

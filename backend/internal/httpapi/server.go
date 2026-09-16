@@ -49,17 +49,21 @@ type mediaAdmissionGuard interface {
 type metricsProvider interface{ PrometheusMetrics() string }
 
 type roomPreview struct {
-	ID               string `json:"id"`
-	Slug             string `json:"slug"`
-	Name             string `json:"name"`
-	AllowGuests      bool   `json:"allow_guests"`
-	MaxParticipants  int    `json:"max_participants"`
-	IsLocked         bool   `json:"is_locked"`
-	PasswordRequired bool   `json:"password_required"`
+	ID                      string                `json:"id"`
+	Slug                    string                `json:"slug"`
+	Name                    string                `json:"name"`
+	AllowGuests             bool                  `json:"allow_guests"`
+	MaxParticipants         int                   `json:"max_participants"`
+	IsLocked                bool                  `json:"is_locked"`
+	PasswordRequired        bool                  `json:"password_required"`
+	Atmosphere              domain.RoomAtmosphere `json:"atmosphere"`
+	Accent                  domain.RoomAccent     `json:"accent"`
+	AdaptiveMediaBackground bool                  `json:"adaptive_media_background"`
 }
 
 func preview(room domain.Room) roomPreview {
-	return roomPreview{ID: room.ID, Slug: room.Slug, Name: room.Name, AllowGuests: room.AllowGuests, MaxParticipants: room.MaxParticipants, IsLocked: room.IsLocked, PasswordRequired: room.PasswordRequired}
+	room = domain.NormalizeRoomAppearance(room)
+	return roomPreview{ID: room.ID, Slug: room.Slug, Name: room.Name, AllowGuests: room.AllowGuests, MaxParticipants: room.MaxParticipants, IsLocked: room.IsLocked, PasswordRequired: room.PasswordRequired, Atmosphere: room.Atmosphere, Accent: room.Accent, AdaptiveMediaBackground: room.AdaptiveMediaBackground}
 }
 
 func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTokens, livekitService *livekit.TokenService, origins []string, logger *slog.Logger, deletion ...RoomDeletionGuard) *Server {

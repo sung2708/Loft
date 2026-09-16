@@ -99,4 +99,20 @@ export interface TranslationDictionary {
     roomSounds: string;
     effectsVolume: string;
   };
+  roomAtmosphere?: {
+    atmosphere: string;
+    accent: string;
+    adaptMedia: string;
+    minimal: string;
+    ambient: string;
+    focus: string;
+    party: string;
+    blue: string;
+    purple: string;
+    green: string;
+    orange: string;
+    rose: string;
+    invalidAppearance: string;
+    updateFailed: string;
+  };
 }

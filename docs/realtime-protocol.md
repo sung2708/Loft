@@ -224,6 +224,21 @@ Domain Hierarchy:
 - `connection.ping` / `connection.pong` provide heartbeat and clock calibration. When Redis is configured, the server refreshes the participant's 15-second presence/admission lease after a ping.
 - On reconnect, a successful `connection.auth` returns a fresh `room.snapshot` containing the room, participants, and media anchor. The client replaces its local state from this snapshot rather than replaying missed events.
 
+### Room Appearance
+
+#### `room.appearance.update`
+- **Direction**: Client → Server
+- **Authorization**: Current realtime host only.
+- **Payload**: `{ "atmosphere": "ambient", "accent": "orange", "adaptive_media_background": true, "expected_version": 7 }`
+- **Validation**: Atmosphere and accent are closed server-side allowlists. No CSS, URL, artwork, media frame, or personal theme value is accepted.
+- **Server Action**: Persist the full setting with the existing room version fence outside realtime locks, then publish the committed result.
+
+#### `room.appearance.updated`
+- **Direction**: Server → Client (Broadcast)
+- **Payload**: `{ "atmosphere": "ambient", "accent": "orange", "adaptive_media_background": true, "version": 8 }`
+- **Recovery**: Full appearance is included in `room.snapshot`; clients ignore stale versions.
+- **Redis**: Relays this small semantic payload with existing origin filtering and never stores artwork or durable appearance truth.
+
 ---
 
 ## 3. Strict Protocol Non-Goals

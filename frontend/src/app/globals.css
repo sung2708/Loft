@@ -234,3 +234,17 @@ textarea:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+/* Room atmosphere is scoped below the personal light/dark theme. */
+.room-atmosphere { --room-accent-rgb: 0 102 204; --room-media-primary: var(--room-accent-rgb); --room-media-secondary: var(--room-accent-rgb); isolation: isolate; }
+.room-atmosphere[data-accent="purple"], .room-accent-choice[data-accent="purple"] { --room-accent-rgb: 124 92 191; }
+.room-atmosphere[data-accent="green"], .room-accent-choice[data-accent="green"] { --room-accent-rgb: 46 139 87; }
+.room-atmosphere[data-accent="orange"], .room-accent-choice[data-accent="orange"] { --room-accent-rgb: 196 105 36; }
+.room-atmosphere[data-accent="rose"], .room-accent-choice[data-accent="rose"] { --room-accent-rgb: 190 74 105; }
+.room-accent-choice { background: rgb(var(--room-accent-rgb, 0 102 204)); }
+.room-atmosphere__backdrop { z-index: -1; background: radial-gradient(ellipse at 50% 20%, rgb(var(--room-media-primary) / .18), transparent 62%); transition: opacity 300ms cubic-bezier(.16,1,.3,1), background-color 300ms cubic-bezier(.16,1,.3,1); }
+.room-atmosphere[data-atmosphere="minimal"] .room-atmosphere__backdrop { opacity: .12; }
+.room-atmosphere[data-atmosphere="ambient"] .room-atmosphere__backdrop { opacity: .55; }
+.room-atmosphere[data-atmosphere="focus"] .room-atmosphere__backdrop { opacity: .18; }
+.room-atmosphere[data-atmosphere="party"] .room-atmosphere__backdrop { opacity: .72; background: radial-gradient(ellipse at 20% 15%, rgb(var(--room-media-primary) / .24), transparent 55%), radial-gradient(ellipse at 80% 75%, rgb(var(--room-media-secondary) / .18), transparent 58%); }
+.room-atmosphere[data-screen-share="true"] .room-atmosphere__backdrop { opacity: .08; }
+@media (prefers-reduced-motion: reduce) { .room-atmosphere__backdrop { transition-duration: 120ms; } }

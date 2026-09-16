@@ -71,6 +71,7 @@ interface SessionValue {
       | "wave.send"
       | "participant.hand.set"
       | "room.lock"
+      | "room.appearance.update"
       | "participant.kick"
       | "participant.ban"
       | "host.transfer",
@@ -185,6 +186,8 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         }
         else if (event.type === "room.locked")
           useRoomStore.getState().roomLocked(event.payload.locked, event.payload.version);
+        else if (event.type === "room.appearance.updated")
+          useRoomStore.getState().roomAppearanceUpdated(event.payload);
         else if (event.type === "chat.message")
           useChatStore
             .getState()
@@ -243,7 +246,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
   const sendCommand: SessionValue["sendCommand"] = useCallback((type, payload) => {
     const sent = socketRef.current?.send(type, payload) ?? false;
     if (!sent) {
-      if (type === "room.lock" || type === "participant.kick" || type === "participant.ban" || type === "host.transfer") {
+      if (type === "room.lock" || type === "room.appearance.update" || type === "participant.kick" || type === "participant.ban" || type === "host.transfer") {
         useRoomStore.getState().setGovernanceError(currentText("Still reconnecting. Try again shortly."));
       } else if (type !== "reaction.send" && type !== "wave.send" && type !== "participant.hand.set") {
         useMusicStore.getState().setError(currentText("Still reconnecting. Try again shortly."));

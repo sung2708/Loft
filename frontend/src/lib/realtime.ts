@@ -187,6 +187,7 @@ export class RoomSocket {
       | "wave.send"
       | "participant.hand.set"
       | "room.lock"
+      | "room.appearance.update"
       | "participant.kick"
       | "participant.ban"
       | "host.transfer",

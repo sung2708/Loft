@@ -140,3 +140,7 @@ same-tab reconnect preserves it; stale sockets cannot overwrite a newer generati
 grace expiry, kick, temporary ban, and room teardown clear it. Snapshots recover current hands,
 while reactions and room-level Waves remain ephemeral. LiveKit remains authoritative for speaking,
 microphone, camera, and screen share.
+
+## 8. Durable Room Appearance
+
+Room atmosphere (`minimal`, `ambient`, `focus`, `party`), its controlled accent, and the adaptive-media toggle are durable room settings in PostgreSQL. The current realtime host may mutate them through the centralized host authority check and the existing room version fence. Go commits the full value before publishing `room.appearance.updated`; Redis only relays that bounded semantic event between instances. Every fresh `room.snapshot` contains the current value, so late join and reconnect replace stale client presentation without event replay. Personal light/dark/system state and `loft.theme` remain participant-local and independent.

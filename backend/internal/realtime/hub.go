@@ -80,6 +80,18 @@ type roomLockPayload struct {
 	Locked          bool  `json:"locked"`
 	ExpectedVersion int64 `json:"expected_version"`
 }
+type roomAppearanceUpdatePayload struct {
+	Atmosphere              domain.RoomAtmosphere `json:"atmosphere"`
+	Accent                  domain.RoomAccent     `json:"accent"`
+	AdaptiveMediaBackground bool                  `json:"adaptive_media_background"`
+	ExpectedVersion         int64                 `json:"expected_version"`
+}
+type roomAppearanceUpdatedPayload struct {
+	Atmosphere              domain.RoomAtmosphere `json:"atmosphere"`
+	Accent                  domain.RoomAccent     `json:"accent"`
+	AdaptiveMediaBackground bool                  `json:"adaptive_media_background"`
+	Version                 int64                 `json:"version"`
+}
 type kickPayload struct {
 	ConnectionID string `json:"connection_id"`
 }
@@ -605,6 +617,18 @@ func (h *Hub) DeliverRemote(roomID string, data []byte) {
 			}
 			h.mu.Unlock()
 		}
+	} else if json.Unmarshal(data, &envelope) == nil && envelope.Type == "room.appearance.updated" {
+		var incoming roomAppearanceUpdatedPayload
+		if json.Unmarshal(envelope.Payload, &incoming) == nil && incoming.Atmosphere.Valid() && incoming.Accent.Valid() {
+			h.mu.Lock()
+			if state := h.rooms[roomID]; state != nil && incoming.Version > state.room.Version {
+				state.room.Atmosphere = incoming.Atmosphere
+				state.room.Accent = incoming.Accent
+				state.room.AdaptiveMediaBackground = incoming.AdaptiveMediaBackground
+				state.room.Version = incoming.Version
+			}
+			h.mu.Unlock()
+		}
 	} else if json.Unmarshal(data, &envelope) == nil && envelope.Type == "media.state" {
 		var incoming mediaState
 		if json.Unmarshal(envelope.Payload, &incoming) == nil {
@@ -983,6 +1007,47 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			}
 			h.mu.Unlock()
 			h.broadcast(c.roomID, event("room.locked", c.roomID, roomLockedPayload{updated.IsLocked, c.identity.ID, updated.Version}), "")
+		case "room.appearance.update":
+			var payload roomAppearanceUpdatePayload
+			if json.Unmarshal(envelope.Payload, &payload) != nil {
+				h.sendError(c, "INVALID_PAYLOAD", "invalid appearance payload")
+				continue
+			}
+			if payload.ExpectedVersion < 0 || !payload.Atmosphere.Valid() || !payload.Accent.Valid() {
+				h.sendError(c, "INVALID_ROOM_APPEARANCE", "Invalid room appearance")
+				continue
+			}
+			h.mu.RLock()
+			allowed := currentHostLocked(h.rooms[c.roomID], c) && domain.CanUpdateRoomAppearance(h.rooms[c.roomID].host, c.identity)
+			h.mu.RUnlock()
+			if !allowed {
+				h.sendError(c, "ROOM_COMMAND_REJECTED", "room permission denied")
+				continue
+			}
+			appearanceStore, ok := h.store.(domain.RoomAppearanceStore)
+			if !ok {
+				h.sendError(c, "ROOM_COMMAND_REJECTED", "room appearance unavailable")
+				continue
+			}
+			updated, err := appearanceStore.UpdateRoomAppearanceByHost(ctx, c.roomID, payload.ExpectedVersion, domain.RoomAppearanceUpdate{Atmosphere: payload.Atmosphere, Accent: payload.Accent, AdaptiveMediaBackground: payload.AdaptiveMediaBackground})
+			if err != nil {
+				code, message := "INTERNAL_ERROR", "room appearance update failed"
+				if errors.Is(err, domain.ErrConflict) {
+					code, message = "ROOM_VERSION_CONFLICT", "room state changed; retry"
+				} else if errors.Is(err, domain.ErrInvalidRoomAppearance) {
+					code, message = "INVALID_ROOM_APPEARANCE", "invalid appearance parameters"
+				}
+				h.logger.Warn("room appearance rejected", "room_id", c.roomID, "connection_id", c.id, "expected_version", payload.ExpectedVersion, "error", err)
+				h.sendError(c, code, message)
+				continue
+			}
+			updated = domain.NormalizeRoomAppearance(updated)
+			h.mu.Lock()
+			if state := h.rooms[c.roomID]; state != nil && updated.Version > state.room.Version {
+				state.room = updated
+			}
+			h.mu.Unlock()
+			h.broadcast(c.roomID, event("room.appearance.updated", c.roomID, roomAppearanceUpdatedPayload{updated.Atmosphere, updated.Accent, updated.AdaptiveMediaBackground, updated.Version}), "")
 		case "host.transfer":
 			var payload transferHostPayload
 			if json.Unmarshal(envelope.Payload, &payload) != nil || payload.TargetConnectionID == "" {

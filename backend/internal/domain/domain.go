@@ -12,12 +12,13 @@ import (
 const MaxMessageLength = 2000
 
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrUnauthorized = errors.New("unauthorized")
-	ErrInvalidName  = errors.New("invalid display name")
-	ErrInvalidChat  = errors.New("invalid chat message")
-	ErrConflict     = errors.New("conflict")
-	ErrBanned       = errors.New("banned")
+	ErrNotFound              = errors.New("not found")
+	ErrUnauthorized          = errors.New("unauthorized")
+	ErrInvalidName           = errors.New("invalid display name")
+	ErrInvalidChat           = errors.New("invalid chat message")
+	ErrConflict              = errors.New("conflict")
+	ErrBanned                = errors.New("banned")
+	ErrInvalidRoomAppearance = errors.New("invalid room appearance")
 )
 
 type IdentityType string
@@ -38,17 +39,76 @@ type Identity struct {
 func (i Identity) LiveKitIdentity() string { return string(i.Type) + ":" + i.ID }
 
 type Room struct {
-	ID               string    `json:"id"`
-	Slug             string    `json:"slug"`
-	Name             string    `json:"name"`
-	OwnerID          string    `json:"owner_id"`
-	AllowGuests      bool      `json:"allow_guests"`
-	MaxParticipants  int       `json:"max_participants"`
-	IsLocked         bool      `json:"is_locked"`
-	Version          int64     `json:"version"`
-	PasswordRequired bool      `json:"password_required"`
-	PasswordVerifier string    `json:"-"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                      string         `json:"id"`
+	Slug                    string         `json:"slug"`
+	Name                    string         `json:"name"`
+	OwnerID                 string         `json:"owner_id"`
+	AllowGuests             bool           `json:"allow_guests"`
+	MaxParticipants         int            `json:"max_participants"`
+	IsLocked                bool           `json:"is_locked"`
+	Version                 int64          `json:"version"`
+	PasswordRequired        bool           `json:"password_required"`
+	PasswordVerifier        string         `json:"-"`
+	Atmosphere              RoomAtmosphere `json:"atmosphere"`
+	Accent                  RoomAccent     `json:"accent"`
+	AdaptiveMediaBackground bool           `json:"adaptive_media_background"`
+	CreatedAt               time.Time      `json:"created_at"`
+}
+
+type RoomAtmosphere string
+
+const (
+	AtmosphereMinimal RoomAtmosphere = "minimal"
+	AtmosphereAmbient RoomAtmosphere = "ambient"
+	AtmosphereFocus   RoomAtmosphere = "focus"
+	AtmosphereParty   RoomAtmosphere = "party"
+)
+
+type RoomAccent string
+
+const (
+	AccentBlue   RoomAccent = "blue"
+	AccentPurple RoomAccent = "purple"
+	AccentGreen  RoomAccent = "green"
+	AccentOrange RoomAccent = "orange"
+	AccentRose   RoomAccent = "rose"
+)
+
+type RoomAppearanceUpdate struct {
+	Atmosphere              RoomAtmosphere
+	Accent                  RoomAccent
+	AdaptiveMediaBackground bool
+}
+
+func (a RoomAtmosphere) Valid() bool {
+	switch a {
+	case AtmosphereMinimal, AtmosphereAmbient, AtmosphereFocus, AtmosphereParty:
+		return true
+	}
+	return false
+}
+
+func (a RoomAccent) Valid() bool {
+	switch a {
+	case AccentBlue, AccentPurple, AccentGreen, AccentOrange, AccentRose:
+		return true
+	}
+	return false
+}
+
+func NormalizeRoomAppearance(room Room) Room {
+	if !room.Atmosphere.Valid() {
+		room.Atmosphere = AtmosphereAmbient
+		room.AdaptiveMediaBackground = true
+	}
+	if !room.Accent.Valid() {
+		room.Accent = AccentBlue
+	}
+	return room
+}
+
+func CanUpdateRoomAppearance(current HostAuthority, actor Identity) bool {
+	return CanModerateHost(current, actor)
 }
 
 type RoomAccessUpdate struct {
@@ -75,6 +135,10 @@ type HostGovernanceStore interface {
 	SetRoomLockedByHost(context.Context, string, int64, bool) (Room, error)
 	BanIdentityByHost(context.Context, string, Identity) error
 	BanIdentityForHost(context.Context, string, Identity, time.Time) error
+}
+
+type RoomAppearanceStore interface {
+	UpdateRoomAppearanceByHost(context.Context, string, int64, RoomAppearanceUpdate) (Room, error)
 }
 
 type RoomAccessStore interface {
@@ -232,7 +296,8 @@ func CanTransferHost(current HostAuthority, actor Identity, target Participant) 
 
 func CanModerateHost(current HostAuthority, actor Identity) bool {
 	return current.ConnectionID != "" && current.IdentityID == actor.ID &&
-		current.IdentityType == actor.Type && CanBeRealtimeHost(actor)
+		current.IdentityType == actor.Type && CanBeRealtimeHost(actor) &&
+		current.State != "failed-over"
 }
 
 func CanKickParticipant(current HostAuthority, actor Identity, target Participant) bool {

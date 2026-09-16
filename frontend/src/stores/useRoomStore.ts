@@ -7,6 +7,7 @@ import type {
   ConnectionState,
   HostAuthority,
   RoomSnapshot,
+  RoomAppearance,
 } from "@/types/api";
 
 interface RoomStoreState {
@@ -21,6 +22,7 @@ interface RoomStoreState {
   participantJoined: (participant: ApiParticipant) => void;
   participantLeft: (connectionId: string) => void;
   roomLocked: (locked: boolean, version: number) => void;
+  roomAppearanceUpdated: (appearance: RoomAppearance) => void;
   hostChanged: (host: HostAuthority) => void;
   handChanged: (connectionId: string, raised: boolean, socialVersion: number) => void;
   setGovernanceError: (error: string | null) => void;
@@ -38,12 +40,14 @@ const initial = {
   governanceError: null,
 };
 
-export const useRoomStore = create<RoomStoreState>((set) => ({
+export const useRoomStore = create<RoomStoreState>((set, _get, api) => {
+  api.getInitialState = () => api.getState();
+  return {
   ...initial,
   applySnapshot: (snapshot) =>
     set({
       room: snapshot.room,
-      self: normalizeParticipant(snapshot.self),
+      self: snapshot.self ? normalizeParticipant(snapshot.self) : null,
       host: snapshot.host ?? null,
       participants: snapshot.participants.map(normalizeParticipant),
       connectionState: "CONNECTED",
@@ -74,6 +78,10 @@ export const useRoomStore = create<RoomStoreState>((set) => ({
   roomLocked: (locked, version) =>
     set((state) => state.room && version > state.room.version
       ? { room: { ...state.room, is_locked: locked, version }, governanceError: null }
+      : state),
+  roomAppearanceUpdated: (appearance) =>
+    set((state) => state.room && appearance.version > state.room.version
+      ? { room: { ...state.room, ...appearance }, governanceError: null }
       : state),
   hostChanged: (host) =>
     set((state) => {
@@ -106,7 +114,8 @@ export const useRoomStore = create<RoomStoreState>((set) => ({
   setConnectionState: (connectionState, connectionError = null) =>
     set({ connectionState, connectionError }),
   reset: () => set(initial),
-}));
+  };
+});
 
 function normalizeParticipant(participant: ApiParticipant): ApiParticipant {
   return {

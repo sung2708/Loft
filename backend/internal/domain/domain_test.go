@@ -143,3 +143,94 @@ func TestSocialValidationAndHandAuthority(t *testing.T) {
 		t.Fatal("another identity could control participant hand")
 	}
 }
+
+func NewTestAppearance() RoomAppearanceUpdate {
+	return RoomAppearanceUpdate{
+		Atmosphere:              AtmosphereAmbient,
+		Accent:                  AccentBlue,
+		AdaptiveMediaBackground: true,
+	}
+}
+
+func NewTestRoom() Room {
+	return NormalizeRoomAppearance(Room{
+		ID:          "test-room-1",
+		Name:        "Test Room",
+		AllowGuests: true,
+	})
+}
+
+func TestRoomAppearanceValidationAndDefaults(t *testing.T) {
+	room := NormalizeRoomAppearance(Room{})
+	if room.Atmosphere != AtmosphereAmbient || room.Accent != AccentBlue || !room.AdaptiveMediaBackground {
+		t.Fatalf("unexpected defaults: atmosphere=%q accent=%q adaptive=%v", room.Atmosphere, room.Accent, room.AdaptiveMediaBackground)
+	}
+
+	fixture := NewTestAppearance()
+	if fixture.Atmosphere != AtmosphereAmbient || fixture.Accent != AccentBlue || !fixture.AdaptiveMediaBackground {
+		t.Fatalf("unexpected fixture defaults: %+v", fixture)
+	}
+
+	testRoom := NewTestRoom()
+	if testRoom.Atmosphere != AtmosphereAmbient || testRoom.Accent != AccentBlue || !testRoom.AdaptiveMediaBackground {
+		t.Fatalf("unexpected test room defaults: %+v", testRoom)
+	}
+
+	validAtmospheres := []RoomAtmosphere{AtmosphereMinimal, AtmosphereAmbient, AtmosphereFocus, AtmosphereParty}
+	for _, atmosphere := range validAtmospheres {
+		if !atmosphere.Valid() {
+			t.Fatalf("expected valid atmosphere %q", atmosphere)
+		}
+	}
+
+	invalidAtmospheres := []string{"", "random", "<style>", "body { color: red; }", "url(http://evil.com)", "minimal; drop table"}
+	for _, raw := range invalidAtmospheres {
+		if RoomAtmosphere(raw).Valid() {
+			t.Fatalf("expected invalid atmosphere for %q", raw)
+		}
+	}
+
+	validAccents := []RoomAccent{AccentBlue, AccentPurple, AccentGreen, AccentOrange, AccentRose}
+	for _, accent := range validAccents {
+		if !accent.Valid() {
+			t.Fatalf("expected valid accent %q", accent)
+		}
+	}
+
+	invalidAccents := []string{"", "red", "#FF0000", "#123456", "rgb(0,0,0)", "hsl(0,0%,0%)", "<script>", "url(https://evil.test)"}
+	for _, raw := range invalidAccents {
+		if RoomAccent(raw).Valid() {
+			t.Fatalf("expected invalid accent for %q", raw)
+		}
+	}
+}
+
+func TestCanUpdateRoomAppearance(t *testing.T) {
+	currentHost := HostAuthority{ConnectionID: "conn-host", IdentityID: "host-user-id", IdentityType: IdentityUser, State: "connected"}
+	hostIdentity := Identity{ID: "host-user-id", Type: IdentityUser}
+	participantIdentity := Identity{ID: "participant-user-id", Type: IdentityUser}
+	guestIdentity := Identity{ID: "guest-id", Type: IdentityGuest}
+
+	if !CanUpdateRoomAppearance(currentHost, hostIdentity) {
+		t.Fatal("current host was denied appearance update")
+	}
+	if CanUpdateRoomAppearance(currentHost, participantIdentity) {
+		t.Fatal("participant was allowed appearance update")
+	}
+	if CanUpdateRoomAppearance(currentHost, guestIdentity) {
+		t.Fatal("guest was allowed appearance update")
+	}
+
+	failedOverHost := HostAuthority{ConnectionID: "conn-host", IdentityID: "host-user-id", IdentityType: IdentityUser, State: "failed-over"}
+	if CanUpdateRoomAppearance(failedOverHost, hostIdentity) {
+		t.Fatal("failed-over host was allowed appearance update")
+	}
+
+	newHost := HostAuthority{ConnectionID: "conn-new", IdentityID: "new-host-id", IdentityType: IdentityUser, State: "connected"}
+	if CanUpdateRoomAppearance(newHost, hostIdentity) {
+		t.Fatal("former host was allowed appearance update after transfer")
+	}
+	if !CanUpdateRoomAppearance(newHost, Identity{ID: "new-host-id", Type: IdentityUser}) {
+		t.Fatal("new host was denied appearance update after transfer")
+	}
+}

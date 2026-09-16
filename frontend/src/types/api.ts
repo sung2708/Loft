@@ -1,4 +1,13 @@
 export type IdentityType = "user" | "guest";
+export type RoomAtmosphere = "minimal" | "ambient" | "focus" | "party";
+export type RoomAccent = "blue" | "purple" | "green" | "orange" | "rose";
+
+export interface RoomAppearance {
+  atmosphere: RoomAtmosphere;
+  accent: RoomAccent;
+  adaptive_media_background: boolean;
+  version: number;
+}
 
 export interface ApiRoom {
   id: string;
@@ -9,6 +18,9 @@ export interface ApiRoom {
   max_participants: number;
   is_locked: boolean;
   password_required: boolean;
+  atmosphere: RoomAtmosphere;
+  accent: RoomAccent;
+  adaptive_media_background: boolean;
   version: number;
   created_at: string;
 }
@@ -129,6 +141,13 @@ export type ServerEvent =
       event_id: string;
       room_id: string;
       payload: { locked: boolean; locked_by: string; version: number };
+    }
+  | {
+      type: "room.appearance.updated";
+      version: 1;
+      event_id: string;
+      room_id: string;
+      payload: RoomAppearance;
     }
   | {
       type: "room.access_changed";

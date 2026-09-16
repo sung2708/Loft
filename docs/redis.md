@@ -100,3 +100,10 @@ If Redis becomes unreachable in a clustered production environment:
 - Presence leases carry current Raise Hand state; Redis never becomes durable social history.
 - During outage, cross-instance social delivery may degrade while same-node rooms and calls continue.
 - Recovery uses fresh current state and never replays expired reactions or Waves.
+
+## 7. SPEC 005 Room Appearance
+
+- PostgreSQL and the room version remain the durable source of truth for atmosphere, accent, and adaptive-media preference.
+- Redis relays only the bounded, full semantic `room.appearance.updated` event. It never carries CSS, arbitrary URLs, artwork, sampled palettes, media frames, or a participant's personal theme.
+- `origin_instance_id` filtering prevents loops. Receivers apply only a valid event with a newer room version, making duplicate and out-of-order delivery harmless.
+- Redis outage does not roll appearance back or block same-instance room operation. Reconnect and late join recover from the authoritative snapshot rather than replaying Redis history.

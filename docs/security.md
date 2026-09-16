@@ -115,3 +115,7 @@ Any logged attribute matching these keys is replaced with `"[REDACTED]"`.
   PostgreSQL and are checked again during WebSocket and LiveKit admission.
 - Stale connection generations and exact connection IDs are required for
   cleanup, so an old socket cannot remove or restore a newer session.
+
+## 9. Room Appearance privacy boundary
+
+The server accepts only closed semantic atmosphere and accent values plus a boolean adaptive preference. It rejects arbitrary CSS, colors, and URLs. Derived palettes stay in browser memory and are never uploaded, logged, persisted, included in snapshots, or relayed through Redis. Personal `light|dark|system` preference and the compatibility-sensitive `loft.theme` key remain client-owned.

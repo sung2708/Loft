@@ -206,3 +206,85 @@ func TestWebSocketRouteDoesNotInheritHTTPTimeout(t *testing.T) {
 		t.Fatalf("HTTP route returned %d", healthResult.Code)
 	}
 }
+
+func TestRoomAppearanceSerializationAndSafeDefaults(t *testing.T) {
+	legacyRoom := domain.Room{
+		ID:               "58bb9fe4-79bc-41c7-9d63-61c04815b668",
+		Slug:             "legacy-room",
+		Name:             "Legacy Room",
+		OwnerID:          "private-owner-id",
+		AllowGuests:      true,
+		MaxParticipants:  12,
+		PasswordRequired: false,
+		PasswordVerifier: "super-secret-verifier",
+	}
+
+	secret := "12345678901234567890123456789012"
+	store := &fakeStore{room: legacyRoom}
+	server := New(store, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rooms/resolve?value=legacy-room", nil)
+	rec := httptest.NewRecorder()
+	server.Routes(http.NotFoundHandler()).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	body := rec.Body.String()
+	// Must have safe semantic defaults
+	if !strings.Contains(body, `"atmosphere":"ambient"`) {
+		t.Fatalf("missing default atmosphere: %s", body)
+	}
+	if !strings.Contains(body, `"accent":"blue"`) {
+		t.Fatalf("missing default accent: %s", body)
+	}
+	if !strings.Contains(body, `"adaptive_media_background":true`) {
+		t.Fatalf("missing default adaptive_media_background: %s", body)
+	}
+
+	// Must never leak private or forbidden fields
+	forbidden := []string{
+		"super-secret-verifier",
+		"password_verifier",
+		"private-owner-id",
+		"palette",
+		"artwork",
+		"personal_theme",
+		"theme",
+		"style",
+		"css",
+		"background",
+	}
+	for _, term := range forbidden {
+		if strings.Contains(strings.ToLower(body), `"`+term+`"`) {
+			t.Fatalf("response leaked forbidden/styling field %q: %s", term, body)
+		}
+	}
+
+	// Configured appearance
+	configuredRoom := domain.Room{
+		ID:                      "58bb9fe4-79bc-41c7-9d63-61c04815b668",
+		Slug:                      "party-room",
+		Name:                    "Party Room",
+		Atmosphere:              domain.AtmosphereParty,
+		Accent:                  domain.AccentRose,
+		AdaptiveMediaBackground: false,
+	}
+	store.room = configuredRoom
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/rooms/resolve?value=party-room", nil)
+	rec = httptest.NewRecorder()
+	server.Routes(http.NotFoundHandler()).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	partyBody := rec.Body.String()
+	if !strings.Contains(partyBody, `"atmosphere":"party"`) ||
+		!strings.Contains(partyBody, `"accent":"rose"`) ||
+		!strings.Contains(partyBody, `"adaptive_media_background":false`) {
+		t.Fatalf("configured appearance not serialized correctly: %s", partyBody)
+	}
+}

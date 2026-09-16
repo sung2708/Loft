@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
@@ -375,14 +376,135 @@ func TestHeartbeatTimeoutDetection(t *testing.T) {
 	connA, _ := dialRealtimeClient(t, ctx, server.URL, tokenA, room.ID)
 	defer connA.CloseNow()
 
-	// Stop sending any pings/messages from client (simulating network freeze/crash)
-	// Server idle timeout (50ms) + grace period (50ms) = 100ms total
-	time.Sleep(150 * time.Millisecond)
+	// Stop sending messages and observe under the Hub lock. Scheduling under the
+	// race detector can exceed the nominal idle + grace duration.
+	deadline := time.Now().Add(time.Second)
+	for {
+		hub.mu.RLock()
+		clientCount := 0
+		if state := hub.rooms[room.ID]; state != nil {
+			clientCount = len(state.clients)
+		}
+		hub.mu.RUnlock()
+		if clientCount == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected stale client to be removed after idle + grace period, got %d", clientCount)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
-	hub.mu.RLock()
-	clients := hub.rooms[room.ID].clients
-	hub.mu.RUnlock()
-	if len(clients) != 0 {
-		t.Fatalf("expected stale client to be removed after idle + grace period, got %d", len(clients))
+func TestReconnectAndLateJoinReceiveCurrentAppearanceWithoutReplay(t *testing.T) {
+	ownerID := uuid.NewString()
+	room := domain.Room{ID: uuid.NewString(), OwnerID: ownerID, AllowGuests: true, MaxParticipants: 10, Version: 0}
+	room = domain.NormalizeRoomAppearance(room)
+	store := &realtimeStore{room: room}
+	secret := "12345678901234567890123456789012"
+	guests := auth.NewGuestTokens(secret, time.Hour)
+	users := auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret)
+
+	hostToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": ownerID, "iss": "https://test.supabase.co/auth/v1", "aud": "authenticated", "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tokenBob, _, _, _ := guests.Issue(room.ID, "Bob")
+	tokenCharlie, _, _, _ := guests.Issue(room.ID, "Charlie")
+
+	hub := New(store, guests, users, []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hub.SetDisconnectGracePeriod(50 * time.Millisecond)
+	server := httptest.NewServer(hub)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	hostConn, _ := dialRealtimeClient(t, ctx, server.URL, hostToken, room.ID)
+	defer hostConn.CloseNow()
+
+	bobConn, _ := dialRealtimeClient(t, ctx, server.URL, tokenBob, room.ID)
+
+	var eventEnv Envelope
+	// Host drains participant.joined for Bob
+	if err := wsjson.Read(ctx, hostConn, &eventEnv); err != nil || eventEnv.Type != "participant.joined" {
+		t.Fatalf("host expected participant.joined, got %v (%s)", err, eventEnv.Type)
+	}
+
+	// Host changes appearance to focus + orange
+	cmd1, _ := json.Marshal(roomAppearanceUpdatePayload{
+		Atmosphere:              domain.AtmosphereFocus,
+		Accent:                  domain.AccentOrange,
+		AdaptiveMediaBackground: true,
+		ExpectedVersion:         0,
+	})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: cmd1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, hostConn, &eventEnv); err != nil || eventEnv.Type != "room.appearance.updated" {
+		t.Fatalf("host expected room.appearance.updated, got %v (%s)", err, eventEnv.Type)
+	}
+	if err := wsjson.Read(ctx, bobConn, &eventEnv); err != nil || eventEnv.Type != "room.appearance.updated" {
+		t.Fatalf("bob expected room.appearance.updated, got %v (%s)", err, eventEnv.Type)
+	}
+
+	// Bob disconnects abruptly
+	_ = bobConn.CloseNow()
+	time.Sleep(80 * time.Millisecond) // Wait for grace period
+
+	// Host drains participant.left
+	if err := wsjson.Read(ctx, hostConn, &eventEnv); err != nil || eventEnv.Type != "participant.left" {
+		t.Fatalf("host expected participant.left, got %v (%s)", err, eventEnv.Type)
+	}
+
+	// While Bob is disconnected, Host changes appearance to party + rose
+	cmd2, _ := json.Marshal(roomAppearanceUpdatePayload{
+		Atmosphere:              domain.AtmosphereParty,
+		Accent:                  domain.AccentRose,
+		AdaptiveMediaBackground: false,
+		ExpectedVersion:         1,
+	})
+	if err := wsjson.Write(ctx, hostConn, Envelope{Type: "room.appearance.update", Version: 1, RoomID: room.ID, Payload: cmd2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, hostConn, &eventEnv); err != nil || eventEnv.Type != "room.appearance.updated" {
+		t.Fatalf("host expected room.appearance.updated for cmd2, got %v (%s)", err, eventEnv.Type)
+	}
+
+	// Bob reconnects with fresh connection
+	bobReconnected, bobSnap := dialRealtimeClient(t, ctx, server.URL, tokenBob, room.ID)
+	defer bobReconnected.CloseNow()
+
+	if bobSnap.Type != "room.snapshot" {
+		t.Fatalf("expected room.snapshot on reconnect, got: %s", bobSnap.Type)
+	}
+	var bobSnapData struct {
+		Room domain.Room `json:"room"`
+	}
+	if err := json.Unmarshal(bobSnap.Payload, &bobSnapData); err != nil {
+		t.Fatalf("unmarshaling bob snapshot: %v", err)
+	}
+	if bobSnapData.Room.Atmosphere != domain.AtmosphereParty || bobSnapData.Room.Accent != domain.AccentRose || bobSnapData.Room.AdaptiveMediaBackground || bobSnapData.Room.Version != 2 {
+		t.Fatalf("reconnecting client did not recover latest appearance: %+v", bobSnapData.Room)
+	}
+
+	// Late-joiner Charlie connects for the first time
+	charlieConn, charlieSnap := dialRealtimeClient(t, ctx, server.URL, tokenCharlie, room.ID)
+	defer charlieConn.CloseNow()
+
+	if charlieSnap.Type != "room.snapshot" {
+		t.Fatalf("expected room.snapshot for late joiner, got: %s", charlieSnap.Type)
+	}
+	var charlieSnapData struct {
+		Room domain.Room `json:"room"`
+	}
+	if err := json.Unmarshal(charlieSnap.Payload, &charlieSnapData); err != nil {
+		t.Fatalf("unmarshaling charlie snapshot: %v", err)
+	}
+	if charlieSnapData.Room.Atmosphere != domain.AtmosphereParty || charlieSnapData.Room.Accent != domain.AccentRose || charlieSnapData.Room.AdaptiveMediaBackground || charlieSnapData.Room.Version != 2 {
+		t.Fatalf("late-joining client did not receive current appearance: %+v", charlieSnapData.Room)
 	}
 }

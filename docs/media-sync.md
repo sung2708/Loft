@@ -150,3 +150,7 @@ When a client joins an active room or reconnects after an interruption:
 3. Client computes $P_{\text{predicted}}$ from the snapshot anchor.
 4. Client seeks directly to $P_{\text{predicted}}$ (Tier 3 Hard Seek) and initiates playback if `Status == "PLAYING"` and user gesture activation is present.
 5. The client continues local drift checks after the player becomes ready. Audible playback still depends on that browser's user-gesture/autoplay policy.
+
+## 7. Adaptive Room Treatment
+
+Room atmosphere may derive a subtle client-only palette from the active YouTube video's fixed `img.youtube.com` thumbnail. The derivation is one-shot, bounded, cached by validated video ID, cancellable, and never changes playback authority, volume, player identity, or synchronization state. Thumbnail, decode, CORS, or analysis failure returns the static semantic room treatment without affecting media.
