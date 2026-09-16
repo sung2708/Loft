@@ -4,7 +4,6 @@ services:
     runtime: docker
     rootDir: deploy/prometheus
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /-/healthy
     disk:
       name: prometheus-data
       mountPath: /prometheus

@@ -103,7 +103,7 @@ For a managed collector instead of a local Prometheus agent, Better Stack can sc
 
 ### Render deployment
 
-Create a new Render **Blueprint** and set its Blueprint File Path to `deploy/prometheus/render.yaml`. This creates the private `mingly-prometheus` service with a 1 GB persistent disk for the Prometheus write-ahead log. Set the three prompted secrets in Render:
+Create a new Render **Blueprint** and set its Blueprint File Path to `deploy/prometheus/render.yaml`. This creates the private `mingly-prometheus` service with a 1 GB persistent disk for the Prometheus write-ahead log. It is a private service, so Render does not attach an HTTP health-check path. Set the three prompted secrets in Render:
 
 ```env
 MINGLY_METRICS_TARGET=loft-ytxd.onrender.com
