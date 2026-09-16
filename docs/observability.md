@@ -101,6 +101,18 @@ Create a separate **Prometheus source** in Better Stack. Copy `deploy/prometheus
 
 For a managed collector instead of a local Prometheus agent, Better Stack can scrape the protected `/metrics` URL directly. Allow only the collector/scraper and require bearer authentication at the proxy if the endpoint is publicly reachable.
 
+### Render deployment
+
+Create a new Render **Blueprint** and set its Blueprint File Path to `deploy/prometheus/render.yaml`. This creates the private `mingly-prometheus` service with a 1 GB persistent disk for the Prometheus write-ahead log. Set the three prompted secrets in Render:
+
+```env
+MINGLY_METRICS_TARGET=loft-ytxd.onrender.com
+BETTER_STACK_INGESTING_HOST=<host displayed by the Better Stack Prometheus source>
+BETTER_STACK_METRICS_SOURCE_TOKEN=<source token displayed by Better Stack>
+```
+
+Keep `MINGLY_METRICS_SCHEME=https`. After the deploy is healthy, open the Better Stack source and wait for incoming samples; Prometheus scrapes every 15 seconds. `https://loft-ytxd.onrender.com/metrics` should return Prometheus text before deploying the collector.
+
 ---
 
 ## 5. Alerting Thresholds (Production Playbook)

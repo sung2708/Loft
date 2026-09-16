@@ -1,0 +1,22 @@
+services:
+  - type: pserv
+    name: mingly-prometheus
+    runtime: docker
+    rootDir: deploy/prometheus
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /-/healthy
+    disk:
+      name: prometheus-data
+      mountPath: /prometheus
+      sizeGB: 1
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: MINGLY_METRICS_TARGET
+        sync: false
+      - key: MINGLY_METRICS_SCHEME
+        value: https
+      - key: BETTER_STACK_INGESTING_HOST
+        sync: false
+      - key: BETTER_STACK_METRICS_SOURCE_TOKEN
+        sync: false
