@@ -5,25 +5,29 @@ import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { I18nProvider } from "@/components/providers/I18nProvider";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://mingly.site"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.mingly.site"),
   title: {
     default: "Mingly — Better when we’re together.",
     template: "%s · Mingly",
   },
   description: "A shared space to talk, watch, listen, and hang out with your people.",
   applicationName: "Mingly",
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     title: "Mingly — Better when we’re together.",
     description: "A shared space to talk, watch, listen, and hang out with your people.",
     siteName: "Mingly",
     type: "website",
-    images: [{ url: "/apple-icon.png", width: 180, height: 180, alt: "Mingly" }],
+    url: "/",
+    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "Mingly" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Mingly — Better when we’re together.",
     description: "A shared space to talk, watch, listen, and hang out with your people.",
-    images: ["/apple-icon.png"],
+    images: ["/opengraph-image"],
   },
 };
 
