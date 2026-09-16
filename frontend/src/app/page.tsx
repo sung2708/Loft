@@ -389,10 +389,10 @@ export default function LobbyPage() {
       <footer className="border-t border-[var(--border-loft)] px-4 py-4 sm:px-6">
         <nav aria-label="Thông tin pháp lý" className="mx-auto flex w-full max-w-[480px] items-center justify-center gap-4 text-[11px] text-[var(--text-loft-muted)]">
           <Link href="/privacy" className="transition-colors hover:text-[var(--text-loft-primary)]">
-            Quyền riêng tư
+            {locale === "vi" ? "Quyền riêng tư" : "Privacy"}
           </Link>
           <Link href="/terms" className="transition-colors hover:text-[var(--text-loft-primary)]">
-            Điều khoản
+            {locale === "vi" ? "Điều khoản" : "Terms"}
           </Link>
         </nav>
       </footer>

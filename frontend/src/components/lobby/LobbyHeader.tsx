@@ -7,6 +7,7 @@ import { useUIStore } from "@/stores/useUIStore";
 import { useAuth } from "@/lib/auth/useAuth";
 import { useTranslation } from "@/lib/i18n/useTranslation";
 import { AppHeader } from "@/components/layout/AppHeader";
+import { LocaleToggle } from "@/components/i18n/LocaleToggle";
 import {
   Sun,
   Moon,
@@ -28,7 +29,7 @@ export const LobbyHeader: React.FC = () => {
     signOut,
     signInWithGoogle,
   } = useAuth();
-  const { locale, t, toggleLocale } = useTranslation();
+  const { locale, t } = useTranslation();
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -113,16 +114,7 @@ export const LobbyHeader: React.FC = () => {
       }
       actions={
         <>
-          {/* Language Switcher Pill */}
-          <button
-            onClick={toggleLocale}
-            title={locale === "vi" ? "Chuyển sang tiếng Anh" : "Switch to Vietnamese"}
-            className="btn-press hover-invert h-8 px-3 rounded-[6px] flex items-center gap-1 text-[11px] font-medium text-[var(--text-loft-secondary)] hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] cursor-pointer transition-colors"
-          >
-            <span className={locale === "vi" ? "text-[var(--text-loft-primary)]" : ""}>VI</span>
-            <span className="text-[var(--text-loft-muted)] opacity-50">/</span>
-            <span className={locale === "en" ? "text-[var(--text-loft-primary)]" : ""}>EN</span>
-          </button>
+          <LocaleToggle />
 
           {/* Theme Toggle */}
           <button
