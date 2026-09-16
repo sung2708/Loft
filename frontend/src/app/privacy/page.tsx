@@ -5,6 +5,10 @@ export default function PrivacyPage() {
     <LegalPage
       title="Chính sách quyền riêng tư"
       summary="Chính sách này giải thích dữ liệu Mingly xử lý khi bạn đăng nhập, tạo hoặc tham gia phòng, trò chuyện và sử dụng các tính năng trong phòng."
+      languageHref="/privacy/en"
+      languageLabel="English"
+      backLabel="Về trang chính"
+      updatedLabel="Cập nhật lần cuối"
       sections={[
         {
           title: "Dữ liệu Google và mục đích sử dụng",

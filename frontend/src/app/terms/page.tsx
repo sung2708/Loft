@@ -5,6 +5,10 @@ export default function TermsPage() {
     <LegalPage
       title="Điều khoản sử dụng"
       summary="Các điều khoản này quy định cách sử dụng Mingly, một không gian để tạo phòng, trò chuyện và chia sẻ nội dung với những người bạn mời."
+      languageHref="/terms/en"
+      languageLabel="English"
+      backLabel="Về trang chính"
+      updatedLabel="Cập nhật lần cuối"
       sections={[
         {
           title: "Sử dụng dịch vụ",
