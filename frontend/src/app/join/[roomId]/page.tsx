@@ -21,6 +21,8 @@ export default function RoomJoinPage() {
   const roomId = String(params?.roomId || "");
 
   const [isJoiningGuest, setIsJoiningGuest] = useState(false);
+  const [isRequestingAccess, setIsRequestingAccess] = useState(false);
+  const [accessRequested, setAccessRequested] = useState(false);
   const [joinStep, setJoinStep] = useState<"idle" | "connecting" | "entering">(
     "idle",
   );
@@ -90,6 +92,25 @@ export default function RoomJoinPage() {
     if (hasSession) {
       const session = (await getSupabase()?.auth.getSession())?.data.session;
       if (!session) return;
+      if (room && !room.allow_guests) {
+        setIsRequestingAccess(true);
+        setError(null);
+        try {
+          const result = await api.requestRoomAccess(session.access_token, room.id);
+          if (result.status === "approved" || result.status === "not_required") {
+            const me = await api.me(session.access_token);
+            saveCredential(room.id, { token: session.access_token, type: "user", roomId: room.id, displayName: me.display_name });
+            router.push(`/room/${encodeURIComponent(room.slug)}`);
+            return;
+          }
+          setAccessRequested(true);
+        } catch (caught) {
+          setError(caught instanceof Error ? caught.message : l("Could not request access", "Không thể gửi yêu cầu tham gia"));
+        } finally {
+          setIsRequestingAccess(false);
+        }
+        return;
+      }
       try {
         const me = await api.me(session.access_token);
         saveCredential(room.id, {
@@ -107,7 +128,7 @@ export default function RoomJoinPage() {
       return;
     }
     try {
-      await signInWithGoogle(`/room/${encodeURIComponent(room.slug)}`);
+      await signInWithGoogle(`/join/${encodeURIComponent(room.slug)}`);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -249,6 +270,11 @@ export default function RoomJoinPage() {
                   {tr(error)}
                 </p>
               )}
+              {accessRequested && (
+                <p className="rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 py-2 text-[11px] text-[var(--text-loft-secondary)]">
+                  {l("Your request was sent. Wait for the host to approve it, then try again.", "Yêu cầu đã được gửi. Hãy chờ chủ phòng duyệt rồi thử lại.")}
+                </p>
+              )}
               {/* Primary CTA: One-click Guest Entry */}
               {room?.allow_guests && (
                 <button
@@ -280,7 +306,7 @@ export default function RoomJoinPage() {
               {/* Secondary CTA: Google Auth Integration */}
               <button
                 type="button"
-                disabled={!room}
+                disabled={!room || isRequestingAccess}
                 onClick={() => void handleGoogleSignIn()}
                 className="btn-press w-full flex items-center justify-center gap-3 bg-[var(--bg-loft-surface)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] active:scale-[0.98] text-[var(--text-loft-primary)] text-[11px] font-medium py-3 px-4 rounded-[6px] border border-[var(--border-loft)] transition-all duration-200 cursor-pointer"
               >
@@ -304,7 +330,7 @@ export default function RoomJoinPage() {
                 </svg>
                 <span>
                   {hasSession
-                    ? l("Join", "Tham gia")
+                    ? room?.allow_guests ? l("Join", "Tham gia") : accessRequested ? l("Check access", "Kiểm tra quyền vào") : l("Request access", "Yêu cầu tham gia")
                     : l("Sign in", "Đăng nhập")}
                 </span>
               </button>

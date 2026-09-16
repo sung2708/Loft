@@ -139,8 +139,11 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Get("/readyz", s.ready)
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Get("/rooms/resolve", s.resolveRoom)
-			r.Get("/rooms/{roomID}", s.getRoom)
+			 r.Get("/rooms/{roomID}", s.getRoom)
 			r.Post("/rooms/{roomID}/guest-session", s.guestSession)
+			r.Post("/rooms/{roomID}/join-requests", s.requestJoin)
+			r.Get("/rooms/{roomID}/join-requests", s.listJoinRequests)
+			r.Patch("/rooms/{roomID}/join-requests/{userID}", s.resolveJoinRequest)
 			r.Patch("/rooms/{roomID}", s.updateRoom)
 			r.Get("/rooms/{roomID}/messages", s.messages)
 			r.Post("/rooms/{roomID}/livekit-token", s.liveKitToken)
@@ -515,10 +518,60 @@ func (s *Server) requestIdentity(r *http.Request, room domain.Room) (domain.Iden
 		return domain.Identity{}, domain.ErrUnauthorized
 	}
 	identity, err := s.authenticatedUser(r)
-	if err != nil || !domain.CanJoin(room, identity) {
+	if err != nil || !s.canAccessRoom(r.Context(), room, identity) {
 		return domain.Identity{}, domain.ErrUnauthorized
 	}
 	return identity, nil
+}
+
+func (s *Server) canAccessRoom(ctx context.Context, room domain.Room, identity domain.Identity) bool {
+	if identity.Type == domain.IdentityGuest { return domain.CanJoin(room, identity) }
+	if identity.Type != domain.IdentityUser || identity.ID == "" { return false }
+	if room.AllowGuests || identity.ID == room.OwnerID { return true }
+	members, ok := s.store.(domain.RoomMembershipStore)
+	if !ok { return false }
+	member, err := members.IsRoomMember(ctx, room.ID, identity.ID)
+	return err == nil && member
+}
+
+func (s *Server) requestJoin(w http.ResponseWriter, r *http.Request) {
+	identity, err := s.authenticatedUser(r)
+	if err != nil { writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Sign in to request access"); return }
+	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrNotFound) { writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found"); return }
+	if err != nil { s.internal(w, r, "get room for join request", err); return }
+	if room.AllowGuests || identity.ID == room.OwnerID { writeJSON(w, http.StatusOK, map[string]string{"status": "not_required"}); return }
+	members, ok := s.store.(domain.RoomMembershipStore)
+	if !ok { writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable"); return }
+	member, err := members.IsRoomMember(r.Context(), room.ID, identity.ID)
+	if err != nil { s.internal(w, r, "check room membership", err); return }
+	if member { writeJSON(w, http.StatusOK, map[string]string{"status": "approved"}); return }
+	if err := members.RequestRoomAccess(r.Context(), room.ID, identity); err != nil { s.internal(w, r, "request room access", err); return }
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
+}
+
+func (s *Server) listJoinRequests(w http.ResponseWriter, r *http.Request) {
+	identity, err := s.authenticatedUser(r)
+	if err != nil { writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required"); return }
+	members, ok := s.store.(domain.RoomMembershipStore)
+	if !ok { writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable"); return }
+	items, err := members.ListJoinRequests(r.Context(), chi.URLParam(r, "roomID"), identity.ID)
+	if errors.Is(err, domain.ErrNotFound) { writeError(w, http.StatusForbidden, "ROOM_ACCESS_DENIED", "You cannot manage this room"); return }
+	if err != nil { s.internal(w, r, "list room join requests", err); return }
+	writeJSON(w, http.StatusOK, map[string]any{"requests": items})
+}
+
+func (s *Server) resolveJoinRequest(w http.ResponseWriter, r *http.Request) {
+	identity, err := s.authenticatedUser(r)
+	if err != nil { writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required"); return }
+	var input struct { Approve bool `json:"approve"` }
+	if !decodeJSON(w, r, &input) { return }
+	members, ok := s.store.(domain.RoomMembershipStore)
+	if !ok { writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable"); return }
+	err = members.ResolveJoinRequest(r.Context(), chi.URLParam(r, "roomID"), identity.ID, chi.URLParam(r, "userID"), input.Approve)
+	if errors.Is(err, domain.ErrNotFound) { writeError(w, http.StatusNotFound, "JOIN_REQUEST_NOT_FOUND", "Join request not found"); return }
+	if err != nil { s.internal(w, r, "resolve room join request", err); return }
+	writeJSON(w, http.StatusOK, map[string]bool{"approved": input.Approve})
 }
 
 func (s *Server) authenticatedUser(r *http.Request) (domain.Identity, error) {

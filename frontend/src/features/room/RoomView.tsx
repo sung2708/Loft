@@ -41,6 +41,7 @@ import { VideoEffectsPanel } from "@/components/room/VideoEffectsPanel";
 import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
 import { RoomAtmosphere } from "./RoomAtmosphere";
 import { SettingsDrawer } from "./SettingsDrawer";
+import { api } from "@/lib/api";
 
 export function RoomView() {
   const drawer = useUIStore((state) => state.activeDrawer);
@@ -626,6 +627,8 @@ function PeopleDrawer() {
   const host = useRoomStore((state) => state.host);
   const connection = useRoomStore((state) => state.connectionState);
   const session = useRoomSession();
+  const locale = useI18nStore((state) => state.locale);
+  const [joinRequests, setJoinRequests] = useState<Array<{ user_id: string; display_name: string; avatar_url?: string }>>([]);
   // The server-published host authority is authoritative. A participant role
   // is display state and can lag during reconnect/failover.
   const isHost = Boolean(
@@ -662,6 +665,15 @@ function PeopleDrawer() {
     }
     setPendingModeration({ connectionId: person.connection_id, name: person.display_name, action });
   };
+  useEffect(() => {
+    if (!isHost || !room || !session.token) return;
+    void api.joinRequests(session.token, room.id).then(({ requests }) => setJoinRequests(requests)).catch(() => setJoinRequests([]));
+  }, [isHost, room?.id, session.token]);
+  const resolveRequest = async (userID: string, approve: boolean) => {
+    if (!room || !session.token) return;
+    await api.resolveJoinRequest(session.token, room.id, userID, approve);
+    setJoinRequests((current) => current.filter((item) => item.user_id !== userID));
+  };
   return (
     <>
       <DrawerFrame title={`${tr("People")} · ${people.length}`}>
@@ -677,6 +689,18 @@ function PeopleDrawer() {
               {room.is_locked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
               {tr(room.is_locked ? "Unlock room" : "Lock room")}
             </button>
+            {!room.allow_guests && joinRequests.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <p className="text-[11px] font-medium text-[var(--text-loft-secondary)]">{locale === "vi" ? `Yêu cầu tham gia · ${joinRequests.length}` : `Join requests · ${joinRequests.length}`}</p>
+                {joinRequests.map((request) => (
+                  <div key={request.user_id} className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] p-2 text-[11px]">
+                    <span className="min-w-0 flex-1 truncate">{request.display_name}</span>
+                    <button type="button" onClick={() => void resolveRequest(request.user_id, false)} className="rounded-[5px] px-2 py-1 text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)]">{locale === "vi" ? "Từ chối" : "Decline"}</button>
+                    <button type="button" onClick={() => void resolveRequest(request.user_id, true)} className="rounded-[5px] bg-[var(--text-loft-primary)] px-2 py-1 text-[var(--bg-loft-base)]">{locale === "vi" ? "Duyệt" : "Approve"}</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-2">

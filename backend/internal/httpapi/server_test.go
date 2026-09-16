@@ -23,6 +23,33 @@ type fakeStore struct {
 	deletedOwnerID string
 }
 
+type membershipStore struct {
+	*fakeStore
+	members  map[string]bool
+	requests map[string]domain.JoinRequest
+}
+
+func (s *membershipStore) IsRoomMember(_ context.Context, _, userID string) (bool, error) {
+	return s.members[userID], nil
+}
+func (s *membershipStore) RequestRoomAccess(_ context.Context, _ string, identity domain.Identity) error {
+	s.requests[identity.ID] = domain.JoinRequest{UserID: identity.ID, DisplayName: identity.DisplayName, RequestedAt: time.Now()}
+	return nil
+}
+func (s *membershipStore) ListJoinRequests(_ context.Context, _, ownerID string) ([]domain.JoinRequest, error) {
+	if ownerID != s.room.OwnerID { return nil, domain.ErrNotFound }
+	items := make([]domain.JoinRequest, 0, len(s.requests))
+	for _, item := range s.requests { items = append(items, item) }
+	return items, nil
+}
+func (s *membershipStore) ResolveJoinRequest(_ context.Context, _, ownerID, userID string, approve bool) error {
+	if ownerID != s.room.OwnerID { return domain.ErrNotFound }
+	if _, ok := s.requests[userID]; !ok { return domain.ErrNotFound }
+	if approve { s.members[userID] = true }
+	delete(s.requests, userID)
+	return nil
+}
+
 func (f *fakeStore) Ping(context.Context) error                           { return nil }
 func (f *fakeStore) UpsertProfile(context.Context, domain.Identity) error { return nil }
 func (f *fakeStore) CreateRoom(_ context.Context, params domain.CreateRoomParams) (domain.Room, error) {
@@ -152,6 +179,48 @@ func TestResolveRoomNormalizesInviteURLAndHidesPrivateFields(t *testing.T) {
 	}
 }
 
+func TestPrivateRoomRequiresHostApproval(t *testing.T) {
+	const secret = "12345678901234567890123456789012"
+	const roomID = "58bb9fe4-79bc-41c7-9d63-61c04815b668"
+	const ownerID = "4ff036f8-834c-4cb5-9097-30710442e19e"
+	const requesterID = "5ff036f8-834c-4cb5-9097-30710442e19e"
+	store := &membershipStore{
+		fakeStore: &fakeStore{room: domain.Room{ID: roomID, OwnerID: ownerID, AllowGuests: false}},
+		members: map[string]bool{ownerID: true}, requests: make(map[string]domain.JoinRequest),
+	}
+	server := New(store, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := server.Routes(http.NotFoundHandler())
+	token := func(userID string) string {
+		claims := jwt.MapClaims{"sub": userID, "iss": "https://test.supabase.co/auth/v1", "aud": "authenticated", "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix()}
+		raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+		if err != nil { t.Fatal(err) }
+		return raw
+	}
+	call := func(method, path, raw string, body io.Reader) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, body)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		result := httptest.NewRecorder()
+		handler.ServeHTTP(result, req)
+		return result
+	}
+
+	if result := call(http.MethodGet, "/api/v1/rooms/"+roomID+"/messages", token(requesterID), nil); result.Code != http.StatusUnauthorized {
+		t.Fatalf("unapproved user got status %d, want 401: %s", result.Code, result.Body.String())
+	}
+	if result := call(http.MethodPost, "/api/v1/rooms/"+roomID+"/join-requests", token(requesterID), nil); result.Code != http.StatusAccepted {
+		t.Fatalf("request access got status %d, want 202: %s", result.Code, result.Body.String())
+	}
+	if result := call(http.MethodGet, "/api/v1/rooms/"+roomID+"/join-requests", token(ownerID), nil); result.Code != http.StatusOK {
+		t.Fatalf("host could not see request: %d %s", result.Code, result.Body.String())
+	}
+	if result := call(http.MethodPatch, "/api/v1/rooms/"+roomID+"/join-requests/"+requesterID, token(ownerID), strings.NewReader(`{"approve":true}`)); result.Code != http.StatusOK {
+		t.Fatalf("host could not approve request: %d %s", result.Code, result.Body.String())
+	}
+	if result := call(http.MethodGet, "/api/v1/rooms/"+roomID+"/messages", token(requesterID), nil); result.Code != http.StatusOK {
+		t.Fatalf("approved member could not enter: %d %s", result.Code, result.Body.String())
+	}
+}
+
 func TestGuestSessionRejectsLockedRoom(t *testing.T) {
 	const roomID = "58bb9fe4-79bc-41c7-9d63-61c04815b668"
 	store := &fakeStore{room: domain.Room{ID: roomID, AllowGuests: true, IsLocked: true}}
@@ -181,6 +250,35 @@ func TestGuestSessionRejectsInvalidRoomPassword(t *testing.T) {
 	server.Routes(http.NotFoundHandler()).ServeHTTP(result, request)
 	if result.Code != http.StatusForbidden || !strings.Contains(result.Body.String(), `"code":"INVALID_ROOM_PASSWORD"`) {
 		t.Fatalf("invalid password was not rejected: %d %s", result.Code, result.Body.String())
+	}
+}
+
+func TestGuestAdmissionPublicPrivateAndPasswordFlows(t *testing.T) {
+	const roomID = "58bb9fe4-79bc-41c7-9d63-61c04815b668"
+	const secret = "12345678901234567890123456789012"
+	verifier, err := auth.HashRoomPassword("correct horse")
+	if err != nil { t.Fatal(err) }
+	for _, tc := range []struct {
+		name string
+		room domain.Room
+		body string
+		want int
+		code string
+	}{
+		{"public guest with correct password", domain.Room{ID: roomID, AllowGuests: true, PasswordRequired: true, PasswordVerifier: verifier}, `{"display_name":"Guest","password":"correct horse"}`, http.StatusCreated, ""},
+		{"private room rejects guest", domain.Room{ID: roomID, AllowGuests: false}, `{"display_name":"Guest"}`, http.StatusForbidden, "ROOM_ACCESS_DENIED"},
+		{"locked room rejects guest", domain.Room{ID: roomID, AllowGuests: true, IsLocked: true}, `{"display_name":"Guest"}`, http.StatusForbidden, "ROOM_LOCKED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := New(&fakeStore{room: tc.room}, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/rooms/"+roomID+"/guest-session", strings.NewReader(tc.body))
+			req.RemoteAddr = "127.0.0.1:1010"
+			rec := httptest.NewRecorder()
+			server.Routes(http.NotFoundHandler()).ServeHTTP(rec, req)
+			if rec.Code != tc.want || (tc.code != "" && !strings.Contains(rec.Body.String(), `"code":"`+tc.code+`"`)) {
+				t.Fatalf("got %d %s; want %d %s", rec.Code, rec.Body.String(), tc.want, tc.code)
+			}
+		})
 	}
 }
 

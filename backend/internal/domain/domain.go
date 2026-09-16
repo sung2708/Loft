@@ -145,6 +145,22 @@ type RoomAccessStore interface {
 	UpdateRoomAccess(context.Context, string, string, int64, RoomAccessUpdate) (Room, error)
 }
 
+type JoinRequest struct {
+	UserID      string    `json:"user_id"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url,omitempty"`
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+// RoomMembershipStore is the durable authorization source for private rooms.
+// A room link identifies a room but never grants a signed-in user membership.
+type RoomMembershipStore interface {
+	IsRoomMember(context.Context, string, string) (bool, error)
+	RequestRoomAccess(context.Context, string, Identity) error
+	ListJoinRequests(context.Context, string, string) ([]JoinRequest, error)
+	ResolveJoinRequest(context.Context, string, string, string, bool) error
+}
+
 type Participant struct {
 	ConnectionID    string       `json:"connection_id"`
 	IdentityID      string       `json:"identity_id"`

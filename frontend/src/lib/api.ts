@@ -71,6 +71,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ display_name: displayName, password }),
     }),
+  requestRoomAccess: (token: string, id: string) =>
+    request<{ status: "pending" | "approved" | "not_required" }>(
+      `/api/v1/rooms/${encodeURIComponent(id)}/join-requests`,
+      { method: "POST" },
+      token,
+    ),
+  joinRequests: (token: string, id: string) =>
+    request<{ requests: Array<{ user_id: string; display_name: string; avatar_url?: string; requested_at: string }> }>(`/api/v1/rooms/${encodeURIComponent(id)}/join-requests`, {}, token),
+  resolveJoinRequest: (token: string, roomID: string, userID: string, approve: boolean) =>
+    request<{ approved: boolean }>(`/api/v1/rooms/${encodeURIComponent(roomID)}/join-requests/${encodeURIComponent(userID)}`, { method: "PATCH", body: JSON.stringify({ approve }) }, token),
   me: (token: string) => request<ApiIdentity>("/api/v1/users/me", {}, token),
   rooms: (token: string) =>
     request<{ rooms: ApiRoom[] }>("/api/v1/rooms", {}, token),

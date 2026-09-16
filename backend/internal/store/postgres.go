@@ -147,6 +147,40 @@ func (p *Postgres) UpdateRoomAccess(ctx context.Context, roomID, ownerID string,
 	return domain.NormalizeRoomAppearance(room), err
 }
 
+func (p *Postgres) IsRoomMember(ctx context.Context, roomID, userID string) (bool, error) {
+	var exists bool
+	err := p.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_members WHERE room_id=$1::uuid AND user_id=$2::uuid)`, roomID, userID).Scan(&exists)
+	return exists, err
+}
+
+func (p *Postgres) RequestRoomAccess(ctx context.Context, roomID string, identity domain.Identity) error {
+	if err := p.UpsertProfile(ctx, identity); err != nil { return err }
+	_, err := p.pool.Exec(ctx, `INSERT INTO room_join_requests (room_id, user_id) VALUES ($1::uuid, $2::uuid) ON CONFLICT DO NOTHING`, roomID, identity.ID)
+	return err
+}
+
+func (p *Postgres) ListJoinRequests(ctx context.Context, roomID, ownerID string) ([]domain.JoinRequest, error) {
+	rows, err := p.pool.Query(ctx, `SELECT r.user_id, p.display_name, COALESCE(p.avatar_url, ''), r.requested_at
+		FROM room_join_requests r JOIN profiles p ON p.id=r.user_id JOIN rooms room ON room.id=r.room_id
+		WHERE r.room_id=$1::uuid AND room.owner_id=$2::uuid ORDER BY r.requested_at ASC`, roomID, ownerID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	requests := make([]domain.JoinRequest, 0)
+	for rows.Next() { var item domain.JoinRequest; if err := rows.Scan(&item.UserID, &item.DisplayName, &item.AvatarURL, &item.RequestedAt); err != nil { return nil, err }; requests = append(requests, item) }
+	return requests, rows.Err()
+}
+
+func (p *Postgres) ResolveJoinRequest(ctx context.Context, roomID, ownerID, userID string, approve bool) error {
+	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil { return err }
+	defer func() { _ = tx.Rollback(ctx) }()
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_join_requests r JOIN rooms room ON room.id=r.room_id WHERE r.room_id=$1::uuid AND r.user_id=$2::uuid AND room.owner_id=$3::uuid)`, roomID, userID, ownerID).Scan(&exists); err != nil || !exists { if err == nil { return domain.ErrNotFound }; return err }
+	if approve { if _, err = tx.Exec(ctx, `INSERT INTO room_members (room_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'member') ON CONFLICT DO NOTHING`, roomID, userID); err != nil { return err } }
+	if _, err = tx.Exec(ctx, `DELETE FROM room_join_requests WHERE room_id=$1::uuid AND user_id=$2::uuid`, roomID, userID); err != nil { return err }
+	return tx.Commit(ctx)
+}
+
 func (p *Postgres) UpdateRoomAppearanceByHost(ctx context.Context, roomID string, expectedVersion int64, update domain.RoomAppearanceUpdate) (domain.Room, error) {
 	if !update.Atmosphere.Valid() || !update.Accent.Valid() {
 		return domain.Room{}, domain.ErrInvalidRoomAppearance

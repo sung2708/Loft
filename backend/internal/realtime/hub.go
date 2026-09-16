@@ -938,6 +938,16 @@ func (h *Hub) authenticate(ctx context.Context, conn *websocket.Conn) (domain.Id
 	if err != nil || !domain.CanJoin(room, identity) {
 		return domain.Identity{}, domain.Room{}, "", domain.ErrUnauthorized
 	}
+	if !room.AllowGuests && identity.Type == domain.IdentityUser && identity.ID != room.OwnerID {
+		members, ok := h.store.(domain.RoomMembershipStore)
+		if !ok {
+			return domain.Identity{}, domain.Room{}, "", domain.ErrUnauthorized
+		}
+		member, memberErr := members.IsRoomMember(authCtx, room.ID, identity.ID)
+		if memberErr != nil || !member {
+			return domain.Identity{}, domain.Room{}, "", domain.ErrUnauthorized
+		}
+	}
 	if governance, ok := h.store.(domain.GovernanceStore); ok {
 		banned, err := governance.IsBanned(authCtx, room.ID, identity)
 		if err != nil {
