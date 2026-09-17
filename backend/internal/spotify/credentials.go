@@ -7,8 +7,52 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
+
+// DecodeCredentialKey decodes an encryption key from various representations
+// (standard padded Base64, unpadded raw Base64, URL-safe Base64, or 32-byte raw string).
+// It verifies that the resulting key is exactly 32 bytes for AES-256.
+func DecodeCredentialKey(rawKey string) ([]byte, error) {
+	trimmed := strings.TrimSpace(rawKey)
+	if trimmed == "" {
+		return nil, fmt.Errorf("credential key is empty")
+	}
+
+	// Try standard base64 if padded with '='
+	if strings.HasSuffix(trimmed, "=") {
+		if key, err := base64.StdEncoding.DecodeString(trimmed); err == nil && len(key) == 32 {
+			return key, nil
+		}
+		if key, err := base64.URLEncoding.DecodeString(trimmed); err == nil && len(key) == 32 {
+			return key, nil
+		}
+	}
+
+	// Try raw standard base64 (unpadded)
+	if key, err := base64.RawStdEncoding.DecodeString(trimmed); err == nil && len(key) == 32 {
+		return key, nil
+	}
+
+	// Try standard base64 (without suffix check)
+	if key, err := base64.StdEncoding.DecodeString(trimmed); err == nil && len(key) == 32 {
+		return key, nil
+	}
+
+	// Try URL-safe base64 unpadded
+	if key, err := base64.RawURLEncoding.DecodeString(trimmed); err == nil && len(key) == 32 {
+		return key, nil
+	}
+
+	// Try raw 32-byte ASCII string
+	if len([]byte(trimmed)) == 32 {
+		return []byte(trimmed), nil
+	}
+
+	return nil, fmt.Errorf("invalid credential key: must decode to exactly 32 bytes")
+}
+
 
 type Credentials struct {
 	UserID       string

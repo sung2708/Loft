@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -51,7 +52,8 @@ func (c Client) Search(ctx context.Context, query string) (SearchResponse, error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return SearchResponse{}, fmt.Errorf("youtube provider status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return SearchResponse{}, fmt.Errorf("youtube provider status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
 		Items []struct {

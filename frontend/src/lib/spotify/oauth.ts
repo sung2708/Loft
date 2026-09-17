@@ -113,7 +113,11 @@ export async function startSpotifyOAuth(
     };
 
     const handleMessage = (event: MessageEvent) => {
-      if (event.origin && event.origin !== window.location.origin) return;
+      // Allow same-origin and localhost ↔ 127.0.0.1 variants in development
+      const isSameOrigin = event.origin === window.location.origin;
+      const isLocalhostVariant =
+        event.origin.includes("localhost") || event.origin.includes("127.0.0.1");
+      if (event.origin && !isSameOrigin && !isLocalhostVariant) return;
       const data = event.data as SpotifyOAuthMessage | undefined;
       if (data?.type === "LOFT_SPOTIFY_AUTH_COMPLETE") {
         if (data.status === "connected") {

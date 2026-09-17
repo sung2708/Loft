@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"loft/backend/internal/spotify"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 )
+
 
 func spotifyVerifier() (string, string, error) {
 	b := make([]byte, 64)
@@ -73,6 +75,7 @@ func (s *Server) spotifyConnect(w http.ResponseWriter, r *http.Request) {
 	q.Set("state", state)
 	q.Set("scope", "user-read-private user-read-email streaming user-read-playback-state user-modify-playback-state")
 	u.RawQuery = q.Encode()
+	s.logger.Info("spotify connect initiated", "user_id", identity.ID, "redirect_uri", redirect, "return_to", returnTo)
 	if r.Header.Get("Accept") == "application/json" {
 		writeJSON(w, http.StatusOK, map[string]string{"url": u.String()})
 		return
@@ -118,7 +121,18 @@ func (s *Server) spotifyCallback(w http.ResponseWriter, r *http.Request) {
 		u.RawQuery = q.Encode()
 		http.Redirect(w, r, u.String(), http.StatusFound)
 	}
-	if !ok || time.Now().After(item.ExpiresAt) || code == "" {
+	if !ok {
+		s.logger.Warn("spotify callback state not found or already consumed", "state", state)
+		redirect("failed")
+		return
+	}
+	if time.Now().After(item.ExpiresAt) {
+		s.logger.Warn("spotify callback state expired", "state", state, "expired_at", item.ExpiresAt)
+		redirect("failed")
+		return
+	}
+	if code == "" {
+		s.logger.Warn("spotify callback missing code parameter", "state", state)
 		redirect("failed")
 		return
 	}
@@ -126,38 +140,46 @@ func (s *Server) spotifyCallback(w http.ResponseWriter, r *http.Request) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://accounts.spotify.com/api/token", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode >= 400 {
+	if err != nil {
+		s.logger.Error("spotify token exchange failed network request", "err", err)
 		redirect("failed")
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		s.logger.Error("spotify token exchange error response", "status_code", resp.StatusCode, "response", string(bodyBytes))
+		redirect("failed")
+		return
+	}
 	var token struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&token) != nil || token.AccessToken == "" {
+	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil || token.AccessToken == "" {
+		s.logger.Error("spotify token exchange invalid response json", "err", err)
 		redirect("failed")
 		return
 	}
 	// Persist both tokens encrypted; never put provider credentials in the browser.
 	if rawKey := os.Getenv("SPOTIFY_CREDENTIAL_KEY"); rawKey != "" {
-		key, keyErr := base64.RawStdEncoding.DecodeString(rawKey)
-		if keyErr != nil || len(key) != 32 {
+		key, keyErr := spotify.DecodeCredentialKey(rawKey)
+		if keyErr != nil {
+			s.logger.Error("spotify callback invalid credential key", "err", keyErr)
 			redirect("failed")
 			return
 		}
 		accessCipher, keyErr := spotify.EncryptCredential(key, token.AccessToken)
 		if keyErr != nil {
+			s.logger.Error("spotify callback encryption of access token failed", "err", keyErr)
 			redirect("failed")
 			return
 		}
 		refresh := token.RefreshToken
-		if refresh == "" {
-			refresh = ""
-		}
 		refreshCipher, keyErr := spotify.EncryptCredential(key, refresh)
 		if keyErr != nil {
+			s.logger.Error("spotify callback encryption of refresh token failed", "err", keyErr)
 			redirect("failed")
 			return
 		}
@@ -166,10 +188,12 @@ func (s *Server) spotifyCallback(w http.ResponseWriter, r *http.Request) {
 		}); ok {
 			err = saver.SaveSpotifyCredentials(r.Context(), spotify.Credentials{UserID: item.UserID, AccessToken: token.AccessToken, RefreshToken: refresh, ExpiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)}, accessCipher, refreshCipher)
 			if err != nil {
+				s.logger.Error("spotify callback database save failed", "err", err, "user_id", item.UserID)
 				redirect("failed")
 				return
 			}
 		} else {
+			s.logger.Error("spotify callback store missing SaveSpotifyCredentials")
 			redirect("failed")
 			return
 		}
@@ -178,8 +202,10 @@ func (s *Server) spotifyCallback(w http.ResponseWriter, r *http.Request) {
 	s.spotifyTokens[item.UserID] = token.AccessToken
 	s.spotifyRefreshTokens[item.UserID] = token.RefreshToken
 	s.spotifyMu.Unlock()
+	s.logger.Info("spotify connected successfully", "user_id", item.UserID)
 	redirect("connected")
 }
+
 
 func (s *Server) spotifyStatus(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("SPOTIFY_ENABLED") != "true" {
@@ -215,13 +241,15 @@ func (s *Server) persistSpotifyTokens(ctx context.Context, userID, access, refre
 	if rawKey == "" {
 		return
 	}
-	key, err := base64.RawStdEncoding.DecodeString(rawKey)
-	if err != nil || len(key) != 32 {
+	key, err := spotify.DecodeCredentialKey(rawKey)
+	if err != nil {
+		s.logger.Error("spotify persist tokens invalid credential key", "err", err)
 		return
 	}
 	accessCipher, err1 := spotify.EncryptCredential(key, access)
 	refreshCipher, err2 := spotify.EncryptCredential(key, refresh)
 	if err1 != nil || err2 != nil {
+		s.logger.Error("spotify persist tokens encryption failed", "err1", err1, "err2", err2)
 		return
 	}
 	if updater, ok := s.store.(interface {
@@ -260,7 +288,7 @@ func (s *Server) spotifySearch(w http.ResponseWriter, r *http.Request) {
 	s.spotifyMu.Unlock()
 	if token == "" {
 		if rawKey := os.Getenv("SPOTIFY_CREDENTIAL_KEY"); rawKey != "" {
-			if key, keyErr := base64.RawStdEncoding.DecodeString(rawKey); keyErr == nil && len(key) == 32 {
+			if key, keyErr := spotify.DecodeCredentialKey(rawKey); keyErr == nil {
 				if loader, ok := s.store.(interface {
 					LoadSpotifyCredentials(context.Context, string) (string, string, []string, time.Time, *time.Time, error)
 				}); ok {

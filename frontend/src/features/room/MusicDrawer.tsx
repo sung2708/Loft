@@ -214,7 +214,12 @@ export function MusicDrawer({
       channel: metaChannel,
     });
 
-    if (sent) setUrl("");
+    if (sent) {
+      setUrl("");
+      setSearchQuery("");
+      setSearchResults([]);
+      setSearched(false);
+    }
     setIsAdding(false);
   };
 

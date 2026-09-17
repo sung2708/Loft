@@ -42,7 +42,7 @@ function SpotifyCallbackContent() {
       // 1. PostMessage to opener
       if (window.opener) {
         try {
-          window.opener.postMessage(msg, window.location.origin);
+          window.opener.postMessage(msg, "*");
         } catch {
           // Cross-origin opener protection
         }
