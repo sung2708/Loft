@@ -47,11 +47,11 @@ Do not add named Tailwind palettes or arbitrary status colors. Communicate statu
 - Every clickable control has visible hover, focus, active, and disabled states.
 - Use `hover-invert` only for a quiet semantic tint. It must preserve readable nested text and icons; do not invert an entire card or row.
 - On desktop, a room drawer consumes its own layout column so the Stage resizes. On mobile, it may overlay the Stage to preserve usable content width.
-- When the remaining Stage is narrow, the call dock keeps mic, camera, screen share, chat, people, and leave visible; secondary effects, queue, and reactions are intentionally hidden rather than overflowing the viewport.
+- When the remaining Stage is narrow, the call dock keeps mic, camera, screen share, chat, people, and leave visible; queue and reactions are intentionally hidden rather than overflowing the viewport.
 - Hover must never be the only way to discover an action.
 - Destructive actions require a clear label and confirmation when data loss is irreversible.
 - Only the active room host is shown room-management controls (name, access, password, lock, and atmosphere). Other participants can change only their personal device and sound preferences; authorization remains enforced by the server.
-- Drawers overlay the Stage. Opening chat, people, queue, effects, or settings must not remount the media session.
+- Drawers overlay the Stage. Opening chat, people, queue, or settings must not remount the media session.
 - Room atmosphere is shared only after an explicit save. While a host changes an atmosphere, accent composition, or adaptive-media setting, render an immediate local preview on the host's Stage and in the settings drawer; closing or pressing Escape discards that draft.
 
 ## Copy rules

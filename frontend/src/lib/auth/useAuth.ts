@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { useEffect } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { getSupabase, signInWithGoogle as startGoogleSignIn } from "@/lib/supabase/client";
+import { safeAuthDestination } from "@/lib/authRedirect";
 import { api } from "@/lib/api";
 import type { ApiIdentity } from "@/types/api";
 
@@ -24,6 +25,21 @@ interface AuthStore {
   initializeAuth: () => () => void;
   signOut: () => Promise<void>;
   signInWithGoogle: (next?: string) => Promise<void>;
+}
+
+function resumePendingAuthDestination() {
+  if (typeof window === "undefined") return;
+
+  const storedNext = window.sessionStorage.getItem("loft.auth.next");
+  if (!storedNext) return;
+
+  const destination = safeAuthDestination(storedNext);
+  const current = `${window.location.pathname}${window.location.search}`;
+  window.sessionStorage.removeItem("loft.auth.next");
+
+  if (destination !== current) {
+    window.location.replace(destination);
+  }
 }
 
 export const useAuthStore = create<AuthStore>((set) => ({
@@ -57,6 +73,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
       }
 
       if (isSubscribed) {
+        resumePendingAuthDestination();
         set({
           authState: {
             status: "authenticated",
@@ -89,6 +106,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
         }
 
         if (isSubscribed) {
+          resumePendingAuthDestination();
           set({
             authState: {
               status: "authenticated",

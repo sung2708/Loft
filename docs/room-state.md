@@ -26,7 +26,6 @@ To avoid database bottlenecks while ensuring zero data loss and deterministic sy
                         | ───────────────────────────── |
                         | • Open drawer (chat/music/etc)|
                         | • Selected camera/mic devices |
-                        | • Video effect configuration  |
                         | • Player volume & mute status |
                         +-------------------------------+
 ```
@@ -44,7 +43,7 @@ To avoid database bottlenecks while ensuring zero data loss and deterministic sy
 | **Collaborative Queue** | `queue: []youtubeTrack` (UUID, `video_id`, `added_by`, `title`) | **Go Room Authority** | Synchronized in `room.snapshot` | Maintained in memory during active room lifecycle. |
 | **Presence Leases** | Active participant list, online connections, heartbeats | **Redis TTLs** (15s) | Go `state.clients` map | Evaporates automatically if heartbeats cease. |
 | **Media Tracks** | Audio, camera, screen-share tracks, mute states | **LiveKit SFU** | `@livekit/components-react` | Ephemeral WebRTC session. Closed on disconnect. |
-| **UI & Preferences**| Active drawer, camera effects, volume slider, draft messages | **Client Zustand** | `sessionStorage` / `localStorage` | Never transmitted to or stored on server. |
+| **UI & Preferences**| Active drawer, camera/mic selection, volume slider, draft messages | **Client Zustand** | `sessionStorage` / `localStorage` | Never transmitted to or stored on server. |
 
 Persistent room access policy (`allow_guests`, `password_required`, `is_locked`, and `version`) is
 durable PostgreSQL state. A password verifier is server-only and is never placed in snapshots or

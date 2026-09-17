@@ -71,7 +71,7 @@ export function SocialActions({
         <div
           role="menu"
           aria-label={tr("Social actions")}
-          className="absolute bottom-full right-0 mb-3 flex max-w-[calc(100vw-1rem)] gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
+          className="absolute bottom-full right-0 mb-3 flex max-w-[calc(100vw-1rem)] gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl motion-reduce:transform-none sm:[transform:perspective(900px)_rotateX(2deg)]"
         >
           {reactions.map((emoji) => (
             <button
@@ -80,15 +80,15 @@ export function SocialActions({
               key={emoji}
               onClick={() => act(() => onReaction(emoji))}
               aria-label={`${tr("React")} ${emoji}`}
-              className="w-8 h-8 shrink-0 rounded-full hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] text-[11px] transition-transform active:scale-110 motion-reduce:transition-none"
+              className="h-8 w-8 shrink-0 rounded-full text-[11px] hover-invert active:scale-110 motion-reduce:transition-none"
             >
               <span aria-hidden="true">{emoji}</span>
             </button>
           ))}
-          <button type="button" role="menuitem" onClick={() => act(onWave)} aria-label={tr("Wave to the room")} className="w-8 h-8 shrink-0 rounded-full hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] text-[11px]">
+          <button type="button" role="menuitem" onClick={() => act(onWave)} aria-label={tr("Wave to the room")} className="h-8 w-8 shrink-0 rounded-full text-[11px] hover-invert">
             <span aria-hidden="true">👋</span>
           </button>
-          <button type="button" role="menuitemcheckbox" aria-checked={raised} onClick={() => act(onToggleHand)} aria-label={tr(raised ? "Lower hand" : "Raise hand")} className="w-8 h-8 shrink-0 rounded-full hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] flex items-center justify-center">
+          <button type="button" role="menuitemcheckbox" aria-checked={raised} onClick={() => act(onToggleHand)} aria-label={tr(raised ? "Lower hand" : "Raise hand")} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover-invert ${raised ? "bg-[var(--border-loft-light)]" : ""}`}>
             <Hand className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>

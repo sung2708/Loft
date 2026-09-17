@@ -22,13 +22,15 @@ type youtubeTrack struct {
 }
 
 type mediaState struct {
-	Current    *youtubeTrack  `json:"current"`
-	Queue      []youtubeTrack `json:"queue"`
-	Repeat     bool           `json:"repeat"`
-	Status     string         `json:"status"`
-	PositionMs int64          `json:"position_ms"`
-	StartedAt  time.Time      `json:"started_at"`
-	Version    uint64         `json:"version"`
+	Current     *youtubeTrack  `json:"current"`
+	Queue       []youtubeTrack `json:"queue"`
+	Repeat      bool           `json:"repeat"`
+	Status      string         `json:"status"`
+	PositionMs  int64          `json:"position_ms"`
+	StartedAt   time.Time      `json:"started_at"`
+	Version     uint64         `json:"version"`
+	Autoplay    bool           `json:"autoplay"`
+	Unavailable string         `json:"unavailable,omitempty"`
 }
 
 type mediaCommand struct {
@@ -42,6 +44,7 @@ type mediaCommand struct {
 	Repeat          bool     `json:"repeat"`
 	PositionMs      int64    `json:"position_ms"`
 	ExpectedVersion uint64   `json:"expected_version"`
+	Autoplay        bool     `json:"autoplay"`
 }
 
 var (
@@ -134,6 +137,66 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		m.Version++
 		return nil
 	}
+	if kind == "media.play_now" {
+		if !domain.CanManageQueue(room, actor) {
+			return errMediaDenied
+		}
+		id, err := parseYouTubeID(command.URL)
+		if err != nil {
+			return err
+		}
+		track := youtubeTrack{ID: uuid.NewString(), VideoID: id, AddedBy: actor.DisplayName, Title: strings.TrimSpace(command.Title), Channel: strings.TrimSpace(command.Channel)}
+		if len(track.Title) > 140 {
+			track.Title = track.Title[:140]
+		}
+		if len(track.Channel) > 80 {
+			track.Channel = track.Channel[:80]
+		}
+		if m.Current != nil {
+			m.Queue = append([]youtubeTrack{*m.Current}, m.Queue...)
+		}
+		m.Current = &track
+		m.PositionMs = 0
+		m.StartedAt = now
+		m.Status = "PLAYING"
+		m.Version++
+		return nil
+	}
+	if kind == "media.ended" {
+		if !domain.CanJoin(room, actor) {
+			return errMediaDenied
+		}
+		if m.Current == nil || command.VideoID != m.Current.VideoID {
+			return nil // idempotent: already transitioned
+		}
+		if command.ExpectedVersion != m.Version {
+			return nil // idempotent: stale ended event
+		}
+		if m.Repeat {
+			m.PositionMs = 0
+			m.StartedAt = now
+			m.Status = "PLAYING"
+		} else {
+			m.advance(now)
+		}
+		m.Version++
+		return nil
+	}
+	if kind == "media.unavailable" {
+		if !domain.CanControlMedia(room, actor) {
+			return errMediaDenied
+		}
+		if m.Current == nil || command.VideoID != m.Current.VideoID {
+			return nil // idempotent: already transitioned
+		}
+		if command.ExpectedVersion != m.Version {
+			return nil // idempotent: stale unavailable event
+		}
+		m.advance(now)
+		m.Unavailable = command.VideoID
+		m.Version++
+		return nil
+	}
 	if kind == "queue.next" || kind == "queue.select" || strings.HasPrefix(kind, "media.") {
 		if !domain.CanControlMedia(room, actor) {
 			return errMediaDenied
@@ -181,6 +244,8 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		m.Current.DurationSec = command.DurationSec
 	case "media.repeat":
 		m.Repeat = command.Repeat
+	case "media.autoplay.set":
+		m.Autoplay = command.Autoplay
 	case "queue.next":
 		if m.Current == nil {
 			return errInvalidMedia
@@ -261,6 +326,7 @@ func (m *mediaState) advance(now time.Time) {
 		m.Status = "IDLE"
 		m.PositionMs = 0
 		m.StartedAt = time.Time{}
+		m.Unavailable = ""
 		return
 	}
 	next := m.Queue[0]
@@ -269,6 +335,7 @@ func (m *mediaState) advance(now time.Time) {
 	m.Status = "PLAYING"
 	m.PositionMs = 0
 	m.StartedAt = now
+	m.Unavailable = ""
 }
 
 func (m *mediaState) finish(now time.Time) bool {

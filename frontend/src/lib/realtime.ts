@@ -1,5 +1,6 @@
 import { WS_URL } from "./config";
 import type { ConnectionState, RoomCredential, ServerEvent } from "@/types/api";
+import type { RoomSocketMessageType } from "@/types/room";
 
 interface Callbacks {
   getCredential?: () => Promise<RoomCredential>;
@@ -166,33 +167,7 @@ export class RoomSocket {
       this.timer = setTimeout(() => this.connect(), reconnectDelay(this.retry));
   }
 
-  send(
-    type:
-      | "chat.send"
-      | "connection.ping"
-      | "room.leave"
-      | "queue.add"
-      | "queue.next"
-      | "queue.select"
-      | "queue.remove"
-      | "queue.clear"
-      | "queue.shuffle"
-      | "queue.reorder"
-      | "media.play"
-      | "media.pause"
-      | "media.seek"
-      | "media.duration"
-      | "media.repeat"
-      | "reaction.send"
-      | "wave.send"
-      | "participant.hand.set"
-      | "room.lock"
-      | "room.appearance.update"
-      | "participant.kick"
-      | "participant.ban"
-      | "host.transfer",
-    payload: object,
-  ) {
+  send(type: RoomSocketMessageType, payload: object) {
     if (this.socket?.readyState !== WebSocket.OPEN || (!this.ready && type !== "connection.ping" && type !== "room.leave")) return false;
     this.socket.send(
       JSON.stringify({

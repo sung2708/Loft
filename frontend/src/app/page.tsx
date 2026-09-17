@@ -75,11 +75,9 @@ export default function LobbyPage() {
     try {
       const { room } = await api.resolveRoom(normalized.value);
       setResolvedRoom(room);
-    } catch (caught) {
+    } catch {
       setResolvedRoom(null);
-      setError(
-        caught instanceof Error ? caught.message : t.lobby.roomNotFound,
-      );
+      setError(t.lobby.roomNotFound);
     } finally {
       setIsConnecting(false);
     }
@@ -105,54 +103,49 @@ export default function LobbyPage() {
       await api.deleteRoom(session.access_token, deletingRoom.id);
       setRecentRooms((rooms) => rooms.filter((room) => room.id !== deletingRoom.id));
       setDeletingRoom(null);
-    } catch (caught) {
-      setDeleteError(caught instanceof Error ? caught.message : locale === "vi" ? "Không thể xóa phòng" : "Could not delete room");
+    } catch {
+      setDeleteError(locale === "vi" ? "Không thể xóa phòng" : "Could not delete room");
     } finally {
       setDeleting(false);
     }
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)] relative overflow-x-hidden selection:bg-[#101113]/30">
+    <div className="app-canvas min-h-screen w-full flex flex-col text-[var(--text-loft-primary)] overflow-x-hidden selection:bg-[#101113]/30">
       {/* Top Shared Lobby Header */}
       <LobbyHeader />
 
       {/* Main Spatial Stage Body */}
-      <main className="flex-1 w-full pt-12 min-h-[calc(100vh-3rem)] flex flex-col items-center justify-between px-4 sm:px-6 py-8 relative">
-        {/* Ambient Lounge Glows */}
-        <div
-          className="pointer-events-none absolute -top-32 left-1/2 -translate-x-1/2 w-[640px] h-[360px] bg-gradient-to-b from-[#101113]/20 via-[#101113]/10 to-transparent rounded-full blur-3xl -z-10 animate-pulse"
-          style={{ animationDuration: "1150ms" }}
-        />
-        <div className="pointer-events-none absolute top-1/3 -left-48 w-80 h-80 bg-[#101113]/10 rounded-full blur-[100px] -z-10" />
-        <div
-          className="pointer-events-none absolute bottom-16 -right-32 w-96 h-96 bg-[#101113]/10 rounded-full blur-[120px] -z-10 animate-pulse"
-          style={{ animationDuration: "1150ms" }}
-        />
-
-        {/* Central Spatial Anchor Enclosure */}
-        <div className="relative w-full max-w-[480px] my-auto py-6 flex flex-col items-center text-center z-10">
-          {/* Standalone brand mark */}
+      <main className="flex-1 w-full min-h-[calc(100vh-3.5rem)] pt-14 flex items-center px-4 py-8 sm:px-6 sm:py-12">
+        <section className="workflow-panel relative mx-auto grid w-full max-w-[920px] overflow-hidden rounded-[6px] md:grid-cols-[minmax(0,.82fr)_minmax(0,1.18fr)]">
+          <div className="flex min-h-48 flex-col items-center justify-center border-b border-[var(--border-loft)] px-5 py-8 text-center sm:min-h-56 sm:px-8 md:min-h-[440px] md:border-b-0 md:border-r md:px-10">
+          <div aria-hidden="true" className="spatial-scene mb-1 hidden md:block">
+            <span className="spatial-scene__plane spatial-scene__plane--back" />
+            <span className="spatial-scene__plane spatial-scene__plane--mid" />
+            <span className="spatial-scene__plane spatial-scene__plane--front" />
+            <span className="spatial-scene__node" />
+          </div>
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
-            className="relative mb-5"
+            className="relative mb-5 grid h-14 w-14 place-items-center rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-base)]"
           >
-            <LoftMark className="w-16 h-16 text-[var(--brand-mark)]" />
+            <LoftMark className="h-8 w-8 text-[var(--brand-mark)]" />
           </motion.div>
 
-          {/* Typography */}
           <motion.h1
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.05, ease: EASE_ENTRANCE }}
-            className="text-3xl font-medium leading-tight tracking-tight text-[var(--text-loft-primary)] text-balance"
+            className="max-w-[11ch] text-[clamp(1.75rem,5vw,2.5rem)] font-medium leading-none tracking-[-0.04em] text-[var(--text-loft-primary)] text-balance"
           >
             {t.lobby.heroTitle}
           </motion.h1>
-          {/* Main Interaction Form Surface */}
-          <div className="w-full mt-6 flex flex-col gap-4 text-left">
+          </div>
+
+          <div className="flex min-w-0 items-center px-5 py-8 sm:px-8 sm:py-10">
+          <div className="w-full flex flex-col gap-4 text-left">
             {/* Input Enclosure */}
             <div className="relative w-full group">
               <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-loft-muted)] group-focus-within:text-[var(--text-loft-primary)] transition-colors flex items-center pointer-events-none">
@@ -186,7 +179,7 @@ export default function LobbyPage() {
                   animate={{ opacity: 1, height: "auto", scale: 1 }}
                   exit={{ opacity: 0, height: 0, scale: 0.96 }}
                   transition={{ duration: 0.2, ease: EASE_SPATIAL }}
-                  className="flex flex-col gap-3 p-4 rounded-[6px] bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-lg transition-all"
+                  className="flex flex-col gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-4 transition-colors"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 min-w-0">
@@ -206,7 +199,7 @@ export default function LobbyPage() {
                         </span>
                       </div>
                     </div>
-                    <span className="px-2 py-1 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] text-[11px] font-medium uppercase tracking-wider shrink-0">
+                    <span className="rounded-[6px] border border-[var(--border-loft)] px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-primary)] shrink-0">
                       {t.common.active}
                     </span>
                   </div>
@@ -252,7 +245,7 @@ export default function LobbyPage() {
                     type="button"
                     disabled={isConnecting}
                     onClick={() => void handleJoin()}
-                    className="btn-press flex-1 w-full h-12 rounded-[6px] bg-[#101113] hover:bg-[#101113] active:scale-[0.99] text-white text-[11px] font-medium tracking-tight flex items-center justify-center gap-2 transition-all shadow-md shadow-[#101113]/25 cursor-pointer disabled:opacity-75"
+                    className="btn-press flex h-12 w-full flex-1 items-center justify-center gap-2 rounded-[6px] bg-[#101113] text-[11px] font-medium tracking-tight text-white transition-colors disabled:cursor-not-allowed disabled:opacity-75"
                   >
                     {isConnecting ? (
                       <>
@@ -270,7 +263,7 @@ export default function LobbyPage() {
                   <button
                     type="button"
                     onClick={() => router.push("/home?create=1")}
-                    className="btn-press w-full sm:w-auto h-12 px-5 rounded-[6px] bg-[var(--bg-loft-surface)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] border border-[var(--border-loft)] text-[var(--text-loft-primary)] text-[11px] font-medium flex items-center justify-center gap-2 transition-all active:scale-[0.99] shadow-xs cursor-pointer"
+                    className="btn-press flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-5 text-[11px] font-medium text-[var(--text-loft-primary)] transition-colors sm:w-auto"
                   >
                     <Plus className="w-4 h-4 text-[var(--text-loft-primary)]" />
                     <span>{t.lobby.createRoom}</span>
@@ -316,7 +309,7 @@ export default function LobbyPage() {
                   type="button"
                   disabled={isConnecting}
                   onClick={() => void handleJoin()}
-                  className="btn-press w-full h-12 rounded-[6px] bg-[#101113] hover:bg-[#101113] active:scale-[0.99] text-white text-[11px] font-medium tracking-tight flex items-center justify-center gap-2 transition-all shadow-md shadow-[#101113]/25 cursor-pointer disabled:opacity-75"
+                  className="btn-press flex h-12 w-full items-center justify-center gap-2 rounded-[6px] bg-[#101113] text-[11px] font-medium tracking-tight text-white transition-colors disabled:cursor-not-allowed disabled:opacity-75"
                 >
                   {isConnecting ? (
                     <>
@@ -343,7 +336,7 @@ export default function LobbyPage() {
                 <button
                   onClick={() => void signInWithGoogle("/home")}
                   type="button"
-                  className="btn-press w-full h-11 px-4 rounded-[6px] bg-[var(--bg-loft-surface)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] text-[var(--text-loft-primary)] text-[11px] font-medium flex items-center justify-center gap-3 transition-all active:scale-[0.99] border border-[var(--border-loft)] shadow-xs cursor-pointer group"
+                  className="btn-press group flex h-11 w-full items-center justify-center gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] font-medium text-[var(--text-loft-primary)] transition-colors"
                 >
                   <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                     <path
@@ -382,12 +375,13 @@ export default function LobbyPage() {
               </div>
             )}
           </div>
-        </div>
+          </div>
+        </section>
 
       </main>
 
       <footer className="border-t border-[var(--border-loft)] px-4 py-4 sm:px-6">
-        <nav aria-label="Thông tin pháp lý" className="mx-auto flex w-full max-w-[480px] items-center justify-center gap-4 text-[11px] text-[var(--text-loft-muted)]">
+        <nav aria-label="Thông tin pháp lý" className="mx-auto flex w-full max-w-[920px] items-center justify-center gap-4 text-[11px] text-[var(--text-loft-muted)]">
           <Link href="/privacy" className="transition-colors hover:text-[var(--text-loft-primary)]">
             {locale === "vi" ? "Quyền riêng tư" : "Privacy"}
           </Link>

@@ -10,9 +10,98 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"loft/backend/internal/domain"
+	"loft/backend/internal/spotify"
 )
 
 type Postgres struct{ pool *pgxpool.Pool }
+
+func (p *Postgres) SaveSpotifyCredentials(ctx context.Context, c spotify.Credentials, accessCiphertext, refreshCiphertext string) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO spotify_connections (user_id, access_token_ciphertext, refresh_token_ciphertext, scopes, expires_at, revoked_at)
+		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id) DO UPDATE SET access_token_ciphertext=EXCLUDED.access_token_ciphertext, refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext, scopes=EXCLUDED.scopes, expires_at=EXCLUDED.expires_at, revoked_at=EXCLUDED.revoked_at, updated_at=NOW()`, c.UserID, accessCiphertext, refreshCiphertext, c.Scopes, c.ExpiresAt, c.RevokedAt)
+	return err
+}
+
+func (p *Postgres) LoadSpotifyCredentials(ctx context.Context, userID string) (accessCiphertext, refreshCiphertext string, scopes []string, expiresAt time.Time, revokedAt *time.Time, err error) {
+	err = p.pool.QueryRow(ctx, `SELECT access_token_ciphertext, refresh_token_ciphertext, scopes, expires_at, revoked_at FROM spotify_connections WHERE user_id=$1`, userID).Scan(&accessCiphertext, &refreshCiphertext, &scopes, &expiresAt, &revokedAt)
+	return
+}
+
+func (p *Postgres) RevokeSpotifyCredentials(ctx context.Context, userID string, at time.Time) error {
+	_, err := p.pool.Exec(ctx, `UPDATE spotify_connections SET revoked_at=$2, updated_at=NOW() WHERE user_id=$1`, userID, at)
+	return err
+}
+
+func (p *Postgres) UpdateSpotifyTokens(ctx context.Context, userID, accessCiphertext, refreshCiphertext string, expiresAt time.Time) error {
+	_, err := p.pool.Exec(ctx, `UPDATE spotify_connections SET access_token_ciphertext=$2, refresh_token_ciphertext=$3, expires_at=$4, revoked_at=NULL, updated_at=NOW() WHERE user_id=$1`, userID, accessCiphertext, refreshCiphertext, expiresAt)
+	return err
+}
+
+func (p *Postgres) DisconnectSpotify(ctx context.Context, userID string) error {
+	_, err := p.pool.Exec(ctx, `DELETE FROM spotify_connections WHERE user_id=$1`, userID)
+	return err
+}
+
+func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_picks (id, room_id, video_id, title, channel, suggested_by, active) VALUES ($1,$2,$3,$4,$5,$6,$7)`, pick.ID, pick.RoomID, pick.VideoID, pick.Title, pick.Channel, pick.SuggestedBy, pick.Active)
+	return err
+}
+
+func (p *Postgres) ListRoomPicks(ctx context.Context, roomID string) ([]YouTubeRoomPick, error) {
+	rows, err := p.pool.Query(ctx, `SELECT p.id, p.room_id, p.video_id, p.title, p.channel, p.suggested_by, p.active, p.created_at, COALESCE(COUNT(v.user_id), 0)::int AS votes
+		FROM youtube_room_picks p
+		LEFT JOIN youtube_room_pick_votes v ON v.pick_id = p.id
+		WHERE p.room_id=$1 AND p.active
+		GROUP BY p.id, p.room_id, p.video_id, p.title, p.channel, p.suggested_by, p.active, p.created_at
+		ORDER BY votes DESC, p.created_at ASC LIMIT 100`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var picks []YouTubeRoomPick
+	for rows.Next() {
+		var pick YouTubeRoomPick
+		if err := rows.Scan(&pick.ID, &pick.RoomID, &pick.VideoID, &pick.Title, &pick.Channel, &pick.SuggestedBy, &pick.Active, &pick.CreatedAt, &pick.Votes); err != nil {
+			return nil, err
+		}
+		picks = append(picks, pick)
+	}
+	return picks, rows.Err()
+}
+
+func (p *Postgres) ListRoomPickVoters(ctx context.Context, roomID string) (map[string][]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT v.pick_id, v.user_id FROM youtube_room_pick_votes v JOIN youtube_room_picks p ON p.id = v.pick_id WHERE p.room_id=$1 AND p.active`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	voters := make(map[string][]string)
+	for rows.Next() {
+		var pickID, userID string
+		if err := rows.Scan(&pickID, &userID); err != nil {
+			return nil, err
+		}
+		voters[pickID] = append(voters[pickID], userID)
+	}
+	return voters, rows.Err()
+}
+
+func (p *Postgres) VoteRoomPick(ctx context.Context, pickID, userID string) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_pick_votes (pick_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, pickID, userID)
+	return err
+}
+func (p *Postgres) PromoteRoomPick(ctx context.Context, pickID string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE youtube_room_picks SET active=FALSE WHERE id=$1 AND active`, pickID)
+	return err
+}
+func (p *Postgres) SetAutoplay(ctx context.Context, settings YouTubeMediaSettings) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_media_settings (room_id, autoplay_enabled, updated_by) VALUES ($1,$2,$3) ON CONFLICT (room_id) DO UPDATE SET autoplay_enabled=EXCLUDED.autoplay_enabled, updated_by=EXCLUDED.updated_by, updated_at=NOW()`, settings.RoomID, settings.AutoplayEnabled, settings.UpdatedBy)
+	return err
+}
+func (p *Postgres) GetMediaSettings(ctx context.Context, roomID string) (YouTubeMediaSettings, error) {
+	var s YouTubeMediaSettings
+	err := p.pool.QueryRow(ctx, `SELECT room_id, autoplay_enabled, COALESCE(updated_by::text,''), updated_at FROM youtube_room_media_settings WHERE room_id=$1`, roomID).Scan(&s.RoomID, &s.AutoplayEnabled, &s.UpdatedBy, &s.UpdatedAt)
+	return s, err
+}
 
 func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
@@ -154,7 +243,9 @@ func (p *Postgres) IsRoomMember(ctx context.Context, roomID, userID string) (boo
 }
 
 func (p *Postgres) RequestRoomAccess(ctx context.Context, roomID string, identity domain.Identity) error {
-	if err := p.UpsertProfile(ctx, identity); err != nil { return err }
+	if err := p.UpsertProfile(ctx, identity); err != nil {
+		return err
+	}
 	_, err := p.pool.Exec(ctx, `INSERT INTO room_join_requests (room_id, user_id) VALUES ($1::uuid, $2::uuid) ON CONFLICT DO NOTHING`, roomID, identity.ID)
 	return err
 }
@@ -163,21 +254,42 @@ func (p *Postgres) ListJoinRequests(ctx context.Context, roomID, ownerID string)
 	rows, err := p.pool.Query(ctx, `SELECT r.user_id, p.display_name, COALESCE(p.avatar_url, ''), r.requested_at
 		FROM room_join_requests r JOIN profiles p ON p.id=r.user_id JOIN rooms room ON room.id=r.room_id
 		WHERE r.room_id=$1::uuid AND room.owner_id=$2::uuid ORDER BY r.requested_at ASC`, roomID, ownerID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	requests := make([]domain.JoinRequest, 0)
-	for rows.Next() { var item domain.JoinRequest; if err := rows.Scan(&item.UserID, &item.DisplayName, &item.AvatarURL, &item.RequestedAt); err != nil { return nil, err }; requests = append(requests, item) }
+	for rows.Next() {
+		var item domain.JoinRequest
+		if err := rows.Scan(&item.UserID, &item.DisplayName, &item.AvatarURL, &item.RequestedAt); err != nil {
+			return nil, err
+		}
+		requests = append(requests, item)
+	}
 	return requests, rows.Err()
 }
 
 func (p *Postgres) ResolveJoinRequest(ctx context.Context, roomID, ownerID, userID string, approve bool) error {
 	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_join_requests r JOIN rooms room ON room.id=r.room_id WHERE r.room_id=$1::uuid AND r.user_id=$2::uuid AND room.owner_id=$3::uuid)`, roomID, userID, ownerID).Scan(&exists); err != nil || !exists { if err == nil { return domain.ErrNotFound }; return err }
-	if approve { if _, err = tx.Exec(ctx, `INSERT INTO room_members (room_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'member') ON CONFLICT DO NOTHING`, roomID, userID); err != nil { return err } }
-	if _, err = tx.Exec(ctx, `DELETE FROM room_join_requests WHERE room_id=$1::uuid AND user_id=$2::uuid`, roomID, userID); err != nil { return err }
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_join_requests r JOIN rooms room ON room.id=r.room_id WHERE r.room_id=$1::uuid AND r.user_id=$2::uuid AND room.owner_id=$3::uuid)`, roomID, userID, ownerID).Scan(&exists); err != nil || !exists {
+		if err == nil {
+			return domain.ErrNotFound
+		}
+		return err
+	}
+	if approve {
+		if _, err = tx.Exec(ctx, `INSERT INTO room_members (room_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'member') ON CONFLICT DO NOTHING`, roomID, userID); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM room_join_requests WHERE room_id=$1::uuid AND user_id=$2::uuid`, roomID, userID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

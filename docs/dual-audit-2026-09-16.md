@@ -14,7 +14,6 @@ Compared current documentation with the Go routes/configuration, frontend API cl
 | High | Migration instructions stopped at `000004` | Repository contains `000005` and `000006` | README and deployment now require all migrations in numeric order |
 | High | API catalog omitted `PATCH /api/v1/rooms/{id}` and documented an unused invite-expiry error | Route exists in `server.go`; invite expiry route/code does not | API catalog corrected |
 | High | Hover surfaces changed background while nested labels/icons retained fixed colors | Repeated across Lobby, Home, drawers, settings, menus | `hover-invert` now applies a quiet semantic tint and preserves nested contrast |
-| Medium | Root README described video effects as deferred | Effects pipeline exists under `src/features/room/effects` | Scope text corrected |
 | Medium | Frontend README called the app “Loft MVP 1” and omitted variables/tests | Current app is Mingly with MVP3 features | Replaced with concise setup, environment, and verification tables |
 | Medium | Current architecture docs still used the old product name | Product identity is Mingly; lowercase compatibility identifiers remain intentional | Updated current docs from product-name “Loft” to “Mingly” |
 | Medium | Error translation still has generic fallbacks such as “An unexpected error occurred” | `frontend/src/lib/i18n/uiText.ts` | Keep only as final fallback; feature paths should supply cause plus recovery |
@@ -73,6 +72,6 @@ Compared current documentation with the Go routes/configuration, frontend API cl
 - Open Lobby, Home, Join, Room, create/settings/delete dialogs, and all drawers.
 - Hover and keyboard-focus every control; labels/icons remain readable.
 - Verify empty, loading, reconnecting, permission-denied, not-found, rate-limited, and dependency-unavailable states.
-- Verify guest join, password join, authenticated create, room update, kick/ban, reactions, effects, chat, queue, and reconnect.
+- Verify guest join, password join, authenticated create, room update, kick/ban, reactions, chat, queue, and reconnect.
 - Run frontend lint, typecheck, unit tests, build, and E2E.
 - Run backend vet, tests, race detector, and build when backend changes.

@@ -12,7 +12,6 @@ This directory records all critical architectural decisions for Mingly. Each rec
 - [ADR-004: Redis for Ephemeral State and Inter-Node Fan-Out](#adr-004-redis-for-ephemeral-state-and-inter-node-fan-out)
 - [ADR-005: Snapshot Recovery Over Event Sourcing / Replay Buffers](#adr-005-snapshot-recovery-over-event-sourcing--replay-buffers)
 - [ADR-006: Dedicated WebSocket Protocol for Control Plane](#adr-006-dedicated-websocket-protocol-for-control-plane)
-- [ADR-007: Client-Side Video Effects via MediaPipe & OffscreenCanvas](#adr-007-client-side-video-effects-via-mediapipe--offscreencanvas)
 - [ADR-008: Server-Authoritative Shared Media State with Timestamp Prediction](#adr-008-server-authoritative-shared-media-state-with-timestamp-prediction)
 - [ADR-009: Official YouTube Client Embed (Zero Backend Restreaming)](#adr-009-official-youtube-client-embed-zero-backend-restreaming)
 - [ADR-010: Camera Mirroring Separation (Preview vs Published Track)](#adr-010-camera-mirroring-separation-preview-vs-published-track)
@@ -100,22 +99,6 @@ This directory records all critical architectural decisions for Mingly. Each rec
   - *WebRTC Data Channels for App Events:* Complex peer setup; couples application messaging to the WebRTC connection state; hard to inspect and debug.
 - **Consequences:**
   - Application features (chat, shared media, room management) remain 100% operational even if LiveKit media connectivity fails.
-
----
-
-### ADR-007: Client-Side Video Effects via MediaPipe & OffscreenCanvas
-
-- **Status:** Accepted
-- **MVP rollout:** Deferred to MVP 3. MVP 2 ships raw camera capture and presentation-layer mirroring only.
-- **Context:** Users want background blur/replacement and playful face filters. Processing camera video streams on the backend would require costly GPU server clusters, massive ingress/egress bandwidth, and introduce severe privacy risks.
-- **Decision:** Execute all video effects **client-side** in the user's browser using `@mediapipe/tasks-vision` (WebAssembly/SIMD) and HTML Canvas compositing, piping the resulting `MediaStreamTrack` directly to LiveKit.
-- **Alternatives Considered:**
-  - *Server-Side Media Processing (GStreamer / FFmpeg on backend):* Prohibitive server compute costs ($>100\times$ higher), latency inflation ($+100\text{ms}$), and privacy violations.
-  - *Cloud Vision APIs:* High per-minute billing; unsustainable for free social hangout rooms.
-- **Consequences:**
-  - Zero server GPU costs and zero video frame bandwidth on Go servers.
-  - User video frames never leave the client unencrypted.
-  - Requires tiered client performance degradation (audio stability > camera stability > filter quality).
 
 ---
 

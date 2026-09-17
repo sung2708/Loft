@@ -6,7 +6,7 @@ This document specifies the testing methodology, automated test suites, and mand
 
 ## 1. Automated vs Real-Browser Testing Boundary
 
-Realtime WebRTC cannot be fully validated through headless synthetic scripts alone. Mingly strictly distinguishes automated checks from real physical-device testing. SPEC 004 adds release-blocking two-peer checks for effects, raw fallback, local/remote orientation, camera switching, screen/microphone isolation, weak-device degradation, privacy, and repeated lifecycle cleanup.
+Realtime WebRTC cannot be fully validated through headless synthetic scripts alone. Mingly strictly distinguishes automated checks from real physical-device testing, including local/remote orientation, camera switching, screen/microphone isolation, weak-device degradation, privacy, and repeated lifecycle cleanup.
 
 ```
 +────────────────────────────────────────+────────────────────────────────────────+
@@ -92,5 +92,5 @@ pnpm exec tsc --noEmit
 
 - Verify every room atmosphere in Light, Dark, and System without changing the persisted personal theme.
 - With reduced motion, data saver, or a constrained device signal, disable adaptive palette work and retain a static semantic treatment.
-- Screen share suppresses decorative prominence; camera, effects, participant identity, reactions, drawers, and Call Dock retain their established ownership and layout.
+- Screen share suppresses decorative prominence; camera, participant identity, reactions, drawers, and Call Dock retain their established ownership and layout.
 - Test 1440, 1280, 1024, 768, 430, and 375 pixel widths for horizontal overflow and control overlap. Physical-device results must be recorded as `NOT VERIFIED` until actually executed.

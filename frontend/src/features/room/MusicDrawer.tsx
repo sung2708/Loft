@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import Script from "next/script";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   X,
   Plus,
@@ -21,61 +20,15 @@ import {
   Music,
 } from "lucide-react";
 import { emptyMedia, useMusicStore } from "@/stores/useMusicStore";
+import { useMusicPlayerStore } from "@/stores/useMusicPlayerStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useRoomSession } from "./RoomSession";
-import { canonicalPositionMs, driftCorrection } from "./mediaClock";
 import { useTranslation } from "@/lib/i18n/useTranslation";
-
-interface YouTubePlayer {
-  cueVideoById(id: string, startSeconds?: number): void;
-  loadVideoById?(id: string, startSeconds?: number): void;
-  playVideo(): void;
-  pauseVideo(): void;
-  stopVideo(): void;
-  seekTo(seconds: number, allowSeekAhead: boolean): void;
-  getCurrentTime(): number;
-  getDuration(): number;
-  getPlayerState(): number;
-  getPlaybackRate?(): number;
-  getAvailablePlaybackRates?(): number[];
-  setPlaybackRate?(rate: number): void;
-  getVideoData?(): { video_id: string; title?: string; author?: string };
-  setVolume(volume: number): void;
-  isMuted?(): boolean;
-  mute?(): void;
-  unMute?(): void;
-  destroy(): void;
-}
-
-interface YouTubeAPI {
-  Player: new (
-    element: HTMLElement,
-    options: {
-      width: string;
-      height: string;
-      playerVars: {
-        playsinline: number;
-        origin: string;
-        controls: number;
-        modestbranding: number;
-        rel: number;
-      };
-      events: {
-        onReady: () => void;
-        onStateChange: (event: { data: number }) => void;
-        onError: () => void;
-        onAutoplayBlocked: () => void;
-      };
-    },
-  ) => YouTubePlayer;
-}
-
-declare global {
-  interface Window {
-    YT?: YouTubeAPI;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
+import { SpotifyPanel } from "./SpotifyPanel";
+import { YouTubeRoomPicks } from "./YouTubeRoomPicks";
+import { useAuth } from "@/lib/auth/useAuth";
+import { API_URL } from "@/lib/config";
+import { useMobileDrawerFocus } from "./useMobileDrawerFocus";
 
 function formatTime(seconds: number): string {
   if (isNaN(seconds) || seconds < 0) return "0:00";
@@ -87,107 +40,110 @@ function formatTime(seconds: number): string {
 export function MusicDrawer({
   open,
   onClose,
+  onPlayerSurfaceReady,
 }: {
   open: boolean;
   onClose: () => void;
+  onPlayerSurfaceReady: (surface: HTMLDivElement | null) => void;
 }) {
   const { t } = useTranslation();
+  const { session: authSession } = useAuth();
   const mq = t.mediaQueue;
 
   const media = useMusicStore((state) => state.media ?? emptyMedia);
   const available = useMusicStore((state) => state.available);
   const error = useMusicStore((state) => state.error);
-  const clockOffset = useMusicStore((state) => state.clockOffsetMs);
   const self = useRoomStore((state) => state.self);
   const room = useRoomStore((state) => state.room);
   const session = useRoomSession();
+  const activated = useMusicPlayerStore((state) => state.activated);
+  const volume = useMusicPlayerStore((state) => state.volume);
+  const playerReady = useMusicPlayerStore((state) => state.playerReady);
+  const duration = useMusicPlayerStore((state) => state.duration);
+  const currentTime = useMusicPlayerStore((state) => state.currentTime);
+  const setVolume = useMusicPlayerStore((state) => state.setVolume);
+  const requestAudioActivation = useMusicPlayerStore(
+    (state) => state.requestAudioActivation,
+  );
 
   const [url, setUrl] = useState("");
   const [isAdding, setIsAdding] = useState(false);
-  const [activated, setActivated] = useState(false);
-  const [volume, setVolume] = useState(80);
-  const [isMuted, setIsMuted] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [isScrubbing, setIsScrubbing] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [musicTab, setMusicTab] = useState<"queue" | "spotify">("queue");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Array<{ video_id: string; title: string; channel: string; thumbnail?: string }>>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    if (!val.trim()) {
+      setSearchResults([]);
+      setSearching(false);
+      setSearched(false);
+    }
+  };
 
   const [metaMap, setMetaMap] = useState<
     Record<string, { title?: string; channel?: string }>
   >({});
 
-  const [apiReady, setApiReady] = useState(
-    () => typeof window !== "undefined" && Boolean(window.YT?.Player),
-  );
-  const [playerReady, setPlayerReady] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<YouTubePlayer | null>(null);
-  const loadedVideo = useRef<string | null>(null);
+  const playerSurfaceRef = useRef<HTMLDivElement>(null);
   const pendingVersion = useRef<number | null>(null);
-  const durationReport = useRef<{ key: string; at: number } | null>(null);
   const metadataFetching = useRef(new Set<string>());
+  const { closeButtonRef, isModal, panelRef } = useMobileDrawerFocus(open);
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query || !authSession?.access_token) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setSearching(true);
+      fetch(`${API_URL}/api/v1/youtube/search?q=${encodeURIComponent(query)}`, {
+        headers: { Authorization: `Bearer ${authSession.access_token}` },
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload) => {
+          if (!controller.signal.aborted) {
+            setSearchResults(payload?.items ?? []);
+            setSearched(true);
+          }
+        })
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.name === "AbortError") return;
+          if (!controller.signal.aborted) {
+            setSearchResults([]);
+            setSearched(true);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setSearching(false);
+          }
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchQuery, authSession?.access_token]);
 
   const canControl = Boolean(
     self?.identity_type === "user" && room?.owner_id === self.identity_id,
   );
-  const latest = useRef({
-    media,
-    clockOffset,
-    activated,
-    volume,
-    canControl,
-    sendCommand: session.sendCommand,
-  });
-  useEffect(() => {
-    latest.current = {
-      media,
-      clockOffset,
-      activated,
-      volume,
-      canControl,
-      sendCommand: session.sendCommand,
-    };
-  }, [media, clockOffset, activated, volume, canControl, session.sendCommand]);
-
-  // The IFrame API invokes this global callback as soon as its script finishes
-  // evaluating. Register it before Next's Script callback runs so we cannot
-  // miss that one-shot signal on a fast connection.
-  useEffect(() => {
-    if (window.YT?.Player) return;
-
-    const previousCallback = window.onYouTubeIframeAPIReady;
-    const markReady = () => setApiReady(true);
-    const callback = () => {
-      previousCallback?.();
-      markReady();
-    };
-    window.onYouTubeIframeAPIReady = callback;
-
-    // The callback can have fired before this component mounted (for example,
-    // when navigating back to a room). Polling briefly covers that case while
-    // still stopping as soon as the API is available.
-    const readinessCheck = window.setInterval(() => {
-      if (window.YT?.Player) {
-        markReady();
-        window.clearInterval(readinessCheck);
-      }
-    }, 100);
-    const stopReadinessCheck = window.setTimeout(
-      () => window.clearInterval(readinessCheck),
-      10_000,
-    );
-
-    return () => {
-      window.clearInterval(readinessCheck);
-      window.clearTimeout(stopReadinessCheck);
-      if (window.onYouTubeIframeAPIReady === callback) {
-        window.onYouTubeIframeAPIReady = previousCallback;
-      }
-    };
-  }, []);
+  const setPlayerSurface = useCallback(
+    (surface: HTMLDivElement | null) => {
+      playerSurfaceRef.current = surface;
+      onPlayerSurfaceReady(surface);
+    },
+    [onPlayerSurfaceReady],
+  );
 
   useEffect(() => {
     if (
@@ -231,237 +187,10 @@ export function MusicDrawer({
     });
   }, [media, metaMap]);
 
-  // Initialize official YouTube Iframe Player
-  useEffect(() => {
-    if (!apiReady || !containerRef.current || !window.YT?.Player) return;
-
-    const instance = new window.YT.Player(containerRef.current, {
-      width: "100%",
-      height: "100%",
-      playerVars: {
-        playsinline: 1,
-        origin: location.origin,
-        controls: 0,
-        modestbranding: 1,
-        rel: 0,
-      },
-      events: {
-        onReady: () => {
-          playerRef.current = instance;
-          setPlayerReady(true);
-          instance.setVolume(latest.current.volume);
-          const state = latest.current.media;
-          if (state.current) {
-            loadedVideo.current = state.current.video_id;
-            const targetPosSec =
-              canonicalPositionMs(
-                state.position_ms,
-                state.started_at,
-                state.status,
-                Date.now() + latest.current.clockOffset,
-              ) / 1000;
-            instance.cueVideoById(state.current.video_id, targetPosSec);
-            if (latest.current.activated && state.status === "PLAYING") {
-              instance.playVideo();
-            }
-          }
-        },
-        onStateChange: ({ data }) => {
-          const state = latest.current.media;
-          const videoData = instance.getVideoData?.();
-          if (state.current && videoData?.title?.trim()) {
-            setMetaMap((prev) => ({
-              ...prev,
-              [state.current!.video_id]: {
-                title: videoData.title,
-                channel: videoData.author || prev[state.current!.video_id]?.channel || "YouTube",
-              },
-            }));
-          }
-
-          if (instance.getDuration) {
-            const dur = instance.getDuration();
-            if (dur > 0) setDuration(dur);
-          }
-
-          // Cued and ready to play
-          if (data === 5 && state.status === "PLAYING" && latest.current.activated) {
-            instance.playVideo();
-          }
-
-          // The room authority advances at the canonical end time.
-        },
-        onError: () => {
-          useMusicStore
-            .getState()
-            .setError("This YouTube video cannot play here. The host can skip it.");
-        },
-        onAutoplayBlocked: () => {
-          // A click in the room may not grant permission to the cross-origin
-          // iframe. Leave a real gesture button visible instead of retrying.
-          if (instance.getPlayerState() !== 1) setActivated(false);
-        },
-      },
-    });
-
-    return () => {
-      playerRef.current = null;
-      try {
-        instance.destroy();
-      } catch {}
-      loadedVideo.current = null;
-    };
-  }, [apiReady]);
-
-  // Synchronize playback state with authoritative room updates
-  useEffect(() => {
-    const instance = playerRef.current;
-    if (!instance) return;
-
-    if (!media.current) {
-      if (loadedVideo.current) instance.stopVideo();
-      loadedVideo.current = null;
-      return;
-    }
-
-    const target =
-      canonicalPositionMs(
-        media.position_ms,
-        media.started_at,
-        media.status,
-        Date.now() + clockOffset,
-      ) / 1000;
-
-    if (loadedVideo.current !== media.current.video_id) {
-      loadedVideo.current = media.current.video_id;
-      if (activated && media.status === "PLAYING") {
-        if (typeof instance.loadVideoById === "function") {
-          instance.loadVideoById(media.current.video_id, target);
-        } else {
-          instance.cueVideoById(media.current.video_id, target);
-          instance.playVideo();
-        }
-      } else {
-        instance.cueVideoById(media.current.video_id, target);
-      }
-    } else if (Math.abs(instance.getCurrentTime() - target) > 1.5) {
-      instance.seekTo(target, true);
-    }
-
-    if (activated && media.status === "PLAYING") {
-      if (instance.getPlayerState() !== 1) instance.playVideo();
-    } else {
-      instance.pauseVideo();
-      if (instance.getPlaybackRate?.() !== 1) instance.setPlaybackRate?.(1);
-    }
-  }, [media, clockOffset, activated]);
-
-  // High-frequency continuous timer for smooth progress updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const instance = playerRef.current;
-      const state = latest.current;
-      if (!instance || !state.media.current) return;
-
-      if (!isScrubbing) {
-        if (state.media.status === "PLAYING") {
-          const currentPosSec =
-            canonicalPositionMs(
-              state.media.position_ms,
-              state.media.started_at,
-              state.media.status,
-              Date.now() + state.clockOffset,
-            ) / 1000;
-          setCurrentTime(currentPosSec);
-        } else {
-          setCurrentTime(state.media.position_ms / 1000);
-        }
-      }
-
-      if (instance.getDuration) {
-        const d = instance.getDuration();
-        if (d > 0 && d !== duration) setDuration(d);
-        if (d > 0 && state.canControl && state.media.current) {
-          const seconds = Math.ceil(d);
-          const reportKey = `${state.media.current.id}:${state.media.version}:${seconds}`;
-          if (state.media.current.duration_sec !== seconds && pendingVersion.current === null &&
-            (durationReport.current?.key !== reportKey || Date.now() - durationReport.current.at > 10_000)) {
-            if (state.sendCommand("media.duration", {
-              expected_version: state.media.version,
-              video_id: state.media.current.video_id,
-              duration_sec: seconds,
-            })) durationReport.current = { key: reportKey, at: Date.now() };
-          }
-        }
-      }
-    }, 250);
-
-    return () => clearInterval(interval);
-  }, [duration, isScrubbing]);
-
-  // Compare with the room's canonical clock once per second. YouTube only
-  // supports a subset of rates, so use soft nudges when 0.95/1.05 are offered.
-  useEffect(() => {
-    const resyncTimer = setInterval(() => {
-      const instance = playerRef.current;
-      const state = latest.current;
-      if (!instance || !state.media.current) return;
-
-      const playerState = instance.getPlayerState();
-      if (state.media.status !== "PLAYING" || !state.activated) {
-        if (playerState === 1) instance.pauseVideo();
-        return;
-      }
-
-      if (playerState === 2 || playerState === 5) {
-        instance.playVideo();
-        return;
-      }
-
-      if (playerState === 1) {
-        const target =
-          canonicalPositionMs(
-            state.media.position_ms,
-            state.media.started_at,
-            state.media.status,
-            Date.now() + state.clockOffset,
-          ) / 1000;
-        const correction = driftCorrection(
-          instance.getCurrentTime() * 1000,
-          target * 1000,
-          instance.getPlaybackRate?.() ?? 1,
-          instance.getAvailablePlaybackRates?.() ?? [1],
-        );
-        if (correction.kind === "seek") {
-          instance.seekTo(correction.positionMs / 1000, true);
-          if (instance.getPlaybackRate?.() !== 1) instance.setPlaybackRate?.(1);
-        } else if (correction.kind === "rate") {
-          instance.setPlaybackRate?.(correction.rate);
-        }
-      }
-    }, 1000);
-
-    return () => clearInterval(resyncTimer);
-  }, []);
-
-  const enableAudio = () => {
-    const instance = playerRef.current;
-    if (!instance) return;
-    // Send playVideo directly from the user's click; a React effect scheduled
-    // after the click can lose the browser's transient user activation.
-    instance.unMute?.();
-    instance.setVolume(volume);
-    setIsMuted(false);
-    if (media.status === "PLAYING") instance.playVideo();
-    setActivated(true);
-  };
-
-  const handleAddTrack = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!available || !url.trim() || isAdding) return;
-
+  const addTrackUrl = async (rawUrl: string, playNow = false) => {
+    if (!available || !rawUrl.trim() || isAdding) return;
     setIsAdding(true);
-    const trimmed = url.trim();
+    const trimmed = rawUrl.trim();
 
     // Fetch video metadata first if possible
     let metaTitle = "";
@@ -479,7 +208,7 @@ export function MusicDrawer({
       }
     } catch {}
 
-    const sent = session.sendCommand("queue.add", {
+    const sent = session.sendCommand(playNow ? "media.play_now" : "queue.add", {
       url: trimmed,
       title: metaTitle,
       channel: metaChannel,
@@ -487,6 +216,11 @@ export function MusicDrawer({
 
     if (sent) setUrl("");
     setIsAdding(false);
+  };
+
+  const handleAddTrack = async (event: FormEvent) => {
+    event.preventDefault();
+    await addTrackUrl(url);
   };
 
   const control = (
@@ -506,7 +240,7 @@ export function MusicDrawer({
     if ((type.startsWith("media.") || type === "queue.next" || type === "queue.select") && !canControl) return;
     if (pendingVersion.current === media.version) return;
     if (type === "media.play" || type === "queue.next" || type === "queue.select") {
-      setActivated(true);
+      requestAudioActivation();
     }
 
     if (
@@ -555,18 +289,19 @@ export function MusicDrawer({
   };
 
   const handleSeekCommit = (newSec: number) => {
-    setIsScrubbing(false);
-    setCurrentTime(newSec);
     control("media.seek", { position_ms: Math.round(newSec * 1000) });
   };
 
   useEffect(() => {
+    if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+  }, [open, onClose]);
+
+  useEffect(() => () => onPlayerSurfaceReady(null), [onPlayerSurfaceReady]);
 
   useEffect(() => {
     if (!showVolumeSlider) return;
@@ -588,17 +323,11 @@ export function MusicDrawer({
 
   const handleVolumeChange = (newVol: number) => {
     setVolume(newVol);
-    if (playerRef.current) {
-      playerRef.current.setVolume(newVol);
-      if (isMuted && newVol > 0) {
-        playerRef.current.unMute?.();
-        setIsMuted(false);
-      }
-    }
+    if (newVol > 0) requestAudioActivation();
   };
 
   const toggleFullscreen = () => {
-    const el = containerRef.current?.parentElement;
+    const el = playerSurfaceRef.current?.parentElement;
     if (!el) return;
     if (!document.fullscreenElement) {
       el.requestFullscreen().catch(() => {});
@@ -628,47 +357,47 @@ export function MusicDrawer({
 
   return (
     <aside
+      ref={panelRef}
+      role="dialog"
+      aria-modal={isModal || undefined}
       aria-label={mq.sharedQueue}
       aria-hidden={!open}
-      className={`fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 flex w-full flex-col border-l border-[var(--border-loft)] bg-[var(--bg-loft-card)] shadow-2xl transition-transform duration-500 md:relative md:top-auto md:right-auto md:bottom-auto md:z-auto md:h-full md:w-96 md:shrink-0 ${
-        open ? "translate-x-0" : "translate-x-full pointer-events-none md:translate-x-0"
+      inert={!open}
+      className={`fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-0 top-14 z-40 flex w-full flex-col border-l border-[var(--border-loft)] bg-[var(--bg-loft-card)] shadow-2xl transition-opacity duration-150 md:bottom-auto md:right-auto md:top-auto md:z-auto md:col-start-2 md:h-full md:w-96 md:shrink-0 ${
+        open
+          ? "opacity-100"
+          : "invisible pointer-events-none opacity-0 md:absolute md:inset-y-0 md:right-0 md:w-96"
       }`}
     >
       {/* Header Bar */}
-      <div className="h-14 px-4 flex items-center justify-between border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/50 backdrop-blur-md">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4">
         <div className="flex items-center gap-2">
           <h3 className="font-medium text-[11px] text-[var(--text-loft-primary)]">
             {mq.sharedQueue}
           </h3>
-          <span className="px-2 py-1 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] text-[11px] font-medium">
+          <span className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-2 py-1 text-[11px] font-medium text-[var(--text-loft-primary)]">
             {totalTracksCount}
           </span>
         </div>
         <button
+          ref={closeButtonRef}
           onClick={onClose}
           aria-label={t.common.close}
-          className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-colors cursor-pointer"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-loft-secondary)] hover-invert hover:text-[var(--text-loft-primary)]"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
-
-      {/* Script for YouTube IFrame API */}
-      <Script
-        src="https://www.youtube.com/iframe_api"
-        strategy="afterInteractive"
-        onReady={() => {
-          if (window.YT?.Player) setApiReady(true);
-        }}
-        onError={() => {
-          useMusicStore.getState().setError("Unable to load the YouTube player. Check your connection and try again.");
-        }}
-      />
+      <div className="flex shrink-0 gap-1 border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-2" role="tablist" aria-label={mq.sharedQueue}>
+        <button type="button" role="tab" aria-selected={musicTab === "queue"} onClick={() => setMusicTab("queue")} className={`btn-press flex-1 rounded-[5px] px-2 py-2 text-[11px] font-medium ${musicTab === "queue" ? "bg-[#101113] text-white shadow-sm" : "text-[var(--text-loft-secondary)] hover-invert"}`}>{mq.sharedQueue}</button>
+        <button type="button" role="tab" aria-selected={musicTab === "spotify"} onClick={() => setMusicTab("spotify")} className={`btn-press flex-1 rounded-[5px] px-2 py-2 text-[11px] font-medium ${musicTab === "spotify" ? "bg-[#101113] text-white shadow-sm" : "text-[var(--text-loft-secondary)] hover-invert"}`}>Spotify</button>
+      </div>
+      {musicTab === "spotify" && <SpotifyPanel />}
 
       {/* Drawer Body */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-4 text-left">
+      <div role="tabpanel" className={`${musicTab === "spotify" ? "hidden" : ""} flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 text-left`}>
         {/* Quick Add Input Bar */}
-        <form onSubmit={handleAddTrack} className="flex items-center gap-2">
+        <form onSubmit={handleAddTrack} className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-2 shadow-sm">
           <div className="relative flex-1 min-w-0">
             <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-loft-muted)]" />
             <input
@@ -676,24 +405,116 @@ export function MusicDrawer({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={mq.pasteUrl}
-              className="w-full h-9 pl-10 pr-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[11px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] focus:outline-none focus:border-[var(--border-loft)] transition-all"
+              className="h-9 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] pl-10 pr-3 text-[11px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] outline-none focus:border-[var(--accent-blue)]"
             />
           </div>
           <button
             type="submit"
             disabled={!available || !url.trim() || isAdding}
-            className="h-9 px-4 rounded-[6px] bg-[#101113] hover:bg-[#101113] disabled:opacity-40 text-white text-[11px] font-medium flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+            className="btn-press flex h-9 items-center gap-2 rounded-[6px] bg-[#101113] px-4 text-[11px] font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{isAdding ? mq.adding : mq.add}</span>
           </button>
         </form>
 
+        {canControl && (
+          <label className="flex items-center justify-between gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 py-2 text-[11px] shadow-sm">
+            <span><span className="block font-medium">Autoplay</span><span className="text-[10px] text-[var(--text-loft-secondary)]">Continue with room suggestions when the queue ends</span></span>
+            <input type="checkbox" checked={media.autoplay ?? false} onChange={(event) => session.sendCommand("media.autoplay.set", { autoplay: event.target.checked, expected_version: media.version })} className="h-4 w-4 accent-[var(--accent-blue)]" />
+          </label>
+        )}
+
+        <div className="rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-sm">
+          <input
+            value={searchQuery}
+            onChange={(event) => handleSearchChange(event.target.value)}
+            placeholder="Search YouTube"
+            className="h-9 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 text-[11px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] outline-none focus:border-[var(--accent-blue)]"
+            aria-label="Search YouTube"
+          />
+          {searching && (
+            <p className="mt-2 text-[10px] text-[var(--text-loft-secondary)]">
+              Searching…
+            </p>
+          )}
+          {!searching && searched && searchQuery.trim() && searchResults.length === 0 && (
+            <p className="mt-2 text-[10px] text-[var(--text-loft-secondary)]">
+              No YouTube results.
+            </p>
+          )}
+          {searchResults.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {searchResults.map((result) => (
+                <div
+                  key={result.video_id}
+                  className="flex items-center gap-2 rounded-[5px] border border-transparent p-2 transition-colors hover:border-[var(--border-loft)] hover:bg-[var(--bg-loft-card)]"
+                >
+                  {result.thumbnail && (
+                    <img
+                      src={result.thumbnail}
+                      alt=""
+                      className="h-9 w-12 shrink-0 rounded object-cover"
+                    />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-[11px]">
+                    {result.title}
+                    <span className="block truncate text-[10px] text-[var(--text-loft-secondary)]">
+                      {result.channel}
+                    </span>
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        session.sendCommand("youtube.pick.create", {
+                          video_id: result.video_id,
+                          title: result.title,
+                          channel: result.channel,
+                        })
+                      }
+                      className="rounded border border-[var(--border-loft)] px-2 py-1 text-[10px] hover-invert"
+                    >
+                      Pick
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isAdding || !available}
+                      onClick={() =>
+                        void addTrackUrl(
+                          `https://www.youtube.com/watch?v=${result.video_id}`,
+                        )
+                      }
+                      className="rounded border border-[var(--border-loft)] px-2 py-1 text-[10px] hover-invert disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isAdding || !available}
+                      onClick={() =>
+                        void addTrackUrl(
+                          `https://www.youtube.com/watch?v=${result.video_id}`,
+                          true,
+                        )
+                      }
+                      className="rounded bg-[var(--accent-blue)] px-2 py-1 text-[10px] text-white disabled:opacity-40"
+                    >
+                      Play
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {error && (
           <div className="px-3 py-2 rounded-[6px] bg-[#101113]/10 border border-[var(--border-loft)]/20 text-[var(--text-loft-primary)] text-[11px]">
             {error}
           </div>
         )}
+        <YouTubeRoomPicks />
 
         {/* ---------------- 1. NOW PLAYING COMPACT CARD ---------------- */}
         <div className="flex flex-col gap-2">
@@ -715,12 +536,12 @@ export function MusicDrawer({
             )}
           </div>
 
-          <div className="rounded-[6px] bg-[var(--bg-loft-surface)] border border-[var(--border-loft)] shadow-md overflow-hidden p-3 flex flex-col gap-3">
+          <div className="flex flex-col gap-3 overflow-hidden rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-[6px_6px_0_color-mix(in_srgb,var(--border-loft)_12%,transparent)]">
             {/* 16:9 Video Canvas Viewport */}
-            <div className="relative w-full aspect-video max-h-[190px] rounded-[6px] overflow-hidden bg-[#101113] border border-white/5 shadow-inner">
-              <div ref={containerRef} className="w-full h-full" />
+            <div className="relative aspect-video w-full max-h-[190px] overflow-hidden rounded-[6px] border border-white/10 bg-[#101113] shadow-inner">
+              <div ref={setPlayerSurface} className="w-full h-full" />
               {!media.current && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[var(--text-loft-secondary)] bg-[#26282c]/80">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#101113] text-white/65">
                   <Music className="w-8 h-8 opacity-40" />
                   <span className="text-[11px]">{mq.noMedia}</span>
                 </div>
@@ -749,9 +570,9 @@ export function MusicDrawer({
             {/* Audio Enable Prompt if not yet activated on mobile/Safari */}
             {media.current && media.status === "PLAYING" && !activated && (
               <button
-                onClick={enableAudio}
+                onClick={requestAudioActivation}
                 disabled={!playerReady}
-                className="w-full py-2 rounded-[6px] bg-[#101113] hover:bg-[#101113] disabled:opacity-50 text-white text-[11px] font-medium shadow-xs transition-all"
+                className="btn-press w-full rounded-[6px] bg-[#101113] py-2 text-[11px] font-medium text-white shadow-sm disabled:opacity-50"
               >
                 {mq.enableAudio}
               </button>
@@ -774,15 +595,15 @@ export function MusicDrawer({
                     }
                   }}
                 >
-                  <div className="w-full h-1 bg-[var(--border-loft)] group-hover:h-1.5 rounded-full overflow-hidden transition-all">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-[var(--border-loft)] transition-all group-hover:h-1.5">
                     <div
-                      className="h-full bg-[#101113] rounded-full transition-all duration-200"
+                      className="h-full rounded-full bg-[var(--accent-blue)] transition-all duration-200"
                       style={{ width: `${progressPercent}%` }}
                     />
                   </div>
                   {/* Scrubber thumb */}
                   <div
-                    className="absolute w-3 h-3 rounded-full bg-white shadow-md -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                    className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] opacity-0 shadow-md transition-opacity group-hover:opacity-100"
                     style={{ left: `${progressPercent}%` }}
                   />
                 </div>
@@ -796,7 +617,7 @@ export function MusicDrawer({
 
             {/* Compact Control Button Toolbar */}
             {media.current && (
-              <div className="flex items-center justify-between pt-1 border-t border-[var(--border-loft)]">
+              <div className="flex items-center justify-between border-t border-[var(--border-loft)] pt-2">
                 <div className="flex items-center gap-2">
                   {/* Previous / Restart */}
                   <button
@@ -818,7 +639,7 @@ export function MusicDrawer({
                       )
                     }
                     disabled={!canControl}
-                    className="w-9 h-9 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white flex items-center justify-center shadow-sm active:scale-95 transition-all cursor-pointer"
+                    className="btn-press flex h-9 w-9 items-center justify-center rounded-[6px] bg-[#101113] text-white shadow-sm disabled:opacity-40"
                     title={
                       media.status === "PLAYING" ? mq.pause : mq.play
                     }
@@ -860,7 +681,7 @@ export function MusicDrawer({
                       aria-label={mq.volume}
                       aria-expanded={showVolumeSlider}
                     >
-                      {isMuted || volume === 0 ? (
+                      {volume === 0 ? (
                         <VolumeX className="w-4 h-4 text-[var(--text-loft-primary)]" />
                       ) : (
                         <Volume2 className="w-4 h-4" />
@@ -869,19 +690,19 @@ export function MusicDrawer({
 
                     {/* Inline mini slider when hovered */}
                     {showVolumeSlider && (
-                      <div role="dialog" aria-label={mq.volume} className="absolute right-0 bottom-full mb-1 p-2 rounded-[6px] bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-xl z-50 flex items-center gap-2">
+                      <div role="dialog" aria-label={mq.volume} className="absolute bottom-full right-0 z-50 mb-1 flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl">
                         <input
                           type="range"
                           min="0"
                           max="100"
-                          value={isMuted ? 0 : volume}
+                          value={volume}
                           onChange={(e) =>
                             handleVolumeChange(Number(e.target.value))
                           }
                           className="w-20 accent-[#101113] cursor-pointer"
                         />
                         <span className="text-[11px] font-mono w-6 text-right">
-                          {isMuted ? 0 : volume}%
+                          {volume}%
                         </span>
                       </div>
                     )}
@@ -920,9 +741,9 @@ export function MusicDrawer({
             </span>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             {media.queue.length === 0 ? (
-              <div className="py-8 text-center text-[11px] text-[var(--text-loft-muted)] rounded-[6px] border border-dashed border-[var(--border-loft)] flex flex-col items-center justify-center gap-1">
+              <div className="flex flex-col items-center justify-center gap-1 rounded-[6px] border border-dashed border-[var(--border-loft)] py-8 text-center text-[11px] text-[var(--text-loft-muted)]">
                 <span>{mq.emptyQueue}</span>
               </div>
             ) : (
@@ -963,7 +784,7 @@ export function MusicDrawer({
                     </div>
 
                     {/* 16:9 Mini Thumbnail */}
-                    <div className="relative w-14 h-9 rounded-[6px] overflow-hidden bg-[#101113] shrink-0 border border-white/5">
+                    <div className="relative h-9 w-14 shrink-0 overflow-hidden rounded-[6px] border border-white/10 bg-[#101113]">
                       <img
                         src={`https://img.youtube.com/vi/${track.video_id}/mqdefault.jpg`}
                         alt=""
@@ -1020,7 +841,7 @@ export function MusicDrawer({
         </div>
 
         {/* ---------------- 3. BOTTOM TOOLBAR ---------------- */}
-        <div className="pt-2 border-t border-[var(--border-loft)] flex items-center justify-between text-[11px] text-[var(--text-loft-secondary)]">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-loft)] pt-2 text-[11px] text-[var(--text-loft-secondary)]">
           <div className="flex items-center gap-2">
             {/* Shuffle */}
             <button

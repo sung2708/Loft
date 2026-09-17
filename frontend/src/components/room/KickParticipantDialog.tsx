@@ -39,7 +39,7 @@ export function KickParticipantDialog({
         aria-modal="true"
         aria-labelledby="kick-participant-title"
         aria-describedby="kick-participant-description"
-        className="w-full max-w-md rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-6 text-[var(--text-loft-primary)] shadow-2xl"
+        className="w-full max-w-md rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-6 text-[var(--text-loft-primary)] shadow-2xl motion-reduce:transform-none sm:[transform:perspective(1200px)_rotateX(1deg)]"
       >
         <h2 id="kick-participant-title" className="text-[11px] font-medium">
           {tr(action === "ban" ? "Temporarily ban participant" : "Remove participant")}
@@ -52,14 +52,14 @@ export function KickParticipantDialog({
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="rounded-[6px] border border-[var(--border-loft)] px-4 py-2 text-[11px] hover-invert hover:bg-[var(--border-loft-light)]"
+            className="btn-press rounded-[6px] border border-[var(--border-loft)] px-4 py-2 text-[11px] hover-invert"
           >
             {tr("Cancel")}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="rounded-[6px] bg-[#101113] px-4 py-2 text-[11px] font-medium text-white hover:bg-[#101113]"
+            className="btn-press rounded-[6px] bg-[#101113] px-4 py-2 text-[11px] font-medium text-white"
           >
             {tr(action === "ban" ? "Ban for 1 hour" : "Remove participant")}
           </button>

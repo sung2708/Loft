@@ -20,7 +20,7 @@ import {
   useTracks,
   VideoTrack,
 } from "@livekit/components-react";
-import { Track, ConnectionState, ConnectionQuality, LocalVideoTrack } from "livekit-client";
+import { Track, ConnectionState, ConnectionQuality } from "livekit-client";
 import { motion } from "framer-motion";
 import { Hand, MicOff } from "lucide-react";
 import { api } from "@/lib/api";
@@ -31,10 +31,10 @@ import { useRoomStore } from "@/stores/useRoomStore";
 import { useChatStore } from "@/stores/useChatStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useMusicStore } from "@/stores/useMusicStore";
+import { useYouTubePicksStore } from "@/stores/useYouTubePicksStore";
+import { useSpotifyStore } from "@/stores/useSpotifyStore";
 import { useReactionStore } from "@/stores/useReactionStore";
 import { useSfxStore } from "@/stores/useSfxStore";
-import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
-import { VideoEffectController } from "./effects/effectController";
 import { playSfx, sfx, unlockSfx } from "@/lib/sfx";
 import type { RoomCredential } from "@/types/api";
 import { RoomView } from "./RoomView";
@@ -47,6 +47,8 @@ import {
   isSecureMediaContext,
 } from "./mediaErrors";
 import { isFrontCameraSelfView } from "./cameraOrientation";
+import { hasActiveScreenShare } from "./screenShare";
+import type { RoomCommandType } from "@/types/room";
 
 const currentText = (english: string) => translateUI(useI18nStore.getState().locale, english);
 
@@ -54,31 +56,9 @@ interface SessionValue {
   token?: string;
   credential?: RoomCredential;
   mediaConnected: boolean;
+  screenShareActive: boolean;
   sendChat: (content: string) => boolean;
-  sendCommand: (
-    type:
-      | "queue.add"
-      | "queue.next"
-      | "queue.select"
-      | "queue.remove"
-      | "queue.clear"
-      | "queue.shuffle"
-      | "queue.reorder"
-      | "media.play"
-      | "media.pause"
-      | "media.seek"
-      | "media.duration"
-      | "media.repeat"
-      | "reaction.send"
-      | "wave.send"
-      | "participant.hand.set"
-      | "room.lock"
-      | "room.appearance.update"
-      | "participant.kick"
-      | "participant.ban"
-      | "host.transfer",
-    payload: object,
-  ) => boolean;
+  sendCommand: (type: RoomCommandType, payload: object) => boolean;
   leave: () => void;
   mediaError: string | null;
   clearMediaError: () => void;
@@ -93,6 +73,7 @@ interface SessionValue {
 const noMedia = async () => undefined;
 const SessionContext = createContext<SessionValue>({
   mediaConnected: false,
+  screenShareActive: false,
   sendChat: () => false,
   sendCommand: () => false,
   leave: () => undefined,
@@ -159,6 +140,10 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           useRoomStore.getState().applySnapshot(event.payload);
           useChatStore.getState().replace(event.payload.messages);
           useMusicStore.getState().replaceMedia(event.payload.media);
+          useYouTubePicksStore.getState().replace(event.payload.picks ?? []);
+          if (currentCredential.type === "user" && currentCredential.token) {
+            void useSpotifyStore.getState().fetchStatus(currentCredential.token);
+          }
           if (!enteredRoom.current) {
             enteredRoom.current = true;
             playSfx("room-enter");
@@ -199,6 +184,10 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
             );
         else if (event.type === "media.state")
           useMusicStore.getState().setMedia(event.payload);
+        else if (event.type === "youtube.pick.created" || event.type === "youtube.pick.voted")
+          useYouTubePicksStore.getState().upsert(event.payload);
+        else if (event.type === "youtube.pick.promoted")
+          useYouTubePicksStore.getState().remove(event.payload.id);
         else if (event.type === "connection.pong" && event.payload.client_time > 0)
           useMusicStore.getState().setClockOffset(event.payload.server_time - (event.payload.client_time + Date.now()) / 2);
         else if (event.type === "reaction.sent") {
@@ -228,6 +217,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
       useRoomStore.getState().reset();
       useChatStore.getState().reset();
       useMusicStore.getState().reset();
+      useYouTubePicksStore.getState().reset();
       useReactionStore.getState().reset();
       enteredRoom.current = false;
     };
@@ -306,6 +296,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     token: credential.token,
     credential,
     mediaConnected: false,
+    screenShareActive: false,
     sendChat,
     sendCommand,
     leave,
@@ -348,35 +339,14 @@ function LiveMediaContext({
   const isTogglingMic = useRef(false);
   const isTogglingCamera = useRef(false);
   const isTogglingScreen = useRef(false);
-  const effectSelection = useVideoEffectsStore((state) => state.selection);
-  const effectController = useRef<VideoEffectController | null>(null);
-
-  useEffect(() => {
-    const controller = new VideoEffectController((runtime) => useVideoEffectsStore.getState().setRuntime(runtime));
-    effectController.current = controller;
-    return () => {
-      effectController.current = null;
-      void controller.destroy();
-      useVideoEffectsStore.getState().reset();
-    };
-  }, []);
-
-  useEffect(() => {
-    const publication = localParticipant.getTrackPublication(Track.Source.Camera);
-    const source = publication?.track instanceof LocalVideoTrack && isCameraEnabled ? publication.track : undefined;
-    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    void effectController.current?.reconcile(source, effectSelection, reducedMotion);
-  }, [localParticipant, isCameraEnabled, connectionState, effectSelection]);
-
-  useEffect(() => {
-    const reconcileVisibility = () => {
-      const publication = localParticipant.getTrackPublication(Track.Source.Camera);
-      const source = !document.hidden && publication?.track instanceof LocalVideoTrack && isCameraEnabled ? publication.track : undefined;
-      void effectController.current?.reconcile(source, useVideoEffectsStore.getState().selection, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
-    };
-    document.addEventListener("visibilitychange", reconcileVisibility);
-    return () => document.removeEventListener("visibilitychange", reconcileVisibility);
-  }, [localParticipant, isCameraEnabled]);
+  const tracks = useTracks(
+    [
+      { source: Track.Source.Camera, withPlaceholder: true },
+      { source: Track.Source.ScreenShare, withPlaceholder: false },
+    ],
+    { onlySubscribed: false },
+  );
+  const screenShareActive = hasActiveScreenShare(tracks);
 
   useEffect(() => {
     if (initialized.current || connectionState !== ConnectionState.Connected) return;
@@ -411,6 +381,7 @@ function LiveMediaContext({
       token: token ?? credential?.token,
       credential,
       mediaConnected: connectionState === ConnectionState.Connected,
+      screenShareActive,
       sendChat,
       sendCommand,
       leave: () => {
@@ -512,6 +483,7 @@ function LiveMediaContext({
       isMicrophoneEnabled,
       isCameraEnabled,
       isScreenShareEnabled,
+      screenShareActive,
       setMediaError,
       token,
       credential,

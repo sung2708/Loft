@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   X,
   Lock,
@@ -27,6 +27,7 @@ import { useSfxStore } from "@/stores/useSfxStore";
 import { useRoomSession } from "./RoomSession";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
 import type { RoomAccent, RoomAtmosphere } from "@/types/api";
+import { useMobileDrawerFocus } from "./useMobileDrawerFocus";
 
 function Switch({
   checked,
@@ -62,6 +63,8 @@ function Switch({
 }
 
 export function SettingsDrawer() {
+  const reducedMotion = useReducedMotion();
+  const { closeButtonRef, isModal, panelRef } = useMobileDrawerFocus(true);
   const room = useRoomStore((state) => state.room);
   const self = useRoomStore((state) => state.self);
   const isHost = self?.role === "host";
@@ -191,21 +194,26 @@ export function SettingsDrawer() {
 
   return (
     <motion.aside
+      ref={panelRef}
+      role="dialog"
+      aria-modal={isModal || undefined}
+      aria-label={vi ? "Cài đặt phòng" : "Room settings"}
       initial={{ x: "100%" }}
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
-      transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-      className="kott-settings fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 flex w-full flex-col border-l md:relative md:top-auto md:right-auto md:bottom-auto md:z-auto md:h-full md:w-96 md:shrink-0"
+      transition={{ duration: reducedMotion ? 0 : 0.5, ease: [0.4, 0, 0.2, 1] }}
+      className="kott-settings fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-0 top-14 z-40 flex w-full flex-col border-l bg-[var(--bg-loft-card)] shadow-2xl md:relative md:bottom-auto md:right-auto md:top-auto md:z-auto md:h-full md:w-96 md:shrink-0"
     >
       {/* Header */}
-      <div className="kott-settings__header h-14 px-5 flex items-center justify-between border-b shrink-0">
+      <div className="kott-settings__header flex h-14 shrink-0 items-center justify-between border-b bg-[var(--bg-loft-surface)] px-5">
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-[6px] bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center">
+          <div className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] text-[var(--text-loft-primary)] shadow-sm">
             <Sliders className="w-4 h-4" />
           </div>
           <h3 className="font-medium uppercase tracking-wide">{vi ? "Cài đặt phòng" : "Room settings"}</h3>
         </div>
         <button
+          ref={closeButtonRef}
           type="button"
           onClick={close}
           aria-label={vi ? "Đóng" : "Close"}
@@ -216,8 +224,8 @@ export function SettingsDrawer() {
       </div>
 
       {/* Form Content */}
-      <form onSubmit={submit} className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+      <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex-1 space-y-5 overflow-y-auto p-4">
           {isHost ? (
             <>
           {/* Room Name & Access Section */}

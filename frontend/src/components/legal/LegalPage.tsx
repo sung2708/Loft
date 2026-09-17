@@ -16,6 +16,7 @@ type LegalCopy = {
   summary: string;
   backLabel: string;
   updatedLabel: string;
+  notice?: string;
   sections: LegalSection[];
 };
 
@@ -26,24 +27,27 @@ export function LegalPage({ copies }: { copies: LegalPageCopies }) {
   const copy = copies[locale];
 
   return (
-    <div className="min-h-screen bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)]">
+    <div className="app-canvas utility-page">
       <AppHeader subtitle="" actions={<LocaleToggle />} />
-      <main className="mx-auto w-full max-w-3xl px-4 pb-12 pt-24 sm:px-8">
+      <main className="mx-auto w-full max-w-3xl px-4 pb-12 pt-24 sm:px-8 sm:pb-16">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 text-[11px] text-[var(--text-loft-secondary)] transition-colors hover:text-[var(--text-loft-primary)]"
+          className="control-secondary inline-flex h-9 items-center gap-2 rounded-[6px] px-3 text-[11px] font-medium"
         >
           <ArrowLeft className="h-4 w-4" />
           {copy.backLabel}
         </Link>
-        <header className="mt-8 border-b border-[var(--border-loft)] pb-8">
-          <h1 className="text-3xl font-medium tracking-tight sm:text-4xl">{copy.title}</h1>
-          <p className="mt-4 max-w-2xl text-[11px] leading-6 text-[var(--text-loft-secondary)]">{copy.summary}</p>
-          <p className="mt-4 text-[11px] text-[var(--text-loft-muted)]">{copy.updatedLabel}: 16/09/2026</p>
+        <article className="utility-panel mt-6 rounded-[6px] px-5 py-7 sm:mt-8 sm:px-8 sm:py-10">
+        <header className="border-b utility-rule pb-7">
+          <p className="eyebrow">Mingly</p>
+          <h1 className="mt-3 text-[clamp(2rem,5vw,3rem)] font-medium leading-none tracking-[-0.04em]">{copy.title}</h1>
+          <p className="mt-5 max-w-2xl text-[11px] leading-6 text-[var(--text-loft-secondary)]">{copy.summary}</p>
+          <p className="mt-5 text-[11px] text-[var(--text-loft-muted)]">{copy.updatedLabel}: 17/09/2026</p>
         </header>
-        <div className="divide-y divide-[var(--border-loft)]">
+        {copy.notice && <aside className="mt-6 rounded-[10px] border border-[var(--accent-blue)]/30 bg-[var(--accent-blue)]/8 px-4 py-3 text-[11px] leading-6 text-[var(--text-loft-secondary)]">{copy.notice}</aside>}
+        <div className="divide-y utility-rule">
           {copy.sections.map((section) => (
-            <section key={section.title} className="py-8">
+            <section key={section.title} className="py-7 sm:py-8">
               <h2 className="text-base font-medium tracking-tight">{section.title}</h2>
               <div className="mt-3 space-y-3 text-[11px] leading-6 text-[var(--text-loft-secondary)]">
                 {section.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
@@ -51,6 +55,7 @@ export function LegalPage({ copies }: { copies: LegalPageCopies }) {
             </section>
           ))}
         </div>
+        </article>
       </main>
     </div>
   );

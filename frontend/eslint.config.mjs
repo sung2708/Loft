@@ -22,7 +22,6 @@ const eslintConfig = defineConfig([
     "node_modules/**",
     "dist/**",
     "coverage/**",
-    "public/effects/wasm/**",
     "**/*.min.js",
   ]),
 ]);

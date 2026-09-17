@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,19 +26,28 @@ import (
 )
 
 type Server struct {
-	store         domain.Store
-	deletion      RoomDeletionGuard
-	users         *auth.SupabaseVerifier
-	guests        *auth.GuestTokens
-	livekit       *livekit.TokenService
-	lookupLimit   *ratelimit.Limiter
-	guestLimit    *ratelimit.Limiter
-	passwordLimit *ratelimit.Limiter
-	roomLimit     *ratelimit.Limiter
-	origins       map[string]struct{}
-	logger        *slog.Logger
-	metrics       *observability.Metrics
-	httpLogger    *zerolog.Logger
+	store                domain.Store
+	deletion             RoomDeletionGuard
+	users                *auth.SupabaseVerifier
+	guests               *auth.GuestTokens
+	livekit              *livekit.TokenService
+	lookupLimit          *ratelimit.Limiter
+	guestLimit           *ratelimit.Limiter
+	passwordLimit        *ratelimit.Limiter
+	roomLimit            *ratelimit.Limiter
+	origins              map[string]struct{}
+	logger               *slog.Logger
+	metrics              *observability.Metrics
+	httpLogger           *zerolog.Logger
+	spotifyMu            sync.Mutex
+	spotifyStates        map[string]spotifyOAuthState
+	spotifyTokens        map[string]string
+	spotifyRefreshTokens map[string]string
+}
+
+type spotifyOAuthState struct {
+	UserID, Verifier, RedirectURI, ReturnTo string
+	ExpiresAt                               time.Time
 }
 
 type RoomDeletionGuard interface {
@@ -83,7 +93,7 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 	if len(deletion) > 0 {
 		guard = deletion[0]
 	}
-	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
+	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService, spotifyStates: make(map[string]spotifyOAuthState), spotifyTokens: make(map[string]string), spotifyRefreshTokens: make(map[string]string),
 		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
@@ -138,8 +148,20 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Get("/ready", s.ready)
 		r.Get("/readyz", s.ready)
 		r.Route("/api/v1", func(r chi.Router) {
+			r.Get("/spotify/status", s.spotifyStatus)
+			r.Get("/spotify/connect", s.spotifyConnect)
+			r.Get("/spotify/callback", s.spotifyCallback)
+			r.Get("/spotify/search", s.spotifySearch)
+			r.Post("/spotify/disconnect", s.spotifyDisconnect)
+			r.Post("/spotify/revoke", s.spotifyRevoke)
+			r.Get("/youtube/search", s.youtubeSearch)
+			r.Get("/rooms/{roomID}/youtube/picks", s.listYouTubePicks)
+			r.Post("/rooms/{roomID}/youtube/picks", s.createYouTubePick)
+			r.Post("/rooms/{roomID}/youtube/picks/vote", s.voteYouTubePick)
+			r.Get("/rooms/{roomID}/youtube/settings", s.youtubeMediaSettings)
+			r.Patch("/rooms/{roomID}/youtube/settings", s.youtubeMediaSettings)
 			r.Get("/rooms/resolve", s.resolveRoom)
-			 r.Get("/rooms/{roomID}", s.getRoom)
+			r.Get("/rooms/{roomID}", s.getRoom)
 			r.Post("/rooms/{roomID}/guest-session", s.guestSession)
 			r.Post("/rooms/{roomID}/join-requests", s.requestJoin)
 			r.Get("/rooms/{roomID}/join-requests", s.listJoinRequests)
@@ -525,52 +547,112 @@ func (s *Server) requestIdentity(r *http.Request, room domain.Room) (domain.Iden
 }
 
 func (s *Server) canAccessRoom(ctx context.Context, room domain.Room, identity domain.Identity) bool {
-	if identity.Type == domain.IdentityGuest { return domain.CanJoin(room, identity) }
-	if identity.Type != domain.IdentityUser || identity.ID == "" { return false }
-	if room.AllowGuests || identity.ID == room.OwnerID { return true }
+	if identity.Type == domain.IdentityGuest {
+		return domain.CanJoin(room, identity)
+	}
+	if identity.Type != domain.IdentityUser || identity.ID == "" {
+		return false
+	}
+	if room.AllowGuests || identity.ID == room.OwnerID {
+		return true
+	}
 	members, ok := s.store.(domain.RoomMembershipStore)
-	if !ok { return false }
+	if !ok {
+		return false
+	}
 	member, err := members.IsRoomMember(ctx, room.ID, identity.ID)
 	return err == nil && member
 }
 
 func (s *Server) requestJoin(w http.ResponseWriter, r *http.Request) {
 	identity, err := s.authenticatedUser(r)
-	if err != nil { writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Sign in to request access"); return }
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Sign in to request access")
+		return
+	}
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
-	if errors.Is(err, domain.ErrNotFound) { writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found"); return }
-	if err != nil { s.internal(w, r, "get room for join request", err); return }
-	if room.AllowGuests || identity.ID == room.OwnerID { writeJSON(w, http.StatusOK, map[string]string{"status": "not_required"}); return }
+	if errors.Is(err, domain.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
+		return
+	}
+	if err != nil {
+		s.internal(w, r, "get room for join request", err)
+		return
+	}
+	if room.AllowGuests || identity.ID == room.OwnerID {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "not_required"})
+		return
+	}
 	members, ok := s.store.(domain.RoomMembershipStore)
-	if !ok { writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable"); return }
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable")
+		return
+	}
 	member, err := members.IsRoomMember(r.Context(), room.ID, identity.ID)
-	if err != nil { s.internal(w, r, "check room membership", err); return }
-	if member { writeJSON(w, http.StatusOK, map[string]string{"status": "approved"}); return }
-	if err := members.RequestRoomAccess(r.Context(), room.ID, identity); err != nil { s.internal(w, r, "request room access", err); return }
+	if err != nil {
+		s.internal(w, r, "check room membership", err)
+		return
+	}
+	if member {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
+		return
+	}
+	if err := members.RequestRoomAccess(r.Context(), room.ID, identity); err != nil {
+		s.internal(w, r, "request room access", err)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
 }
 
 func (s *Server) listJoinRequests(w http.ResponseWriter, r *http.Request) {
 	identity, err := s.authenticatedUser(r)
-	if err != nil { writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required"); return }
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
 	members, ok := s.store.(domain.RoomMembershipStore)
-	if !ok { writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable"); return }
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable")
+		return
+	}
 	items, err := members.ListJoinRequests(r.Context(), chi.URLParam(r, "roomID"), identity.ID)
-	if errors.Is(err, domain.ErrNotFound) { writeError(w, http.StatusForbidden, "ROOM_ACCESS_DENIED", "You cannot manage this room"); return }
-	if err != nil { s.internal(w, r, "list room join requests", err); return }
+	if errors.Is(err, domain.ErrNotFound) {
+		writeError(w, http.StatusForbidden, "ROOM_ACCESS_DENIED", "You cannot manage this room")
+		return
+	}
+	if err != nil {
+		s.internal(w, r, "list room join requests", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"requests": items})
 }
 
 func (s *Server) resolveJoinRequest(w http.ResponseWriter, r *http.Request) {
 	identity, err := s.authenticatedUser(r)
-	if err != nil { writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required"); return }
-	var input struct { Approve bool `json:"approve"` }
-	if !decodeJSON(w, r, &input) { return }
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+	var input struct {
+		Approve bool `json:"approve"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
 	members, ok := s.store.(domain.RoomMembershipStore)
-	if !ok { writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable"); return }
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable")
+		return
+	}
 	err = members.ResolveJoinRequest(r.Context(), chi.URLParam(r, "roomID"), identity.ID, chi.URLParam(r, "userID"), input.Approve)
-	if errors.Is(err, domain.ErrNotFound) { writeError(w, http.StatusNotFound, "JOIN_REQUEST_NOT_FOUND", "Join request not found"); return }
-	if err != nil { s.internal(w, r, "resolve room join request", err); return }
+	if errors.Is(err, domain.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "JOIN_REQUEST_NOT_FOUND", "Join request not found")
+		return
+	}
+	if err != nil {
+		s.internal(w, r, "resolve room join request", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"approved": input.Approve})
 }
 

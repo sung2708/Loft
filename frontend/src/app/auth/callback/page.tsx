@@ -5,6 +5,7 @@ import { getSupabase } from "@/lib/supabase/client";
 import { safeAuthDestination } from "@/lib/authRedirect";
 import { useUIText } from "@/lib/i18n/uiText";
 import { LobbyHeader } from "@/components/lobby/LobbyHeader";
+import Link from "next/link";
 
 export default function AuthCallbackPage() {
   const tr = useUIText();
@@ -20,7 +21,7 @@ export default function AuthCallbackPage() {
       if (code) {
         const result = await supabase.auth.exchangeCodeForSession(code);
         if (result.error) {
-          setError(result.error.message);
+          setError("Google sign-in did not return a session");
           return;
         }
       }
@@ -29,26 +30,28 @@ export default function AuthCallbackPage() {
         setError("Google sign-in did not return a session");
         return;
       }
-      location.replace(
-        safeAuthDestination(sessionStorage.getItem("loft.auth.next")),
-      );
+      const queryNext = new URLSearchParams(location.search).get("next");
+      const storedNext = sessionStorage.getItem("loft.auth.next");
+      const destination = safeAuthDestination(queryNext || storedNext);
+      sessionStorage.removeItem("loft.auth.next");
+      location.replace(destination);
     })();
   }, []);
   return (
-    <main className="min-h-screen flex items-center justify-center p-6 pt-20">
+    <main className="app-canvas min-h-screen flex items-center justify-center p-4 pt-20 sm:p-6 sm:pt-20">
       <LobbyHeader />
-      <div className="glass-card rounded-[6px] p-8 text-center">
-        <div className="w-10 h-10 rounded-full border-2 border-[var(--border-loft)]/20 border-t-[#101113] animate-spin mx-auto" />
-        <h1 className="mt-4 font-medium">{tr("Finishing Google sign-in…")}</h1>
+      <section aria-live="polite" className="utility-panel w-full max-w-sm rounded-[6px] p-6 text-center sm:p-8">
+        <div className="app-loader mx-auto" aria-hidden="true" />
+        <h1 className="mt-5 font-medium">{tr(error ? "Could not start Google sign-in" : "Finishing Google sign-in…")}</h1>
         {error && (
           <>
             <p className="mt-2 text-[11px] text-[var(--text-loft-primary)]">{tr(error)}</p>
-            <a href="/" className="inline-block mt-4 text-[11px] text-[var(--text-loft-primary)]">
+            <Link href="/" className="control-secondary mt-5 inline-flex h-9 items-center rounded-[6px] px-3 text-[11px] font-medium">
               {tr("Return home")}
-            </a>
+            </Link>
           </>
         )}
-      </div>
+      </section>
     </main>
   );
 }

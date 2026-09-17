@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Check,
   Copy,
@@ -18,60 +18,68 @@ import {
   Users,
   Video,
   VideoOff,
-  Sparkles,
   Wifi,
   WifiOff,
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { EASE_ENTRANCE } from "@/lib/motion";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { useChatStore } from "@/stores/useChatStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { EmptyStage, MediaStage, useRoomSession } from "./RoomSession";
 import { MusicDrawer } from "./MusicDrawer";
+import { MusicPlayback } from "./MusicPlayback";
 import { useReactionStore } from "@/stores/useReactionStore";
+import { useMusicPlayerStore } from "@/stores/useMusicPlayerStore";
 import { useUIText } from "@/lib/i18n/uiText";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
 import { KickParticipantDialog } from "@/components/room/KickParticipantDialog";
 import { ParticipantMenu, type ParticipantAction } from "@/components/room/ParticipantMenu";
 import { SocialActions } from "@/components/room/SocialActions";
-import { VideoEffectsPanel } from "@/components/room/VideoEffectsPanel";
-import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
 import { RoomAtmosphere } from "./RoomAtmosphere";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { api } from "@/lib/api";
+import { useMobileDrawerFocus } from "./useMobileDrawerFocus";
 
 export function RoomView() {
   const drawer = useUIStore((state) => state.activeDrawer);
   const connection = useRoomStore((state) => state.connectionState);
   const room = useRoomStore((state) => state.room);
+  const [musicPlayerSurface, setMusicPlayerSurface] = useState<HTMLDivElement | null>(null);
+  const handleMusicPlayerSurface = useCallback((surface: HTMLDivElement | null) => {
+    setMusicPlayerSurface((current) => (current === surface ? current : surface));
+  }, []);
   return (
-    <main className="fixed inset-0 overflow-hidden flex flex-col bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)]">
+    <main className="fixed inset-0 flex flex-col overflow-hidden bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)]">
       <RoomHeader />
       <ConnectionBadge />
       <GovernanceNotice />
-      <div className="relative flex-1 min-h-0 flex">
-        <motion.section
-          layout
-          transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
-          className={`room-stage-column flex-1 min-w-0 flex flex-col ${drawer ? "" : ""}`}
-        >
+      <div
+        className={`relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden transition-[grid-template-columns] duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+          drawer
+            ? "md:grid-cols-[minmax(0,1fr)_24rem]"
+            : "md:grid-cols-[minmax(0,1fr)]"
+        }`}
+      >
+        <section className="room-stage-column relative flex min-h-0 min-w-0 flex-col">
           <div className="flex-1 min-h-0">
             {room && connection === "CONNECTED" ? <Stage /> : <RoomLoading />}
           </div>
           <CallDock />
-        </motion.section>
-        <AnimatePresence mode="wait">
+        </section>
+        <>
           {drawer === "chat" && <ChatDrawer />}
           {drawer === "people" && <PeopleDrawer />}
           {drawer === "settings" && <SettingsDrawer />}
-          {drawer === "music" && (
-            <MusicDrawer open onClose={() => useUIStore.getState().closeDrawer()} />
-          )}
-        </AnimatePresence>
+          <MusicDrawer
+            open={drawer === "music"}
+            onClose={() => useUIStore.getState().closeDrawer()}
+            onPlayerSurfaceReady={handleMusicPlayerSurface}
+          />
+        </>
       </div>
+      <MusicPlayback surface={musicPlayerSurface} />
     </main>
   );
 }
@@ -87,11 +95,11 @@ function Stage() {
     return () => clearInterval(timer);
   }, [reactions.length]);
   return (
-    <RoomAtmosphere screenShare={media.screenEnabled}>
+    <RoomAtmosphere screenShare={media.screenShareActive}>
       <div className="relative w-full h-full">
         {media.mediaConnected ? <MediaStage /> : <EmptyStage />}
         {media.mediaError && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-[6px] bg-[#101113]/15 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[11px] z-50 flex items-center gap-2 max-w-[90vw] text-center shadow-lg backdrop-blur-md">
+          <div role="alert" className="absolute left-1/2 top-4 z-30 flex max-w-[min(30rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-center text-[11px] text-[var(--text-loft-primary)] shadow-lg">
             <span>{media.mediaError.replace(/\.+$/, "")}. {tr("Chat remains available.")}</span>
             <button
               type="button"
@@ -103,8 +111,8 @@ function Stage() {
             </button>
           </div>
         )}
-        <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 max-w-[90%] overflow-hidden">
-          {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0.2 : 0.2 }} className="rounded-full bg-[var(--bg-loft-card)]/90 border border-[var(--border-loft)] shadow-lg px-3 py-1 text-[11px]" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-[11px] font-medium">×{reaction.count}</span>}</motion.div>)}
+        <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 gap-2 overflow-hidden">
+          {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0 : 0.2 }} className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-1 text-[11px] shadow-lg" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-[11px] font-medium">×{reaction.count}</span>}</motion.div>)}
         </div>
       </div>
     </RoomAtmosphere>
@@ -116,11 +124,11 @@ function RoomLoading() {
   const state = useRoomStore((item) => item.connectionState);
   const error = useRoomStore((item) => item.connectionError);
   return (
-    <div className="h-full flex items-center justify-center p-6">
-      <div className="glass-card rounded-[6px] p-8 text-center max-w-sm">
-        <div className="w-10 h-10 rounded-full border-2 border-[var(--border-loft)]/20 border-t-[#101113] animate-spin mx-auto mb-4" />
+    <div className="flex h-full items-center justify-center p-6">
+      <div className="w-full max-w-sm rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-7 text-center shadow-[8px_8px_0_color-mix(in_srgb,var(--border-loft)_12%,transparent)]">
+        <div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-[var(--border-loft)]/20 border-t-[var(--accent-blue)] animate-spin" />
         <h2 className="font-medium">
-          {tr(state === "FAILED" ? "Couldn’t join room" : "Opening your Mingly room…")}
+            {tr(state === "FAILED" ? "Couldn’t join room" : "Joining…")}
         </h2>
         <p className="text-[11px] text-[var(--text-loft-secondary)] mt-2">
           {tr(error ?? "Syncing current room state.")}
@@ -128,7 +136,7 @@ function RoomLoading() {
         {state === "FAILED" && (
           <button
             onClick={() => location.reload()}
-            className="mt-4 px-4 py-2 rounded-[6px] bg-[#101113] text-white text-[11px]"
+            className="btn-press mt-4 rounded-[6px] bg-[#101113] px-4 py-2 text-[11px] text-white"
           >
             {tr("Try again")}
           </button>
@@ -289,7 +297,8 @@ function ConnectionBadge() {
   const failed = state === "FAILED";
   return (
     <div
-      className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-3 py-2 rounded-full shadow-lg text-[11px] flex items-center gap-2 ${failed ? "bg-[#101113] text-white" : "bg-[var(--bg-loft-card)] border border-[var(--border-loft)]"}`}
+      role="status"
+      className={`absolute left-1/2 top-16 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-3 py-2 text-[11px] shadow-lg ${failed ? "bg-[#101113] text-white" : "border border-[var(--border-loft)] bg-[var(--bg-loft-card)]"}`}
     >
       {failed ? (
         <WifiOff className="w-3.5 h-3.5" />
@@ -314,7 +323,7 @@ function GovernanceNotice() {
   return (
     <div
       role="alert"
-      className="absolute top-24 left-1/2 -translate-x-1/2 z-50 max-w-[min(32rem,calc(100vw-2rem))] px-4 py-2 rounded-[6px] bg-[#101113]/15 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[11px] flex items-center gap-3 shadow-lg backdrop-blur-md"
+      className="absolute left-1/2 top-24 z-50 flex max-w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-2 text-[11px] text-[var(--text-loft-primary)] shadow-lg"
     >
       <span>{tr(error)}</span>
       <button
@@ -337,9 +346,6 @@ function CallDock() {
   const unread = useChatStore((state) => state.unreadCount);
   const count = useRoomStore((state) => state.participants.length);
   const self = useRoomStore((state) => state.self);
-  const effectsOpen = useVideoEffectsStore((state) => state.panelOpen);
-  const setEffectsOpen = useVideoEffectsStore((state) => state.setPanelOpen);
-  const effectsTriggerRef = useRef<HTMLButtonElement>(null);
 
   const sendReaction = (emoji: string) => media.sendCommand("reaction.send", { emoji });
   const sendWave = () => media.sendCommand("wave.send", {});
@@ -348,10 +354,10 @@ function CallDock() {
     expected_social_version: self?.social_version ?? 0,
   });
   const control =
-    "room-dock-control btn-press relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
+    "room-dock-control btn-press relative !h-10 !w-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
   return (
-    <div className="flex-shrink-0 pb-[calc(.75rem+env(safe-area-inset-bottom))] px-2 flex justify-center">
-      <div className="room-call-dock relative glass-dock rounded-full shadow-2xl p-2 flex items-center gap-1 sm:gap-2">
+    <div className="flex shrink-0 justify-center px-2 pb-[calc(.75rem+env(safe-area-inset-bottom))]">
+      <div className="room-call-dock relative flex max-w-full items-center gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-dock)] p-2 shadow-2xl motion-reduce:transform-none md:[transform:perspective(1200px)_rotateX(1deg)] sm:gap-2">
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleMic()}
@@ -365,19 +371,6 @@ function CallDock() {
             <MicOff className="w-4 h-4" />
           )}
         </button>
-        <button
-          ref={effectsTriggerRef}
-          disabled={!media.mediaConnected}
-          onClick={() => setEffectsOpen(!effectsOpen)}
-          aria-expanded={effectsOpen}
-          aria-haspopup="dialog"
-          className={`room-dock-optional ${control} disabled:opacity-40 disabled:cursor-not-allowed ${effectsOpen ? "bg-[#101113] text-white" : ""}`}
-          title={tr("Video effects")}
-          aria-label={tr("Video effects")}
-        >
-          <Sparkles className="w-4 h-4" />
-        </button>
-        {effectsOpen && <VideoEffectsPanel cameraEnabled={media.cameraEnabled} triggerRef={effectsTriggerRef} />}
         <button
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleCamera()}
@@ -425,7 +418,10 @@ function CallDock() {
             {count}
           </b>
         </button>
-        <button onClick={() => toggleDrawer("music")} className={`room-dock-optional ${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
+        <button onClick={() => {
+          if (drawer !== "music") useMusicPlayerStore.getState().requestAudioActivation();
+          toggleDrawer("music");
+        }} className={`room-dock-optional ${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
         <span className="room-dock-optional room-dock-separator w-px h-6 bg-[var(--border-loft)]" />
         <div className="room-dock-optional contents">
           <SocialActions
@@ -460,6 +456,7 @@ function DrawerFrame({
 }) {
   const tr = useUIText();
   const close = useUIStore((state) => state.closeDrawer);
+  const { closeButtonRef, isModal, panelRef } = useMobileDrawerFocus(true);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -470,16 +467,17 @@ function DrawerFrame({
   }, [close]);
 
   return (
-    <motion.aside
-      initial={{ x: "100%" }}
-      animate={{ x: 0 }}
-      exit={{ x: "100%" }}
-      transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
-      className="glass-drawer fixed top-14 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 flex w-full min-h-0 flex-col bg-[var(--bg-loft-card)] shadow-2xl md:relative md:top-auto md:right-auto md:bottom-auto md:z-auto md:h-full md:w-96 md:shrink-0 md:border-l md:border-[var(--border-loft)]"
+    <aside
+      ref={panelRef}
+      role="dialog"
+      aria-modal={isModal || undefined}
+      aria-label={title}
+      className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-0 top-14 z-40 flex w-full min-h-0 flex-col border-l border-[var(--border-loft)] bg-[var(--bg-loft-card)] shadow-2xl md:relative md:bottom-auto md:right-auto md:top-auto md:z-auto md:h-full md:w-96 md:shrink-0"
     >
-      <div className="h-14 px-5 flex items-center justify-between border-b border-[var(--border-loft)]">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border-loft)] px-5">
         <h3 className="font-medium text-[11px]">{title}</h3>
         <button
+          ref={closeButtonRef}
           onClick={close}
           aria-label={tr("Close")}
           className="w-8 h-8 rounded-full hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] flex items-center justify-center"
@@ -488,7 +486,7 @@ function DrawerFrame({
         </button>
       </div>
       {children}
-    </motion.aside>
+    </aside>
   );
 }
 
@@ -541,7 +539,7 @@ function ChatDrawer() {
   };
   return (
     <DrawerFrame title={tr("Room chat")}>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 && (
           <p className="text-[11px] text-center text-[var(--text-loft-muted)] mt-10">
             {tr("No messages yet. Say hello.")}
@@ -584,8 +582,8 @@ function ChatDrawer() {
               <div
                 className={`max-w-[85%] px-4 py-2 rounded-[6px] text-[11px] break-words whitespace-pre-wrap leading-relaxed ${
                   mine
-                    ? "bg-[#101113] text-white rounded-br-[6px] shadow-xs"
-                    : "bg-[var(--bg-loft-card)] text-[var(--text-loft-primary)] border border-[var(--border-loft)] rounded-bl-[6px] shadow-xs"
+                    ? "bg-[#101113] text-white rounded-br-[6px] shadow-sm"
+                    : "border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] rounded-bl-[6px] shadow-sm"
                 }`}
               >
                 {renderMessageContent(message.content, mine)}
@@ -598,7 +596,7 @@ function ChatDrawer() {
       {error && <p className="px-4 pb-1 text-[11px] text-[var(--text-loft-primary)]">{tr(error)}</p>}
       <form
         onSubmit={submit}
-        className="p-3 border-t border-[var(--border-loft)] flex gap-2"
+        className="flex gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3"
       >
         <input
           value={input}
@@ -606,7 +604,7 @@ function ChatDrawer() {
           onChange={(event) => setInput(event.target.value)}
           aria-label={tr("Message")}
           placeholder={tr("Send a message…")}
-          className="flex-1 min-w-0 px-4 py-3 rounded-[6px] bg-[var(--border-loft-light)] border border-[var(--border-loft)] outline-none focus:border-[var(--border-loft)] text-[11px]"
+          className="min-w-0 flex-1 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-3 text-[11px] outline-none focus:border-[var(--accent-blue)]"
         />
         <button
           disabled={!input.trim()}
@@ -629,6 +627,7 @@ function PeopleDrawer() {
   const session = useRoomSession();
   const locale = useI18nStore((state) => state.locale);
   const [joinRequests, setJoinRequests] = useState<Array<{ user_id: string; display_name: string; avatar_url?: string }>>([]);
+  const [newJoinRequest, setNewJoinRequest] = useState(false);
   // The server-published host authority is authoritative. A participant role
   // is display state and can lag during reconnect/failover.
   const isHost = Boolean(
@@ -667,8 +666,21 @@ function PeopleDrawer() {
   };
   useEffect(() => {
     if (!isHost || !room || !session.token) return;
-    void api.joinRequests(session.token, room.id).then(({ requests }) => setJoinRequests(requests)).catch(() => setJoinRequests([]));
-  }, [isHost, room?.id, session.token]);
+    let active = true;
+    const refresh = async () => {
+      try {
+        const { requests } = await api.joinRequests(session.token!, room.id);
+        if (!active) return;
+        setJoinRequests((current) => {
+          if (requests.length > current.length) setNewJoinRequest(true);
+          return requests;
+        });
+      } catch { if (active) setJoinRequests([]); }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [isHost, room, session.token]);
   const resolveRequest = async (userID: string, approve: boolean) => {
     if (!room || !session.token) return;
     await api.resolveJoinRequest(session.token, room.id, userID, approve);
@@ -678,13 +690,18 @@ function PeopleDrawer() {
     <>
       <DrawerFrame title={`${tr("People")} · ${people.length}`}>
         {isHost && room && (
-          <div className="px-4 pt-4">
+          <div className="border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 pb-4 pt-4">
+            {newJoinRequest && joinRequests.length > 0 && (
+              <button type="button" onClick={() => setNewJoinRequest(false)} className="mb-3 w-full rounded-[6px] border border-[var(--accent-blue)] bg-[var(--bg-loft-card)] px-3 py-2 text-left text-[11px] font-medium text-[var(--text-loft-primary)] shadow-sm">
+                {locale === "vi" ? "Có yêu cầu tham gia mới" : "New join request"}
+              </button>
+            )}
             <button
               type="button"
               onClick={lockRoom}
               disabled={connection !== "CONNECTED"}
               aria-pressed={room.is_locked}
-              className="w-full flex items-center justify-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--border-loft-light)] px-3 py-2 text-[11px] font-medium hover:bg-[var(--bg-loft-card)] disabled:opacity-50"
+              className="btn-press flex w-full items-center justify-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-[11px] font-medium hover-invert disabled:opacity-50"
             >
               {room.is_locked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
               {tr(room.is_locked ? "Unlock room" : "Lock room")}
@@ -693,23 +710,23 @@ function PeopleDrawer() {
               <div className="mt-3 space-y-2">
                 <p className="text-[11px] font-medium text-[var(--text-loft-secondary)]">{locale === "vi" ? `Yêu cầu tham gia · ${joinRequests.length}` : `Join requests · ${joinRequests.length}`}</p>
                 {joinRequests.map((request) => (
-                  <div key={request.user_id} className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] p-2 text-[11px]">
+                  <div key={request.user_id} className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 text-[11px] shadow-sm">
                     <span className="min-w-0 flex-1 truncate">{request.display_name}</span>
-                    <button type="button" onClick={() => void resolveRequest(request.user_id, false)} className="rounded-[5px] px-2 py-1 text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)]">{locale === "vi" ? "Từ chối" : "Decline"}</button>
-                    <button type="button" onClick={() => void resolveRequest(request.user_id, true)} className="rounded-[5px] bg-[var(--text-loft-primary)] px-2 py-1 text-[var(--bg-loft-base)]">{locale === "vi" ? "Duyệt" : "Approve"}</button>
+                    <button type="button" onClick={() => void resolveRequest(request.user_id, false)} className="rounded-[5px] px-2 py-1 text-[var(--text-loft-secondary)] hover-invert">{locale === "vi" ? "Từ chối" : "Decline"}</button>
+                    <button type="button" onClick={() => void resolveRequest(request.user_id, true)} className="btn-press rounded-[5px] bg-[#101113] px-2 py-1 text-white">{locale === "vi" ? "Duyệt" : "Approve"}</button>
                   </div>
                 ))}
               </div>
             )}
           </div>
         )}
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
           {people.map((person) => (
             <div
               key={person.connection_id}
-              className="p-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--border-loft-light)] flex items-center gap-3"
+              className="flex items-center gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-sm transition-colors hover:bg-[var(--bg-loft-card)]"
             >
-              <div className="w-10 h-10 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] overflow-hidden flex items-center justify-center font-medium">
+              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[var(--border-loft)] bg-[var(--border-loft-light)] font-medium text-[var(--text-loft-primary)]">
                 {person.avatar_url ? (
                   <img
                     src={person.avatar_url}
@@ -731,7 +748,7 @@ function PeopleDrawer() {
               {person.role === "host" && (
                 <span
                   title={tr("Host")}
-                  className="flex items-center gap-1 text-[11px] text-[var(--text-loft-secondary)]"
+                  className="flex items-center gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-2 py-1 text-[11px] text-[var(--text-loft-secondary)]"
                 >
                   <Crown className="w-3.5 h-3.5" /> {tr("Host")}
                 </span>
@@ -747,7 +764,7 @@ function PeopleDrawer() {
             </div>
           ))}
         </div>
-        <div className="p-4 border-t border-[var(--border-loft)] text-[11px] text-[var(--text-loft-secondary)] flex items-center gap-2">
+        <div className="flex items-center gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-4 text-[11px] text-[var(--text-loft-secondary)]">
           <Settings2 className="w-4 h-4" /> {tr("Presence follows active browser connections.")}
         </div>
       </DrawerFrame>

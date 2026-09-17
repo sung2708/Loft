@@ -37,15 +37,25 @@ func (s *membershipStore) RequestRoomAccess(_ context.Context, _ string, identit
 	return nil
 }
 func (s *membershipStore) ListJoinRequests(_ context.Context, _, ownerID string) ([]domain.JoinRequest, error) {
-	if ownerID != s.room.OwnerID { return nil, domain.ErrNotFound }
+	if ownerID != s.room.OwnerID {
+		return nil, domain.ErrNotFound
+	}
 	items := make([]domain.JoinRequest, 0, len(s.requests))
-	for _, item := range s.requests { items = append(items, item) }
+	for _, item := range s.requests {
+		items = append(items, item)
+	}
 	return items, nil
 }
 func (s *membershipStore) ResolveJoinRequest(_ context.Context, _, ownerID, userID string, approve bool) error {
-	if ownerID != s.room.OwnerID { return domain.ErrNotFound }
-	if _, ok := s.requests[userID]; !ok { return domain.ErrNotFound }
-	if approve { s.members[userID] = true }
+	if ownerID != s.room.OwnerID {
+		return domain.ErrNotFound
+	}
+	if _, ok := s.requests[userID]; !ok {
+		return domain.ErrNotFound
+	}
+	if approve {
+		s.members[userID] = true
+	}
 	delete(s.requests, userID)
 	return nil
 }
@@ -186,14 +196,16 @@ func TestPrivateRoomRequiresHostApproval(t *testing.T) {
 	const requesterID = "5ff036f8-834c-4cb5-9097-30710442e19e"
 	store := &membershipStore{
 		fakeStore: &fakeStore{room: domain.Room{ID: roomID, OwnerID: ownerID, AllowGuests: false}},
-		members: map[string]bool{ownerID: true}, requests: make(map[string]domain.JoinRequest),
+		members:   map[string]bool{ownerID: true}, requests: make(map[string]domain.JoinRequest),
 	}
 	server := New(store, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	handler := server.Routes(http.NotFoundHandler())
 	token := func(userID string) string {
 		claims := jwt.MapClaims{"sub": userID, "iss": "https://test.supabase.co/auth/v1", "aud": "authenticated", "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix()}
 		raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		return raw
 	}
 	call := func(method, path, raw string, body io.Reader) *httptest.ResponseRecorder {
@@ -257,7 +269,9 @@ func TestGuestAdmissionPublicPrivateAndPasswordFlows(t *testing.T) {
 	const roomID = "58bb9fe4-79bc-41c7-9d63-61c04815b668"
 	const secret = "12345678901234567890123456789012"
 	verifier, err := auth.HashRoomPassword("correct horse")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		room domain.Room
@@ -363,7 +377,7 @@ func TestRoomAppearanceSerializationAndSafeDefaults(t *testing.T) {
 	// Configured appearance
 	configuredRoom := domain.Room{
 		ID:                      "58bb9fe4-79bc-41c7-9d63-61c04815b668",
-		Slug:                      "party-room",
+		Slug:                    "party-room",
 		Name:                    "Party Room",
 		Atmosphere:              domain.AtmosphereParty,
 		Accent:                  domain.AccentRose,

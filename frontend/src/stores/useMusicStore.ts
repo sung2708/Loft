@@ -40,6 +40,8 @@ export function parseRoomMedia(value: unknown): RoomMediaState | null {
     !Number.isSafeInteger(media.version) || Number(media.version) < 0 ||
     typeof media.position_ms !== "number" || !Number.isFinite(media.position_ms) || media.position_ms < 0 ||
     typeof media.started_at !== "string" ||
+	    (media.autoplay !== undefined && typeof media.autoplay !== "boolean") ||
+	    (media.unavailable !== undefined && typeof media.unavailable !== "string") ||
     !Array.isArray(media.queue) || media.queue.length > 50 || !media.queue.every(validTrack) ||
     (media.current !== null && !validTrack(media.current))
   ) return null;

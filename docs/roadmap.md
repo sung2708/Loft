@@ -49,11 +49,6 @@ flowchart TD
 
 ---
 
-### MVP 2.2 — Client-Side Camera Effects (Deferred)
-Camera filters, background segmentation, and MediaPipe processing are explicitly deferred to MVP 3. MVP2 keeps the raw camera path optimized and focuses on deterministic orientation, adaptive streaming, and reliable room controls.
-
----
-
 ### MVP 2.3 — LiveKit / WebRTC Media Optimization
 - **Goals:** Maximize video call quality and bandwidth efficiency across heterogeneous network conditions.
 - **Key Deliverables:**

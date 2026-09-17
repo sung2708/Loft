@@ -41,7 +41,9 @@ test.describe("Lobby & Landing Page", () => {
 
   test("room input and brand stay visually stable on hover in both themes", async ({ page }) => {
     const roomInput = page.locator("#roomInput");
-    const brand = page.getByRole("link", { name: "Mingly — Better when we’re together." });
+    // Workflow chrome intentionally exposes only the product name; the
+    // marketing-style slogan is not repeated inside application flows.
+    const brand = page.getByRole("link", { name: "Mingly", exact: true });
 
     const verifyStableHover = async () => {
       const inputBefore = await roomInput.evaluate((element) => {

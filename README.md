@@ -18,7 +18,7 @@ Mingly is a shared space to talk, watch, listen, and hang out with your people. 
 - Redis Pub/Sub fan-out, distributed admission/rate limits, and ephemeral presence leases
 - System/light/dark appearance, responsive Stage-first room UI
 
-MVP3 also includes persistent room access, host lifecycle/moderation, social reactions, client-side video effects, and durable room appearance. Spotify/SoundCloud, recording, discovery, and billing remain out of scope.
+MVP3 also includes persistent room access, host lifecycle/moderation, social reactions, and durable room appearance. Spotify/SoundCloud, recording, discovery, and billing remain out of scope.
 
 ## Architecture and authority
 
@@ -146,3 +146,16 @@ Cloud credentials, Redis/LiveKit services, and browser device permissions are re
   rights and final mastering for user-provided candidate audio before public release.
 
 The full physical-device and two-node Redis release matrix still requires staging execution before production sign-off.
+
+## Local development
+
+Install dependencies once, then run both applications together:
+
+```powershell
+make install-air
+make run
+```
+
+`make run` keeps both services in the current terminal with prefixed logs: the Go backend with Air hot reload and the Next.js frontend. Press `Ctrl+C` once to stop both processes. Individual services remain available through `make air`, `make backend`, and `make frontend`.
+
+The frontend dev server binds to `0.0.0.0`, so both `http://localhost:3000` and `http://127.0.0.1:3000` work with Next.js HMR.

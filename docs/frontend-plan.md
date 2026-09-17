@@ -12,7 +12,7 @@ This document describes the frontend that exists in `frontend/src`. It is an imp
 | Auth | Supabase Auth through `src/lib/auth/useAuth.ts` |
 | HTTP | Typed client in `src/lib/api.ts` |
 | Realtime control | WebSocket client in `src/lib/realtime.ts` |
-| Media | LiveKit; camera effects run locally in the browser |
+| Media | LiveKit voice, camera, and screen transport |
 | Tests | Vitest and Playwright |
 
 ## Routes
@@ -47,13 +47,12 @@ src/app/
   room/[roomId]/page.tsx      Active-room entry
 src/components/
   lobby/LobbyHeader.tsx
-  room/*                      Dialogs, settings, moderation, effects
+  room/*                      Dialogs, settings, and moderation
 src/features/room/
   RoomSession.tsx             Realtime and LiveKit orchestration
   RoomView.tsx                Stage, dock, drawers, chat and people
   MusicDrawer.tsx             YouTube player and queue
   SettingsDrawer.tsx          In-room settings
-  effects/*                   Client-side effects pipeline
 src/stores/*                  Room, chat, music, reaction, SFX and UI state
 src/lib/api.ts                HTTP API
 src/lib/realtime.ts           WebSocket protocol client

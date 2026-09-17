@@ -16,6 +16,7 @@ import {
   LayoutGrid,
   Plus,
   LogIn,
+  Settings2,
 } from "lucide-react";
 
 export const LobbyHeader: React.FC = () => {
@@ -91,16 +92,28 @@ export const LobbyHeader: React.FC = () => {
     .join("")
     .toUpperCase();
 
-  const navItems = [{ label: locale === "vi" ? "Phòng" : "Spaces", href: "/", active: pathname === "/" }];
+  const roomsHref = isAuthenticated ? "/home" : "/";
+  // If the user starts OAuth from an invite page (including the header
+  // button), return to that invite flow instead of falling back to home.
+  const authNext = pathname?.startsWith("/join/")
+    ? pathname
+    : "/home";
+  const navItems = [{
+    label: isAuthenticated ? t.account.yourRooms : locale === "vi" ? "Phòng" : "Spaces",
+    href: roomsHref,
+    active: pathname === roomsHref,
+  }];
 
   return (
     <AppHeader
+      subtitle=""
       center={
-        <nav className="flex items-center gap-6">
+        <nav aria-label={locale === "vi" ? "Điều hướng chính" : "Primary navigation"} className="flex items-center gap-6">
           {navItems.map((item) => (
             <Link
               key={item.label}
               href={item.href}
+              aria-current={item.active ? "page" : undefined}
               className={`text-[11px] font-medium transition-colors duration-200 ${
                 item.active
                   ? "text-[var(--text-loft-primary)] font-medium border-b-2 border-[var(--border-loft)] pb-1"
@@ -118,13 +131,20 @@ export const LobbyHeader: React.FC = () => {
 
           {/* Theme Toggle */}
           <button
+            type="button"
             onClick={toggleTheme}
             title={
               theme === "dark"
                 ? "Chuyển sang giao diện sáng"
                 : "Chuyển sang giao diện tối"
             }
-            className="btn-press hover-invert w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] cursor-pointer transition-colors"
+            aria-label={
+              theme === "dark"
+                ? locale === "vi" ? "Chuyển sang giao diện sáng" : "Switch to light theme"
+                : locale === "vi" ? "Chuyển sang giao diện tối" : "Switch to dark theme"
+            }
+            aria-pressed={theme === "dark"}
+            className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--text-loft-secondary)]"
           >
             {theme === "dark" ? (
               <Sun className="w-4 h-4" />
@@ -136,7 +156,7 @@ export const LobbyHeader: React.FC = () => {
           {/* Auth State in Header */}
           {isLoading ? (
             /* Subtle anti-flicker loading skeleton */
-            <div className="w-8 h-8 rounded-full bg-[var(--border-loft)] animate-pulse" />
+            <div aria-label={locale === "vi" ? "Đang tải tài khoản" : "Loading account"} className="h-8 w-8 rounded-full bg-[var(--border-loft)] motion-safe:animate-pulse" />
           ) : isAuthenticated ? (
             /* Authenticated: Interactive Avatar with Dropdown */
             <div className="relative">
@@ -146,6 +166,7 @@ export const LobbyHeader: React.FC = () => {
                 onClick={() => setIsMenuOpen((prev) => !prev)}
                 aria-expanded={isMenuOpen}
                 aria-haspopup="menu"
+                aria-label={`${locale === "vi" ? "Tài khoản" : "Account"}: ${displayName}`}
                 title={displayName}
                 className="btn-press relative w-8 h-8 rounded-full bg-[#101113] text-white flex items-center justify-center shadow-xs overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-[var(--accent-blue)]/50 focus:outline-none focus:ring-[var(--accent-blue)] transition-all"
               >
@@ -170,7 +191,7 @@ export const LobbyHeader: React.FC = () => {
                   ref={menuRef}
                   role="menu"
                   aria-orientation="vertical"
-                  className="absolute right-0 top-full mt-2 w-64 rounded-[6px] bg-[var(--bg-loft-card)] border border-[var(--border-loft)] shadow-2xl p-2 z-50 text-left animate-in fade-in zoom-in-95 duration-200"
+                  className="workflow-panel absolute right-0 top-full z-50 mt-2 w-64 rounded-[6px] p-2 text-left"
                 >
                   {/* User Identity Header */}
                   <div className="p-3 flex items-center gap-3 border-b border-[var(--border-loft)]">
@@ -214,6 +235,16 @@ export const LobbyHeader: React.FC = () => {
                     </Link>
 
                     <Link
+                      href="/settings"
+                      onClick={() => setIsMenuOpen(false)}
+                      role="menuitem"
+                      className="hover-invert flex items-center gap-3 rounded-[6px] px-3 py-2 text-[11px] font-medium text-[var(--text-loft-primary)] transition-colors duration-200"
+                    >
+                      <Settings2 aria-hidden="true" className="h-4 w-4" />
+                      <span>{locale === "vi" ? "Cài đặt" : "Settings"}</span>
+                    </Link>
+
+                    <Link
                       href="/home?create=1"
                       onClick={() => setIsMenuOpen(false)}
                       role="menuitem"
@@ -233,7 +264,7 @@ export const LobbyHeader: React.FC = () => {
                         await signOut();
                       }}
                       role="menuitem"
-                      className="w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[11px] font-medium text-[var(--text-loft-primary)] hover:bg-[#101113]/10 transition-colors cursor-pointer"
+                      className="btn-press hover-invert flex w-full items-center gap-3 rounded-[6px] px-3 py-2 text-[11px] font-medium text-[var(--text-loft-primary)]"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>{t.account.signOut}</span>
@@ -245,8 +276,9 @@ export const LobbyHeader: React.FC = () => {
           ) : (
             /* Logged out: Subtle Sign in button (no fake avatar) */
             <button
-              onClick={() => void signInWithGoogle("/home")}
-              className="btn-press h-8 px-3 rounded-[6px] bg-[var(--bg-loft-surface)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] border border-[var(--border-loft)] text-[11px] font-medium text-[var(--text-loft-primary)] flex items-center gap-2 transition-all cursor-pointer shadow-xs"
+              type="button"
+              onClick={() => void signInWithGoogle(authNext)}
+              className="btn-press hover-invert flex h-8 items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 text-[11px] font-medium text-[var(--text-loft-primary)]"
             >
               <LogIn className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
               <span>{t.common.signIn}</span>

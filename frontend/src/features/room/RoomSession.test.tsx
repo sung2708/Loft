@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useMusicStore } from "@/stores/useMusicStore";
 import { useUIStore } from "@/stores/useUIStore";
-import { useVideoEffectsStore } from "@/stores/useVideoEffectsStore";
 import type { RoomSnapshot } from "@/types/api";
 
 const baselineSnapshot: RoomSnapshot = {
@@ -66,7 +65,6 @@ describe("RoomSession identity and media regression", () => {
     useRoomStore.getState().reset();
     useMusicStore.getState().reset();
     useUIStore.setState({ activeDrawer: null });
-    useVideoEffectsStore.getState().reset();
   });
 
   it("atmosphere transitions preserve media playback authority and clock", () => {
@@ -141,29 +139,6 @@ describe("RoomSession identity and media regression", () => {
     }
   });
 
-  it("atmosphere transitions preserve video effects controller and camera state", () => {
-    useRoomStore.getState().applySnapshot(baselineSnapshot);
-
-    // Set local video effects
-    useVideoEffectsStore.getState().setBackground("blur");
-    useVideoEffectsStore.getState().setAR("glasses");
-
-    expect(useVideoEffectsStore.getState().selection.background).toBe("blur");
-    expect(useVideoEffectsStore.getState().selection.ar).toBe("glasses");
-
-    // Change room appearance
-    useRoomStore.getState().roomAppearanceUpdated({
-      atmosphere: "focus",
-      accent: "orange",
-      adaptive_media_background: true,
-      version: 2,
-    });
-
-    // Camera effect settings must remain intact
-    expect(useVideoEffectsStore.getState().selection.background).toBe("blur");
-    expect(useVideoEffectsStore.getState().selection.ar).toBe("glasses");
-  });
-
   it("atmosphere transitions preserve drawer selection and UI layout state", () => {
     useRoomStore.getState().applySnapshot(baselineSnapshot);
     useUIStore.setState({ activeDrawer: "chat" });
@@ -178,5 +153,20 @@ describe("RoomSession identity and media regression", () => {
     });
 
     expect(useUIStore.getState().activeDrawer).toBe("chat");
+  });
+
+  it("keeps the room-authoritative autoplay setting in the media snapshot", () => {
+    useMusicStore.getState().setMedia({
+      current: null,
+      queue: [],
+      repeat: false,
+      autoplay: true,
+      status: "IDLE",
+      position_ms: 0,
+      started_at: "",
+      version: 6,
+    });
+
+    expect(useMusicStore.getState().media.autoplay).toBe(true);
   });
 });

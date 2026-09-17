@@ -7,6 +7,8 @@ export interface RoomAppearance {
   accent: RoomAccent;
   adaptive_media_background: boolean;
   version: number;
+  autoplay?: boolean;
+  unavailable?: string;
 }
 
 export interface ApiRoom {
@@ -85,7 +87,9 @@ export interface RoomSnapshot {
   participants: ApiParticipant[];
   messages: ApiMessage[];
   media?: RoomMediaState;
+  picks?: YouTubeRoomPick[];
 }
+export interface YouTubeRoomPick { id:string; video_id:string; title:string; channel:string; suggested_by:string; votes:number }
 
 export interface YouTubeTrack {
   id: string;
@@ -100,6 +104,7 @@ export interface RoomMediaState {
   current: YouTubeTrack | null;
   queue: YouTubeTrack[];
   repeat: boolean;
+  autoplay?: boolean;
   status: "IDLE" | "PAUSED" | "PLAYING";
   position_ms: number;
   started_at: string;
@@ -170,6 +175,8 @@ export type ServerEvent =
       room_id: string;
       payload: RoomMediaState;
     }
+  | { type: "youtube.pick.created" | "youtube.pick.voted"; version: 1; event_id: string; room_id: string; payload: YouTubeRoomPick }
+  | { type: "youtube.pick.promoted"; version: 1; event_id: string; room_id: string; payload: YouTubeRoomPick }
   | {
       type: "reaction.sent";
       version: 1;

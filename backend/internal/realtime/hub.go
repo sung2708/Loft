@@ -20,6 +20,7 @@ import (
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
 	"loft/backend/internal/ratelimit"
+	"loft/backend/internal/store"
 	"loft/backend/internal/telemetry"
 )
 
@@ -119,6 +120,7 @@ type snapshotPayload struct {
 	Participants []domain.Participant `json:"participants"`
 	Messages     []domain.Message     `json:"messages"`
 	Media        mediaState           `json:"media"`
+	Picks        []youtubeRoomPick    `json:"picks"`
 }
 type errorPayload struct {
 	Code    string `json:"code"`
@@ -148,6 +150,7 @@ type client struct {
 type roomState struct {
 	clients        map[string]*client
 	media          mediaState
+	picks          []youtubeRoomPick
 	room           domain.Room
 	evict          *time.Timer
 	mediaTimer     *time.Timer
@@ -639,6 +642,31 @@ func (h *Hub) DeliverRemote(roomID string, data []byte) {
 			}
 			h.mu.Unlock()
 		}
+	} else if json.Unmarshal(data, &envelope) == nil && (envelope.Type == "youtube.pick.created" || envelope.Type == "youtube.pick.voted" || envelope.Type == "youtube.pick.promoted") {
+		var incoming youtubeRoomPick
+		if json.Unmarshal(envelope.Payload, &incoming) == nil {
+			h.mu.Lock()
+			if state := h.rooms[roomID]; state != nil {
+				idx := -1
+				for i := range state.picks {
+					if state.picks[i].ID == incoming.ID {
+						idx = i
+						break
+					}
+				}
+				if envelope.Type == "youtube.pick.promoted" {
+					if idx >= 0 {
+						state.picks = append(state.picks[:idx], state.picks[idx+1:]...)
+					}
+				} else if idx >= 0 {
+					state.picks[idx].Votes = incoming.Votes
+				} else {
+					incoming.Voters = map[string]struct{}{}
+					state.picks = append(state.picks, incoming)
+				}
+			}
+			h.mu.Unlock()
+		}
 	}
 	h.broadcastLocal(roomID, data, "")
 }
@@ -890,7 +918,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		snapshotHost = state.host
 	}
 	h.mu.RUnlock()
-	if !h.enqueue(c, event("room.snapshot", room.ID, snapshotPayload{Room: h.roomSnapshot(room.ID, room), Host: snapshotHost, Self: c.participant, Participants: participants, Messages: messages, Media: media})) {
+	h.mu.RLock()
+	var picks []youtubeRoomPick
+	if state := h.rooms[room.ID]; state != nil {
+		picks = append([]youtubeRoomPick{}, state.picks...)
+	}
+	h.mu.RUnlock()
+	if !h.enqueue(c, event("room.snapshot", room.ID, snapshotPayload{Room: h.roomSnapshot(room.ID, room), Host: snapshotHost, Self: c.participant, Participants: participants, Messages: messages, Media: media, Picks: picks})) {
 		return
 	}
 	if !c.isReconnect {
@@ -1366,7 +1400,131 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			h.mu.Unlock()
 			h.refreshPresence(ctx, c)
 			h.broadcast(c.roomID, changed, "")
-		case "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play", "media.pause", "media.seek", "media.duration", "media.repeat":
+		case "youtube.pick.create", "youtube.pick.vote", "youtube.pick.promote":
+			requireVideo := envelope.Type == "youtube.pick.create"
+			cmd, err := validateYouTubePickCommand(envelope.Payload, requireVideo)
+			if err != nil {
+				h.sendError(c, "YOUTUBE_PICK_REJECTED", err.Error())
+				continue
+			}
+			h.mu.Lock()
+			state := h.rooms[c.roomID]
+			var changed youtubeRoomPick
+			var media mediaState
+			previous := uint64(0)
+			if state == nil {
+				h.mu.Unlock()
+				h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room unavailable")
+				continue
+			}
+			switch envelope.Type {
+			case "youtube.pick.create":
+				if !domain.CanCreateRoomPick(state.room, c.identity) {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Permission denied")
+					continue
+				}
+				duplicate := false
+				for _, p := range state.picks {
+					if p.VideoID == cmd.VideoID {
+						duplicate = true
+						break
+					}
+				}
+				if duplicate {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Video already exists in Room Picks")
+					continue
+				}
+				changed = youtubeRoomPick{ID: uuid.NewString(), VideoID: cmd.VideoID, Title: cmd.Title, Channel: cmd.Channel, SuggestedBy: c.identity.ID, Voters: map[string]struct{}{}}
+				state.picks = append(state.picks, changed)
+			case "youtube.pick.vote":
+				if !domain.CanVoteRoomPick(state.room, c.identity) {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Permission denied")
+					continue
+				}
+				found := false
+				alreadyVoted := false
+				for i := range state.picks {
+					if state.picks[i].ID == cmd.PickID {
+						found = true
+						if _, seen := state.picks[i].Voters[c.identity.ID]; seen {
+							alreadyVoted = true
+							break
+						}
+						state.picks[i].Voters[c.identity.ID] = struct{}{}
+						state.picks[i].Votes++
+						changed = state.picks[i]
+						break
+					}
+				}
+				if !found {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
+					continue
+				}
+				if alreadyVoted {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "You already voted for this pick")
+					continue
+				}
+			case "youtube.pick.promote":
+				if !domain.CanPromoteRoomPick(state.room, c.identity) {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Permission denied")
+					continue
+				}
+				for i := range state.picks {
+					if state.picks[i].ID == cmd.PickID {
+						changed = state.picks[i]
+						state.picks = append(state.picks[:i], state.picks[i+1:]...)
+						break
+					}
+				}
+				if changed.ID != "" {
+					raw, _ := json.Marshal(mediaCommand{URL: "https://www.youtube.com/watch?v=" + changed.VideoID, Title: changed.Title, Channel: changed.Channel})
+					previous = state.media.Version
+					_ = state.media.applyMedia("media.play_now", raw, state.room, c.identity, time.Now().UTC())
+					media = state.media.snapshot()
+					h.scheduleMediaEnd(c.roomID, state)
+				}
+			}
+			h.mu.Unlock()
+			if changed.ID == "" {
+				h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
+				continue
+			}
+			persisted := true
+			switch envelope.Type {
+			case "youtube.pick.create":
+				if repo, ok := h.store.(interface {
+					CreateRoomPick(context.Context, store.YouTubeRoomPick) error
+				}); ok {
+					persisted = repo.CreateRoomPick(ctx, store.YouTubeRoomPick{ID: changed.ID, RoomID: c.roomID, VideoID: changed.VideoID, Title: changed.Title, Channel: changed.Channel, SuggestedBy: changed.SuggestedBy, Active: true}) == nil
+				}
+			case "youtube.pick.vote":
+				if repo, ok := h.store.(interface {
+					VoteRoomPick(context.Context, string, string) error
+				}); ok {
+					persisted = repo.VoteRoomPick(ctx, changed.ID, c.identity.ID) == nil
+				}
+			case "youtube.pick.promote":
+				if repo, ok := h.store.(interface {
+					PromoteRoomPick(context.Context, string) error
+				}); ok {
+					persisted = repo.PromoteRoomPick(ctx, changed.ID) == nil
+				}
+			}
+			if !persisted {
+				h.sendError(c, "YOUTUBE_PICK_REJECTED", "Could not save room pick")
+				continue
+			}
+			h.broadcast(c.roomID, event(envelope.Type+"d", c.roomID, changed), "")
+			if media.Version > 0 {
+				_ = h.publishMediaState(ctx, c.roomID, previous, media)
+			}
+		case "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play_now", "media.play", "media.pause", "media.seek", "media.duration", "media.repeat", "media.autoplay.set", "media.unavailable", "media.ended":
 			key := c.roomID + ":" + c.identity.LiveKitIdentity()
 			limiter := h.mediaLimit
 			if envelope.Type == "queue.add" || envelope.Type == "queue.remove" || envelope.Type == "queue.clear" || envelope.Type == "queue.shuffle" || envelope.Type == "queue.reorder" {
@@ -1383,9 +1541,13 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 					forwardErr := authority.ForwardMedia(forwardCtx, ownerID, c.roomID, envelope.Type, envelope.Payload, c.identity)
 					cancel()
 					if forwardErr != nil {
-						h.sendError(c, "MEDIA_COMMAND_REJECTED", "Media authority is temporarily unavailable")
+						// The authority bus is coordination only. If forwarding is
+						// temporarily unavailable, continue through the local room
+						// state instead of making media controls unusable.
+						h.logger.Warn("media forward unavailable; applying locally", "room_id", c.roomID, "error", forwardErr)
+					} else {
+						continue
 					}
-					continue
 				}
 				if ownerErr != nil {
 					h.logger.Warn("media owner lease unavailable; local state continues", "room_id", c.roomID, "error", ownerErr)
@@ -1397,14 +1559,31 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			var media mediaState
 			var previous uint64
 			var previousState mediaState
+			var promotedAutoplayPick *youtubeRoomPick
 			if state == nil {
 				applyErr = errMediaDenied
 			} else {
 				previousState = state.media.snapshot()
 				previous = state.media.Version
 				applyErr = state.media.applyMedia(envelope.Type, envelope.Payload, state.room, c.identity, time.Now().UTC())
-				media = state.media.snapshot()
 				if applyErr == nil {
+					if state.media.Current == nil && state.media.Autoplay && len(state.picks) > 0 {
+						best := 0
+						for i := 1; i < len(state.picks); i++ {
+							if state.picks[i].Votes > state.picks[best].Votes || (state.picks[i].Votes == state.picks[best].Votes && state.picks[i].ID < state.picks[best].ID) {
+								best = i
+							}
+						}
+						p := state.picks[best]
+						promotedAutoplayPick = &p
+						state.picks = append(state.picks[:best], state.picks[best+1:]...)
+						state.media.Current = &youtubeTrack{ID: uuid.NewString(), VideoID: p.VideoID, Title: p.Title, Channel: p.Channel, AddedBy: "Suggested"}
+						state.media.Status = "PLAYING"
+						state.media.PositionMs = 0
+						state.media.StartedAt = time.Now().UTC()
+						state.media.Version++
+					}
+					media = state.media.snapshot()
 					h.scheduleMediaEnd(c.roomID, state)
 				}
 			}
@@ -1412,6 +1591,29 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			if applyErr != nil {
 				h.sendError(c, "MEDIA_COMMAND_REJECTED", applyErr.Error())
 				continue
+			}
+			if envelope.Type == "media.autoplay.set" {
+				if repo, ok := h.store.(interface {
+					SetAutoplay(context.Context, store.YouTubeMediaSettings) error
+				}); ok {
+					go func(roomID string, enabled bool, userID string) {
+						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+						defer cancel()
+						_ = repo.SetAutoplay(ctx, store.YouTubeMediaSettings{RoomID: roomID, AutoplayEnabled: enabled, UpdatedBy: userID})
+					}(c.roomID, media.Autoplay, c.identity.ID)
+				}
+			}
+			if promotedAutoplayPick != nil {
+				h.broadcast(c.roomID, event("youtube.pick.promoted", c.roomID, *promotedAutoplayPick), "")
+				if repo, ok := h.store.(interface {
+					PromoteRoomPick(context.Context, string) error
+				}); ok {
+					go func(id string) {
+						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+						defer cancel()
+						_ = repo.PromoteRoomPick(ctx, id)
+					}(promotedAutoplayPick.ID)
+				}
 			}
 			if err := h.publishMediaState(ctx, c.roomID, previous, media); err != nil {
 				if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
@@ -1574,6 +1776,46 @@ func (h *Hub) writePump(ctx context.Context, c *client) error {
 }
 
 func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState, bool) {
+	// Durable picks are loaded before the realtime lock is taken. A reconnect or
+	// new authority therefore recovers from PostgreSQL, never from event replay.
+	var hydrated []youtubeRoomPick
+	var autoplayHydrated bool
+	h.mu.RLock()
+	missing := h.rooms[c.roomID] == nil
+	h.mu.RUnlock()
+	if missing {
+		if repo, ok := h.store.(interface {
+			ListRoomPicks(context.Context, string) ([]store.YouTubeRoomPick, error)
+			ListRoomPickVoters(context.Context, string) (map[string][]string, error)
+			GetMediaSettings(context.Context, string) (store.YouTubeMediaSettings, error)
+		}); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+			if picks, err := repo.ListRoomPicks(ctx, c.roomID); err == nil {
+				votersMap, _ := repo.ListRoomPickVoters(ctx, c.roomID)
+				for _, pick := range picks {
+					voters := make(map[string]struct{})
+					if userIDs, exists := votersMap[pick.ID]; exists {
+						for _, uid := range userIDs {
+							voters[uid] = struct{}{}
+						}
+					}
+					hydrated = append(hydrated, youtubeRoomPick{
+						ID:          pick.ID,
+						VideoID:     pick.VideoID,
+						Title:       pick.Title,
+						Channel:     pick.Channel,
+						SuggestedBy: pick.SuggestedBy,
+						Votes:       pick.Votes,
+						Voters:      voters,
+					})
+				}
+			}
+			if settings, err := repo.GetMediaSettings(ctx, c.roomID); err == nil {
+				autoplayHydrated = settings.AutoplayEnabled
+			}
+			cancel()
+		}
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if c.participant.ConnectionID == "" {
@@ -1598,7 +1840,7 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 	}
 	state := h.rooms[c.roomID]
 	if state == nil {
-		state = &roomState{clients: make(map[string]*client), kicked: make(map[string]struct{}), temporaryBans: make(map[string]time.Time), mediaOwner: h.bus == nil, room: room, media: mediaState{Queue: []youtubeTrack{}, Status: "IDLE"}}
+		state = &roomState{clients: make(map[string]*client), kicked: make(map[string]struct{}), temporaryBans: make(map[string]time.Time), mediaOwner: h.bus == nil, room: room, media: mediaState{Queue: []youtubeTrack{}, Status: "IDLE", Autoplay: autoplayHydrated}, picks: hydrated}
 		state.host = h.remoteHosts[c.roomID]
 		state.hostFailedOver = state.host.State == "failed-over"
 		h.rooms[c.roomID] = state
@@ -1750,6 +1992,20 @@ func (h *Hub) scheduleMediaEnd(roomID string, state *roomState) {
 			h.scheduleMediaEnd(roomID, state)
 			h.mu.Unlock()
 			return
+		}
+		if state.media.Current == nil && state.media.Autoplay && len(state.picks) > 0 {
+			best := 0
+			for i := 1; i < len(state.picks); i++ {
+				if state.picks[i].Votes > state.picks[best].Votes {
+					best = i
+				}
+			}
+			pick := state.picks[best]
+			state.picks = append(state.picks[:best], state.picks[best+1:]...)
+			state.media.Current = &youtubeTrack{ID: uuid.NewString(), VideoID: pick.VideoID, Title: pick.Title, Channel: pick.Channel, AddedBy: "Suggested"}
+			state.media.Status = "PLAYING"
+			state.media.PositionMs = 0
+			state.media.StartedAt = time.Now().UTC()
 		}
 		media := state.media.snapshot()
 		previous := media.Version - 1
