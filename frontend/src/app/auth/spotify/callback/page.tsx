@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, CircleAlert } from "lucide-react";
 import { API_URL } from "@/lib/config";
@@ -19,8 +19,12 @@ function SpotifyCallbackContent() {
   const tr = useUIText();
   const [state, setState] = useState<CallbackState>("processing");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const executedRef = useRef(false);
 
   useEffect(() => {
+    if (executedRef.current) return;
+    executedRef.current = true;
+
     let active = true;
 
     const isPopup =
