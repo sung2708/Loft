@@ -4,11 +4,28 @@ import { reconnectDelay } from "./realtime";
 import { normalizeRoomInput } from "./roomInput";
 
 describe("safeAuthDestination", () => {
-  it("keeps internal intended routes", () =>
-    expect(safeAuthDestination("/home?create=1")).toBe("/home?create=1"));
-  it("rejects external and protocol-relative redirects", () => {
-    expect(safeAuthDestination("https://evil.example")).toBe("/home");
-    expect(safeAuthDestination("//evil.example")).toBe("/home");
+  it("keeps internal intended routes", () => {
+    expect(safeAuthDestination("/")).toBe("/");
+    expect(safeAuthDestination("/settings")).toBe("/settings");
+    expect(safeAuthDestination("/room/late-night")).toBe("/room/late-night");
+    expect(safeAuthDestination("/home?create=1")).toBe("/home?create=1");
+  });
+
+  it("rejects external and protocol-relative redirects, defaulting to root", () => {
+    expect(safeAuthDestination("https://evil.example")).toBe("/");
+    expect(safeAuthDestination("//evil.example")).toBe("/");
+    expect(safeAuthDestination("/\\evil.example")).toBe("/");
+    expect(safeAuthDestination(null)).toBe("/");
+    expect(safeAuthDestination(undefined)).toBe("/");
+  });
+
+  it("rejects auth callback routes to prevent redirect loops", () => {
+    expect(safeAuthDestination("/auth/callback")).toBe("/");
+    expect(safeAuthDestination("/auth/callback?code=123")).toBe("/");
+  });
+
+  it("supports custom fallback destination", () => {
+    expect(safeAuthDestination("https://evil.example", "/custom")).toBe("/custom");
   });
 });
 

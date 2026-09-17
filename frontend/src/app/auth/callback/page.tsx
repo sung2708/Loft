@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase/client";
 import { safeAuthDestination } from "@/lib/authRedirect";
 import { useUIText } from "@/lib/i18n/uiText";
@@ -8,6 +9,7 @@ import { LobbyHeader } from "@/components/lobby/LobbyHeader";
 import Link from "next/link";
 
 export default function AuthCallbackPage() {
+  const router = useRouter();
   const tr = useUIText();
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -32,11 +34,11 @@ export default function AuthCallbackPage() {
       }
       const queryNext = new URLSearchParams(location.search).get("next");
       const storedNext = sessionStorage.getItem("loft.auth.next");
-      const destination = safeAuthDestination(queryNext || storedNext);
+      const destination = safeAuthDestination(queryNext || storedNext, "/");
       sessionStorage.removeItem("loft.auth.next");
-      location.replace(destination);
+      router.replace(destination);
     })();
-  }, []);
+  }, [router]);
   return (
     <main className="app-canvas min-h-screen flex items-center justify-center p-4 pt-20 sm:p-6 sm:pt-20">
       <LobbyHeader />

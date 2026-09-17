@@ -29,11 +29,13 @@ interface AuthStore {
 
 function resumePendingAuthDestination() {
   if (typeof window === "undefined") return;
+  // If we are currently on an auth callback route, let the callback page manage completion
+  if (window.location.pathname.startsWith("/auth/")) return;
 
   const storedNext = window.sessionStorage.getItem("loft.auth.next");
   if (!storedNext) return;
 
-  const destination = safeAuthDestination(storedNext);
+  const destination = safeAuthDestination(storedNext, "/");
   const current = `${window.location.pathname}${window.location.search}`;
   window.sessionStorage.removeItem("loft.auth.next");
 
@@ -137,8 +139,17 @@ export const useAuthStore = create<AuthStore>((set) => ({
     set({ authState: { status: "anonymous" } });
   },
 
-  signInWithGoogle: async (next = "/home") => {
-    await startGoogleSignIn(next);
+  signInWithGoogle: async (next?: string) => {
+    const destination =
+      next !== undefined
+        ? safeAuthDestination(next, "/")
+        : typeof window !== "undefined"
+          ? safeAuthDestination(
+              `${window.location.pathname}${window.location.search}`,
+              "/",
+            )
+          : "/";
+    await startGoogleSignIn(destination);
   },
 }));
 

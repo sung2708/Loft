@@ -42,6 +42,14 @@ func (s *Server) spotifyConnect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "SPOTIFY_CONFIG", "Spotify is not configured")
 		return
 	}
+	if clientRedirect := r.URL.Query().Get("redirect_uri"); clientRedirect != "" {
+		if u, err := url.Parse(clientRedirect); err == nil && u.Path == "/auth/spotify/callback" {
+			origin := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+			if _, ok := s.origins[origin]; ok {
+				redirect = clientRedirect
+			}
+		}
+	}
 	verifier, challenge, err := spotifyVerifier()
 	if err != nil {
 		s.internal(w, r, "create spotify oauth state", err)
@@ -88,6 +96,21 @@ func (s *Server) spotifyCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	redirect := func(status string) {
+		if strings.Contains(r.Header.Get("Accept"), "application/json") || r.URL.Query().Get("format") == "json" {
+			if status == "connected" {
+				writeJSON(w, http.StatusOK, map[string]string{
+					"status":    status,
+					"return_to": item.ReturnTo,
+				})
+			} else {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"status":    status,
+					"return_to": item.ReturnTo,
+					"error":     "spotify_auth_failed",
+				})
+			}
+			return
+		}
 		u, _ := url.Parse(frontend)
 		q := u.Query()
 		q.Set("status", status)

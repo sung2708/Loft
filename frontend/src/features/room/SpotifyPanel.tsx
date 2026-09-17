@@ -3,8 +3,10 @@
 import { useAuth } from "@/lib/auth/useAuth";
 import { API_URL } from "@/lib/config";
 import { useUIText } from "@/lib/i18n/uiText";
+import { startSpotifyOAuth } from "@/lib/spotify/oauth";
 import { useSpotifyStore } from "@/stores/useSpotifyStore";
 import { useRoomStore } from "@/stores/useRoomStore";
+import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export function SpotifyPanel() {
@@ -23,6 +25,8 @@ export function SpotifyPanel() {
   const [searched, setSearched] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectNotice, setConnectNotice] = useState<string | null>(null);
   const [results, setResults] = useState<
     Array<{ uri: string; name: string; artists: string[]; image_url?: string }>
   >([]);
@@ -100,21 +104,26 @@ export function SpotifyPanel() {
   };
 
   const connect = async () => {
-    if (!session?.access_token) return;
-    const returnTo = `${window.location.pathname}${window.location.search}`;
-    const response = await fetch(
-      `${API_URL}/api/v1/spotify/connect?return_to=${encodeURIComponent(returnTo)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          Accept: "application/json",
+    if (!session?.access_token || isConnecting) return;
+    setIsConnecting(true);
+    setConnectNotice(null);
+    try {
+      const res = await startSpotifyOAuth(session.access_token, {
+        returnTo: `${window.location.pathname}${window.location.search}`,
+        onClosed: () => {
+          setIsConnecting(false);
         },
-      },
-    );
-    const result = (await response.json().catch(() => null)) as {
-      url?: string;
-    } | null;
-    if (response.ok && result?.url) window.location.assign(result.url);
+      });
+      if (res.connected) {
+        await fetchStatus(session.access_token);
+      } else if (res.error && res.error !== "window_closed") {
+        setConnectNotice("Could not connect Spotify. Try again.");
+      }
+    } catch {
+      setConnectNotice("Could not connect Spotify. Try again.");
+    } finally {
+      setIsConnecting(false);
+    }
   };
 
   const disconnect = async () => {
@@ -146,12 +155,21 @@ export function SpotifyPanel() {
               Spotify access was revoked. Please reconnect.
             </p>
           )}
+          {connectNotice && (
+            <p className="text-[11px] text-[var(--status-danger)]">
+              {connectNotice}
+            </p>
+          )}
           <button
             type="button"
+            disabled={isConnecting}
             onClick={() => void connect()}
-            className="rounded-[6px] bg-[#101113] px-3 py-2 text-[11px] font-medium text-white hover:bg-[#2b2d31]"
+            className="flex items-center justify-center gap-2 rounded-[6px] bg-[#101113] px-3 py-2 text-[11px] font-medium text-white hover:bg-[#2b2d31] disabled:opacity-50"
           >
-            Connect Spotify
+            {isConnecting && (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+            )}
+            {isConnecting ? "Connecting…" : "Connect Spotify"}
           </button>
         </div>
       ) : (

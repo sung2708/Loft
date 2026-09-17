@@ -98,7 +98,8 @@ export default function HomePage() {
     void (async () => {
       const session = (await getSupabase()?.auth.getSession())?.data.session;
       if (!session) {
-        window.location.replace("/");
+        const target = `${window.location.pathname}${window.location.search}`;
+        window.location.replace(`/?next=${encodeURIComponent(target)}`);
         return;
       }
 

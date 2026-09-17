@@ -14,8 +14,8 @@ import {
 import { useEffect, useState } from "react";
 import { LobbyHeader } from "@/components/lobby/LobbyHeader";
 import { useAuth } from "@/lib/auth/useAuth";
-import { API_URL } from "@/lib/config";
 import { useTranslation } from "@/lib/i18n/useTranslation";
+import { startSpotifyOAuth } from "@/lib/spotify/oauth";
 import { useSpotifyStore } from "@/stores/useSpotifyStore";
 
 type ConnectionAction = "idle" | "connecting" | "disconnecting";
@@ -61,26 +61,34 @@ export default function SettingsPage() {
     setActionNotice(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/v1/spotify/connect`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          Accept: "application/json",
+      const res = await startSpotifyOAuth(session.access_token, {
+        returnTo: "/settings",
+        onClosed: () => {
+          setAction("idle");
         },
       });
-      const result = (await response.json().catch(() => null)) as {
-        url?: string;
-      } | null;
 
-      if (!response.ok || !result?.url) {
-        throw new Error("connect_failed");
+      if (res.connected) {
+        await fetchSpotifyStatus(session.access_token);
+        setActionNotice(
+          isVietnamese
+            ? "Đã kết nối tài khoản Spotify thành công."
+            : "Spotify connected successfully.",
+        );
+      } else if (res.error && res.error !== "window_closed") {
+        setActionNotice(
+          isVietnamese
+            ? "Không thể kết nối Spotify. Hãy thử lại."
+            : "Could not connect Spotify. Try again.",
+        );
       }
-      window.location.assign(result.url);
     } catch {
       setActionNotice(
         isVietnamese
           ? "Không thể bắt đầu kết nối. Hãy kiểm tra mạng rồi thử lại."
           : "Could not start the connection. Check your connection and try again.",
       );
+    } finally {
       setAction("idle");
     }
   };

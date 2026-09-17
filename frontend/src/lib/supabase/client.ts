@@ -15,7 +15,7 @@ export function getSupabase(): SupabaseClient | null {
   return client;
 }
 
-export async function signInWithGoogle(next: string) {
+export async function signInWithGoogle(next = "/") {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Supabase is not configured");
   sessionStorage.setItem("loft.auth.next", next);

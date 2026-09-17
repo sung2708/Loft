@@ -93,11 +93,15 @@ export const LobbyHeader: React.FC = () => {
     .toUpperCase();
 
   const roomsHref = isAuthenticated ? "/home" : "/";
-  // If the user starts OAuth from an invite page (including the header
-  // button), return to that invite flow instead of falling back to home.
-  const authNext = pathname?.startsWith("/join/")
-    ? pathname
-    : "/home";
+  // Preserve current page and query parameters after auth instead of forcing /home
+  const currentPath =
+    typeof window !== "undefined"
+      ? `${window.location.pathname}${window.location.search}`
+      : pathname || "/";
+  const authNext =
+    pathname && !pathname.startsWith("/auth/")
+      ? currentPath
+      : "/";
   const navItems = [{
     label: isAuthenticated ? t.account.yourRooms : locale === "vi" ? "Phòng" : "Spaces",
     href: roomsHref,

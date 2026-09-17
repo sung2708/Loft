@@ -83,6 +83,15 @@ export default function LobbyPage() {
     }
   };
 
+  const handleSignIn = () => {
+    let nextDestination = "/";
+    if (typeof window !== "undefined") {
+      const queryNext = new URLSearchParams(window.location.search).get("next");
+      if (queryNext) nextDestination = queryNext;
+    }
+    void signInWithGoogle(nextDestination);
+  };
+
   const handleCreateRoomAction = () => {
     if (isAuthenticated) {
       router.push("/home?create=1");
@@ -334,7 +343,7 @@ export default function LobbyPage() {
 
                 {/* Official Google Sign-In Action */}
                 <button
-                  onClick={() => void signInWithGoogle("/home")}
+                  onClick={handleSignIn}
                   type="button"
                   className="btn-press group flex h-11 w-full items-center justify-center gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] font-medium text-[var(--text-loft-primary)] transition-colors"
                 >
