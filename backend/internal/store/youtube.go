@@ -2,7 +2,15 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
+)
+
+const MaxActivePicks = 50
+
+var (
+	ErrPickCapacityReached = errors.New("youtube pick capacity reached")
+	ErrAlreadyVoted        = errors.New("youtube pick already voted")
 )
 
 type YouTubeRoomPick struct {
@@ -30,8 +38,8 @@ type YouTubeRepository interface {
 	CreateRoomPick(context.Context, YouTubeRoomPick) error
 	ListRoomPicks(context.Context, string) ([]YouTubeRoomPick, error)
 	ListRoomPickVoters(context.Context, string) (map[string][]string, error)
-	VoteRoomPick(context.Context, string, string) error
-	PromoteRoomPick(context.Context, string) error
+	VoteRoomPick(ctx context.Context, roomID, pickID, userID string) error
+	PromoteRoomPick(ctx context.Context, roomID, pickID string) error
 	SetAutoplay(context.Context, YouTubeMediaSettings) error
 	GetMediaSettings(context.Context, string) (YouTubeMediaSettings, error)
 }

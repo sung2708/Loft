@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ApiError, api } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
 import { useTranslation } from "@/lib/i18n/useTranslation";
@@ -72,6 +73,7 @@ function roomActionError(caught: unknown, fallback: string) {
 }
 
 export default function HomePage() {
+  const router = useRouter();
   const tr = useUIText();
   const { locale, t } = useTranslation();
   const isVietnamese = locale === "vi";
@@ -149,7 +151,7 @@ export default function HomePage() {
       if (event.key === "Tab" && createDialogRef.current) {
         const focusable = Array.from(
           createDialogRef.current.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), input:not([disabled]), [href], select:not([disabled]), textarea:not([disabled])',
+            "button:not([disabled]), input:not([disabled]), [href], select:not([disabled]), textarea:not([disabled])",
           ),
         );
         const first = focusable[0];
@@ -186,7 +188,7 @@ export default function HomePage() {
         passwordEnabled,
         password,
       );
-      window.location.assign(`/room/${encodeURIComponent(room.slug)}`);
+      router.replace(`/room/${encodeURIComponent(room.slug)}`);
     } catch (caught) {
       setError(roomActionError(caught, "Could not create room"));
     } finally {
@@ -261,7 +263,10 @@ export default function HomePage() {
             role="alert"
             className="mt-8 flex items-start gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 py-3 text-[11px]"
           >
-            <CircleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+            <CircleAlert
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0"
+            />
             <p>{tr(error)}</p>
           </div>
         ) : null}
@@ -346,7 +351,10 @@ export default function HomePage() {
                         </span>
                         {room.password_required ? (
                           <span className="inline-flex items-center gap-1.5">
-                            <KeyRound aria-hidden="true" className="h-3.5 w-3.5" />
+                            <KeyRound
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5"
+                            />
                             {isVietnamese ? "Có mật khẩu" : "Password"}
                           </span>
                         ) : null}
@@ -372,7 +380,9 @@ export default function HomePage() {
               <div className="workflow-panel rounded-[6px] px-6 py-14 text-center sm:col-span-2 lg:col-span-3">
                 <Users aria-hidden="true" className="mx-auto h-5 w-5" />
                 <p className="mt-4 text-[11px] font-medium">
-                  {isVietnamese ? "Bạn chưa có phòng." : "You have no rooms yet."}
+                  {isVietnamese
+                    ? "Bạn chưa có phòng."
+                    : "You have no rooms yet."}
                 </p>
                 <p className="mt-1 text-[11px] text-[var(--text-loft-muted)]">
                   {isVietnamese
@@ -441,7 +451,10 @@ export default function HomePage() {
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[#101113]/10">
                   <Plus aria-hidden="true" className="h-4 w-4" />
                 </div>
-                <h2 id="create-room-title" className="create-room-modal__text text-[11px] font-medium">
+                <h2
+                  id="create-room-title"
+                  className="create-room-modal__text text-[11px] font-medium"
+                >
                   {t.createModal.title}
                 </h2>
               </div>
@@ -457,9 +470,15 @@ export default function HomePage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <label htmlFor="room-name" className="create-room-modal__text text-[11px] font-medium">
+              <label
+                htmlFor="room-name"
+                className="create-room-modal__text text-[11px] font-medium"
+              >
                 {t.createModal.nameLabel}
-                <span className="create-room-modal__muted"> · {t.createModal.nameRequired}</span>
+                <span className="create-room-modal__muted">
+                  {" "}
+                  · {t.createModal.nameRequired}
+                </span>
               </label>
               <input
                 id="room-name"
@@ -508,7 +527,9 @@ export default function HomePage() {
                   <Switch
                     checked={passwordEnabled}
                     disabled={isSubmitting}
-                    label={isVietnamese ? "Yêu cầu mật khẩu" : "Require password"}
+                    label={
+                      isVietnamese ? "Yêu cầu mật khẩu" : "Require password"
+                    }
                     onChange={setPasswordEnabled}
                   />
                 </div>
@@ -522,7 +543,11 @@ export default function HomePage() {
                       type="password"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
-                      placeholder={isVietnamese ? "Mật khẩu (ít nhất 4 ký tự)" : "Password (at least 4 characters)"}
+                      placeholder={
+                        isVietnamese
+                          ? "Mật khẩu (ít nhất 4 ký tự)"
+                          : "Password (at least 4 characters)"
+                      }
                       minLength={4}
                       maxLength={256}
                       required
@@ -535,8 +560,14 @@ export default function HomePage() {
             </div>
 
             {error ? (
-              <div role="alert" className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px]">
-                <CircleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px]"
+              >
+                <CircleAlert
+                  aria-hidden="true"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
                 <p>{tr(error)}</p>
               </div>
             ) : null}
@@ -555,7 +586,12 @@ export default function HomePage() {
                 disabled={isSubmitting}
                 className="btn-press inline-flex h-10 items-center justify-center gap-2 rounded-[6px] bg-[#101113] px-5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isSubmitting ? <Loader2 aria-hidden="true" className="h-4 w-4 motion-safe:animate-spin" /> : null}
+                {isSubmitting ? (
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-4 w-4 motion-safe:animate-spin"
+                  />
+                ) : null}
                 {isSubmitting
                   ? isVietnamese
                     ? "Đang tạo…"

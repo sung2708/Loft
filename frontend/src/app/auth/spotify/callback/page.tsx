@@ -3,11 +3,13 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, CircleAlert } from "lucide-react";
-import { API_URL } from "@/lib/config";
 import { LoftMark } from "@/components/brand/LoftMark";
 import { useUIText } from "@/lib/i18n/uiText";
+import { safeAuthDestination } from "@/lib/authRedirect";
 import {
   SPOTIFY_OAUTH_CHANNEL,
+  SPOTIFY_OAUTH_ATTEMPT_KEY,
+  SPOTIFY_RETURN_TO_KEY,
   type SpotifyOAuthMessage,
 } from "@/lib/spotify/oauth";
 
@@ -20,16 +22,19 @@ function SpotifyCallbackContent() {
   const [state, setState] = useState<CallbackState>("processing");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const executedRef = useRef(false);
+  const returnToRef = useRef("/settings");
+  const attemptIdRef = useRef("");
+  const isPopupRef = useRef(false);
 
   useEffect(() => {
     if (executedRef.current) return;
     executedRef.current = true;
 
-    let active = true;
-
     const isPopup =
       typeof window !== "undefined" &&
-      (Boolean(window.opener) || window.name === "loft_spotify_oauth");
+      (Boolean(window.opener) ||
+        window.name.startsWith(`${SPOTIFY_OAUTH_CHANNEL}:`));
+    isPopupRef.current = isPopup;
 
     const broadcastAndClose = (
       status: "connected" | "failed",
@@ -39,6 +44,7 @@ function SpotifyCallbackContent() {
       const msg: SpotifyOAuthMessage = {
         type: "LOFT_SPOTIFY_AUTH_COMPLETE",
         status,
+        attemptId: attemptIdRef.current,
         returnTo,
         error,
       };
@@ -46,16 +52,18 @@ function SpotifyCallbackContent() {
       // 1. PostMessage to opener
       if (window.opener) {
         try {
-          window.opener.postMessage(msg, "*");
+          window.opener.postMessage(msg, window.location.origin);
         } catch {
           // Cross-origin opener protection
         }
       }
 
       // 2. BroadcastChannel
-      if (typeof BroadcastChannel !== "undefined") {
+      if (attemptIdRef.current && typeof BroadcastChannel !== "undefined") {
         try {
-          const ch = new BroadcastChannel(SPOTIFY_OAUTH_CHANNEL);
+          const ch = new BroadcastChannel(
+            `${SPOTIFY_OAUTH_CHANNEL}:${attemptIdRef.current}`,
+          );
           ch.postMessage(msg);
           ch.close();
         } catch {
@@ -75,95 +83,57 @@ function SpotifyCallbackContent() {
       }
     };
 
-    const handleCallback = async () => {
-      const code = params.get("code");
-      const stateParam = params.get("state");
+    const handleCallback = () => {
       const statusParam = params.get("status");
-      const returnToParam = params.get("return_to");
-
-      // 1. Direct authorization code response from Spotify
-      if (code && stateParam) {
-        try {
-          const response = await fetch(
-            `${API_URL}/api/v1/spotify/callback${window.location.search}`,
-            {
-              headers: { Accept: "application/json" },
-            },
-          );
-
-          const data = (await response.json().catch(() => null)) as {
-            status?: string;
-            return_to?: string;
-            error?: string;
-          } | null;
-
-          if (!active) return;
-
-          if (response.ok && data?.status === "connected") {
-            setState("success");
-            if (isPopup) {
-              broadcastAndClose("connected", data.return_to);
-            } else {
-              const dest =
-                data.return_to &&
-                data.return_to.startsWith("/") &&
-                !data.return_to.startsWith("//")
-                  ? data.return_to
-                  : "/settings?spotify=connected";
-              router.replace(dest);
-            }
-          } else {
-            setState("error");
-            setErrorMessage(data?.error || "Connection failed");
-            if (isPopup) {
-              broadcastAndClose("failed", data?.return_to, data?.error);
-            } else {
-              router.replace("/settings?spotify=error");
-            }
-          }
-        } catch {
-          if (!active) return;
-          setState("error");
-          setErrorMessage("Network error during exchange");
-          if (isPopup) {
-            broadcastAndClose("failed", undefined, "network_error");
-          } else {
-            router.replace("/settings?spotify=error");
-          }
-        }
-        return;
+      const returnTo = safeAuthDestination(
+        window.sessionStorage.getItem(SPOTIFY_RETURN_TO_KEY),
+        "/settings",
+      );
+      returnToRef.current = returnTo;
+      let attemptId = window.sessionStorage.getItem(
+        SPOTIFY_OAUTH_ATTEMPT_KEY,
+      );
+      if (
+        !attemptId &&
+        typeof window !== "undefined" &&
+        window.name.startsWith(`${SPOTIFY_OAUTH_CHANNEL}:`)
+      ) {
+        attemptId = window.name.slice(`${SPOTIFY_OAUTH_CHANNEL}:`.length);
       }
+      if (/^[0-9a-f-]{36}$/i.test(attemptId ?? "")) {
+        attemptIdRef.current = attemptId as string;
+      }
+      window.sessionStorage.removeItem(SPOTIFY_RETURN_TO_KEY);
+      window.sessionStorage.removeItem(SPOTIFY_OAUTH_ATTEMPT_KEY);
 
-      // 2. Pre-exchanged status redirect (e.g. from backend 302 fallback)
+      // The backend has already redeemed the code and persisted credentials.
+      // This page receives only a safe outcome, never OAuth code or state.
       if (statusParam === "connected") {
         setState("success");
         if (isPopup) {
-          broadcastAndClose("connected", returnToParam ?? undefined);
+          broadcastAndClose("connected", returnTo);
         } else {
-          const dest =
-            returnToParam &&
-            returnToParam.startsWith("/") &&
-            !returnToParam.startsWith("//")
-              ? returnToParam
-              : "/settings?spotify=connected";
-          router.replace(dest);
+          router.replace(returnTo);
         }
       } else {
+        const reason = params.get("reason");
+        const messages: Record<string, string> = {
+          oauth_denied: "Spotify connection was cancelled",
+          oauth_expired: "This Spotify connection link has expired. Try again.",
+          oauth_invalid: "Spotify could not verify this connection. Try again.",
+          oauth_unavailable: "Spotify is temporarily unavailable. Try again.",
+          credential_store_failed:
+            "Could not save the Spotify connection. Try again.",
+        };
         setState("error");
-        setErrorMessage("Connection failed");
+        setErrorMessage(messages[reason ?? ""] || "Connection failed");
         if (isPopup) {
-          broadcastAndClose("failed", returnToParam ?? undefined, "failed");
-        } else {
-          router.replace("/settings?spotify=error");
+          broadcastAndClose("failed", returnTo, reason || "failed");
         }
       }
     };
 
-    void handleCallback();
-
-    return () => {
-      active = false;
-    };
+    handleCallback();
   }, [params, router]);
 
   return (
@@ -204,12 +174,15 @@ function SpotifyCallbackContent() {
             </p>
             {errorMessage && (
               <p className="mt-1 text-[10px] text-[var(--text-loft-secondary)]">
-                {errorMessage}
+                {tr(errorMessage)}
               </p>
             )}
             <button
               type="button"
-              onClick={() => window.close()}
+              onClick={() => {
+                if (isPopupRef.current) window.close();
+                else router.replace(returnToRef.current);
+              }}
               className="control-secondary mt-4 inline-flex h-7 items-center rounded-[4px] px-3 text-[10px] font-medium"
             >
               {tr("Close")}

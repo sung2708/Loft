@@ -45,7 +45,10 @@ async function request<T>(
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     throw new ApiError(
       body.error?.code ?? "REQUEST_FAILED",
-      translateUI(useI18nStore.getState().locale, body.error?.message ?? "Request failed"),
+      translateUI(
+        useI18nStore.getState().locale,
+        body.error?.message ?? "Request failed",
+      ),
       response.status,
     );
   }
@@ -78,25 +81,71 @@ export const api = {
       token,
     ),
   joinRequests: (token: string, id: string) =>
-    request<{ requests: Array<{ user_id: string; display_name: string; avatar_url?: string; requested_at: string }> }>(`/api/v1/rooms/${encodeURIComponent(id)}/join-requests`, {}, token),
-  resolveJoinRequest: (token: string, roomID: string, userID: string, approve: boolean) =>
-    request<{ approved: boolean }>(`/api/v1/rooms/${encodeURIComponent(roomID)}/join-requests/${encodeURIComponent(userID)}`, { method: "PATCH", body: JSON.stringify({ approve }) }, token),
+    request<{
+      requests: Array<{
+        user_id: string;
+        display_name: string;
+        avatar_url?: string;
+        requested_at: string;
+      }>;
+    }>(`/api/v1/rooms/${encodeURIComponent(id)}/join-requests`, {}, token),
+  resolveJoinRequest: (
+    token: string,
+    roomID: string,
+    userID: string,
+    approve: boolean,
+  ) =>
+    request<{ approved: boolean }>(
+      `/api/v1/rooms/${encodeURIComponent(roomID)}/join-requests/${encodeURIComponent(userID)}`,
+      { method: "PATCH", body: JSON.stringify({ approve }) },
+      token,
+    ),
   me: (token: string) => request<ApiIdentity>("/api/v1/users/me", {}, token),
   rooms: (token: string) =>
     request<{ rooms: ApiRoom[] }>("/api/v1/rooms", {}, token),
-  createRoom: (token: string, name: string, allowGuests: boolean, passwordEnabled = false, password = "") =>
+  createRoom: (
+    token: string,
+    name: string,
+    allowGuests: boolean,
+    passwordEnabled = false,
+    password = "",
+  ) =>
     request<ApiRoom>(
       "/api/v1/rooms",
       {
         method: "POST",
-        body: JSON.stringify({ name, allow_guests: allowGuests, password_enabled: passwordEnabled, password }),
+        body: JSON.stringify({
+          name,
+          allow_guests: allowGuests,
+          password_enabled: passwordEnabled,
+          password,
+        }),
       },
       token,
     ),
   deleteRoom: (token: string, id: string) =>
-    request<void>(`/api/v1/rooms/${encodeURIComponent(id)}`, { method: "DELETE" }, token),
-  updateRoom: (token: string, id: string, input: { expected_version: number; name: string; allow_guests: boolean; password_enabled: boolean; password?: string; locked: boolean }) =>
-    request<ApiRoom>(`/api/v1/rooms/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }, token),
+    request<void>(
+      `/api/v1/rooms/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+      token,
+    ),
+  updateRoom: (
+    token: string,
+    id: string,
+    input: {
+      expected_version: number;
+      name: string;
+      allow_guests: boolean;
+      password_enabled: boolean;
+      password?: string;
+      locked: boolean;
+    },
+  ) =>
+    request<ApiRoom>(
+      `/api/v1/rooms/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+      token,
+    ),
   messages: (id: string, credential: RoomCredential) =>
     request<{ messages: ApiMessage[] }>(
       `/api/v1/rooms/${encodeURIComponent(id)}/messages`,
@@ -132,5 +181,18 @@ export function loadCredential(roomId: string): RoomCredential | null {
     return parsed as RoomCredential;
   } catch {
     return null;
+  }
+}
+
+export function clearCredential(roomId: string) {
+  sessionStorage.removeItem(credentialKey(roomId));
+}
+
+export function clearRoomCredentials() {
+  for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = sessionStorage.key(index);
+    if (key?.startsWith("loft.room.") && key.endsWith(".credential")) {
+      sessionStorage.removeItem(key);
+    }
   }
 }

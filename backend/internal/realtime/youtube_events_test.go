@@ -36,13 +36,18 @@ func TestMediaEndedIdempotence(t *testing.T) {
 		Version: 5,
 	}
 
-	// First ended report from member
+	// Only the host's authorized playback reporter may advance the queue. A
+	// guest or member can observe the snapshot, so accepting their ended report
+	// would let them forge a skip.
 	cmdPayload, _ := json.Marshal(mediaCommand{
 		VideoID:         "dQw4w9WgXcQ",
 		ExpectedVersion: 5,
 	})
-	if err := m.applyMedia("media.ended", cmdPayload, room, member, now); err != nil {
-		t.Fatalf("first ended report failed: %v", err)
+	if err := m.applyMedia("media.ended", cmdPayload, room, member, now); err != errMediaDenied {
+		t.Fatalf("member advanced media: %v", err)
+	}
+	if err := m.applyMedia("media.ended", cmdPayload, room, host, now); err != nil {
+		t.Fatalf("host ended report failed: %v", err)
 	}
 	if m.Current == nil || m.Current.VideoID != "9bZkp7q19f0" {
 		t.Fatalf("expected queue to advance to Gangnam Style, got %+v", m.Current)
@@ -58,6 +63,23 @@ func TestMediaEndedIdempotence(t *testing.T) {
 	// Version and current should remain unchanged
 	if m.Current.VideoID != "9bZkp7q19f0" || m.Version != 6 {
 		t.Fatalf("state mutated on duplicate ended: version=%d current=%+v", m.Version, m.Current)
+	}
+}
+
+func TestPlayNowRespectsQueueLimitWhenRequeueingCurrentTrack(t *testing.T) {
+	room := domain.Room{ID: "r1", OwnerID: "u1"}
+	host := domain.Identity{ID: "u1", Type: domain.IdentityUser}
+	queue := make([]youtubeTrack, 50)
+	for i := range queue {
+		queue[i] = youtubeTrack{ID: string(rune('a' + i%26)), VideoID: "dQw4w9WgXcQ"}
+	}
+	m := mediaState{Current: &youtubeTrack{ID: "current", VideoID: "9bZkp7q19f0"}, Queue: queue, Version: 2}
+	payload, _ := json.Marshal(mediaCommand{URL: "https://youtu.be/M7lc1UVf-VE"})
+	if err := m.applyMedia("media.play_now", payload, room, host, time.Now()); err != errQueueFull {
+		t.Fatalf("play now should reject a full queue, got %v", err)
+	}
+	if m.Current.VideoID != "9bZkp7q19f0" || len(m.Queue) != 50 || m.Version != 2 {
+		t.Fatalf("full-queue play now mutated state: %+v", m)
 	}
 }
 

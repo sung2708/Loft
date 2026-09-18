@@ -31,13 +31,23 @@ func VideoID(raw string) (string, error) {
 	default:
 		return "", ErrInvalidURL
 	}
-	if len(id) != 11 {
+	if !ValidVideoID(id) {
 		return "", ErrInvalidURL
+	}
+	return id, nil
+}
+
+// ValidVideoID accepts only the fixed-width identifier format used by YouTube.
+// Keep this separate from URL parsing because realtime and REST room-pick
+// commands receive an ID, while the media queue receives a full URL.
+func ValidVideoID(id string) bool {
+	if len(id) != 11 {
+		return false
 	}
 	for _, c := range id {
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
-			return "", ErrInvalidURL
+			return false
 		}
 	}
-	return id, nil
+	return true
 }

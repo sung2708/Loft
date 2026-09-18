@@ -24,9 +24,15 @@ import {
   UserRound,
 } from "lucide-react";
 
+const ACCESS_APPROVAL_WAIT_MS = 5 * 60 * 1000;
+
 export default function RoomJoinPage() {
   const { locale } = useTranslation();
-  const l = useCallback((english: string, vietnamese: string) => locale === "vi" ? vietnamese : english, [locale]);
+  const l = useCallback(
+    (english: string, vietnamese: string) =>
+      locale === "vi" ? vietnamese : english,
+    [locale],
+  );
   const tr = useUIText();
   const params = useParams();
   const router = useRouter();
@@ -45,31 +51,32 @@ export default function RoomJoinPage() {
   const [error, setError] = useState<string | null>(null);
   const [hasSession, setHasSession] = useState(false);
 
-  const userFacingError = useCallback(
-    (caught: unknown, fallback: string) => {
-      if (caught instanceof ApiError) {
-        const messages: Record<string, string> = {
-          AUTHENTICATION_REQUIRED: "Authentication required",
-          INVALID_DISPLAY_NAME: "Display name must be 2–48 characters",
-          INVALID_ROOM_PASSWORD: "That password doesn't look right. Try again.",
-          RATE_LIMITED: "Please wait a moment before trying again",
-          ROOM_ACCESS_DENIED: "This room does not allow guests",
-          ROOM_LOCKED: "This room is locked",
-          ROOM_NOT_FOUND: "Room not found",
-        };
-        return messages[caught.code] ?? fallback;
-      }
-      return fallback;
-    },
-    [],
-  );
+  const userFacingError = useCallback((caught: unknown, fallback: string) => {
+    if (caught instanceof ApiError) {
+      const messages: Record<string, string> = {
+        AUTHENTICATION_REQUIRED: "Authentication required",
+        INVALID_DISPLAY_NAME: "Display name must be 2–48 characters",
+        INVALID_ROOM_PASSWORD: "That password doesn't look right. Try again.",
+        RATE_LIMITED: "Please wait a moment before trying again",
+        ROOM_ACCESS_DENIED: "This room does not allow guests",
+        ROOM_LOCKED: "This room is locked",
+        ROOM_NOT_FOUND: "Room not found",
+      };
+      return messages[caught.code] ?? fallback;
+    }
+    return fallback;
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    void api.resolveRoom(roomId, controller.signal)
+    void api
+      .resolveRoom(roomId, controller.signal)
       .then((resolved) => {
         setRoom(resolved.room);
-        if (/^\d{6}$/.test(resolved.room.slug) && resolved.room.slug !== roomId) {
+        if (
+          /^\d{6}$/.test(resolved.room.slug) &&
+          resolved.room.slug !== roomId
+        ) {
           router.replace(`/join/${encodeURIComponent(resolved.room.slug)}`);
         }
       })
@@ -82,12 +89,17 @@ export default function RoomJoinPage() {
 
   useEffect(() => {
     let active = true;
-    void getSupabase()?.auth.getSession().then(({ data }) => {
-      if (active) setHasSession(Boolean(data.session));
-    }).catch(() => {
-      if (active) setHasSession(false);
-    });
-    return () => { active = false; };
+    void getSupabase()
+      ?.auth.getSession()
+      .then(({ data }) => {
+        if (active) setHasSession(Boolean(data.session));
+      })
+      .catch(() => {
+        if (active) setHasSession(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Keep the waiting page live after a host approves the request. The same
@@ -95,34 +107,109 @@ export default function RoomJoinPage() {
   useEffect(() => {
     if (!accessRequested || !room || !hasSession) return;
     let active = true;
+    let inFlight = false;
+    let timer: number | undefined;
+    const deadline = Date.now() + ACCESS_APPROVAL_WAIT_MS;
+
+    const stopWithTimeout = () => {
+      if (!active) return;
+      setAccessRequested(false);
+      setError(
+        l(
+          "Approval is taking longer than expected. Check access again.",
+          "Việc phê duyệt đang mất nhiều thời gian. Hãy kiểm tra lại quyền truy cập.",
+        ),
+      );
+    };
+
+    const schedule = (delay: number) => {
+      if (!active) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void check(), delay);
+    };
+
     const check = async () => {
+      if (!active || inFlight) return;
+      if (Date.now() >= deadline) {
+        stopWithTimeout();
+        return;
+      }
+      if (document.visibilityState !== "visible") {
+        schedule(10_000);
+        return;
+      }
+      inFlight = true;
       const session = (await getSupabase()?.auth.getSession())?.data.session;
-      if (!active || !session) return;
+      if (!active) return;
+      if (!session) {
+        inFlight = false;
+        setAccessRequested(false);
+        setError(
+          l(
+            "Sign in again to check access.",
+            "Hãy đăng nhập lại để kiểm tra quyền truy cập.",
+          ),
+        );
+        return;
+      }
       try {
-        const result = await api.requestRoomAccess(session.access_token, room.id);
+        const result = await api.requestRoomAccess(
+          session.access_token,
+          room.id,
+        );
         if (result.status === "approved" || result.status === "not_required") {
           const me = await api.me(session.access_token);
-          saveCredential(room.id, { token: session.access_token, type: "user", roomId: room.id, displayName: me.display_name });
+          saveCredential(room.id, {
+            token: session.access_token,
+            type: "user",
+            roomId: room.id,
+            displayName: me.display_name,
+          });
+          active = false;
           router.replace(`/room/${encodeURIComponent(room.slug)}`);
         }
-      } catch { /* keep waiting; transient failures must not eject the user */ }
+      } catch {
+        /* keep waiting; transient failures must not eject the user */
+      } finally {
+        inFlight = false;
+        if (active) schedule(2_000);
+      }
     };
-    const timer = window.setInterval(() => void check(), 2000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [accessRequested, hasSession, room, router]);
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible" || !active) return;
+      if (timer) window.clearTimeout(timer);
+      void check();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    void check();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [accessRequested, hasSession, l, room, router]);
 
   const handleJoinGuest = async () => {
     if (!room) return;
     const name = displayName.trim();
     if (name.length === 1) {
-      setError(l("Display name must be at least 2 characters, or leave it blank.", "Tên hiển thị phải có ít nhất 2 ký tự, hoặc để trống."));
+      setError(
+        l(
+          "Display name must be at least 2 characters, or leave it blank.",
+          "Tên hiển thị phải có ít nhất 2 ký tự, hoặc để trống.",
+        ),
+      );
       return;
     }
     setIsJoiningGuest(true);
     setJoinStep("connecting");
     setError(null);
     try {
-      const guest = await api.createGuest(room.id, name || l("Guest", "Khách"), password);
+      const guest = await api.createGuest(
+        room.id,
+        name || l("Guest", "Khách"),
+        password,
+      );
       saveCredential(room.id, {
         token: guest.token,
         type: "guest",
@@ -130,7 +217,7 @@ export default function RoomJoinPage() {
         displayName: guest.display_name,
       });
       setJoinStep("entering");
-      router.push(`/room/${encodeURIComponent(room.slug)}`);
+      router.replace(`/room/${encodeURIComponent(room.slug)}`);
     } catch (caught) {
       setJoinStep("idle");
       setIsJoiningGuest(false);
@@ -147,11 +234,22 @@ export default function RoomJoinPage() {
         setIsRequestingAccess(true);
         setError(null);
         try {
-          const result = await api.requestRoomAccess(session.access_token, room.id);
-          if (result.status === "approved" || result.status === "not_required") {
+          const result = await api.requestRoomAccess(
+            session.access_token,
+            room.id,
+          );
+          if (
+            result.status === "approved" ||
+            result.status === "not_required"
+          ) {
             const me = await api.me(session.access_token);
-            saveCredential(room.id, { token: session.access_token, type: "user", roomId: room.id, displayName: me.display_name });
-            router.push(`/room/${encodeURIComponent(room.slug)}`);
+            saveCredential(room.id, {
+              token: session.access_token,
+              type: "user",
+              roomId: room.id,
+              displayName: me.display_name,
+            });
+            router.replace(`/room/${encodeURIComponent(room.slug)}`);
             return;
           }
           setAccessRequested(true);
@@ -170,7 +268,7 @@ export default function RoomJoinPage() {
           roomId: room.id,
           displayName: me.display_name,
         });
-        router.push(`/room/${encodeURIComponent(room.slug)}`);
+        router.replace(`/room/${encodeURIComponent(room.slug)}`);
       } catch (caught) {
         setError(userFacingError(caught, "Could not join room"));
       }
@@ -190,9 +288,14 @@ export default function RoomJoinPage() {
         <main className="flex min-h-[calc(100dvh-3.5rem)] items-center justify-center px-4 py-10 pt-20">
           <section className="workflow-panel w-full max-w-sm rounded-[6px] p-6 text-center">
             <CircleAlert aria-hidden="true" className="mx-auto h-5 w-5" />
-            <h1 className="mt-4 text-base font-medium">{l("This room is unavailable", "Phòng này không khả dụng")}</h1>
+            <h1 className="mt-4 text-base font-medium">
+              {l("This room is unavailable", "Phòng này không khả dụng")}
+            </h1>
             <p className="mt-2 text-[11px] text-[var(--text-loft-secondary)]">
-              {l("It may not exist or may have ended.", "Phòng có thể không tồn tại hoặc đã kết thúc.")}
+              {l(
+                "It may not exist or may have ended.",
+                "Phòng có thể không tồn tại hoặc đã kết thúc.",
+              )}
             </p>
             <button
               type="button"
@@ -216,28 +319,43 @@ export default function RoomJoinPage() {
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
               <Globe2 aria-hidden="true" className="h-4 w-4" />
-              <span className="eyebrow">
-                {l("Room", "Phòng")}
-              </span>
+              <span className="eyebrow">{l("Room", "Phòng")}</span>
             </div>
             <div className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-2 py-1 text-[11px] font-medium">
-              {room?.is_locked ? <Lock aria-hidden="true" className="h-3.5 w-3.5" /> : <LockOpen aria-hidden="true" className="h-3.5 w-3.5" />}
-              <span>{room?.is_locked ? l("Locked", "Đã khóa") : l("Open", "Đang mở")}</span>
+              {room?.is_locked ? (
+                <Lock aria-hidden="true" className="h-3.5 w-3.5" />
+              ) : (
+                <LockOpen aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+              <span>
+                {room?.is_locked
+                  ? l("Locked", "Đã khóa")
+                  : l("Open", "Đang mở")}
+              </span>
             </div>
           </div>
 
           <motion.div
             initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: shouldReduceMotion ? 0 : 0.5, ease: EASE_ENTRANCE }}
+            transition={{
+              duration: shouldReduceMotion ? 0 : 0.5,
+              ease: EASE_ENTRANCE,
+            }}
             className="workflow-panel overflow-hidden rounded-[6px]"
           >
             <div className="flex items-center justify-between border-b border-[var(--border-loft)] px-4 py-3 sm:px-5">
               <div className="flex items-center gap-2 text-[11px] text-[var(--text-loft-secondary)]">
                 <UserRound aria-hidden="true" className="h-4 w-4" />
-                <span>{room?.allow_guests ? l("Guest access", "Quyền khách") : l("Account access", "Quyền tài khoản")}</span>
+                <span>
+                  {room?.allow_guests
+                    ? l("Guest access", "Quyền khách")
+                    : l("Account access", "Quyền tài khoản")}
+                </span>
               </div>
-              {room?.password_required ? <KeyRound aria-hidden="true" className="h-4 w-4" /> : null}
+              {room?.password_required ? (
+                <KeyRound aria-hidden="true" className="h-4 w-4" />
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-3 px-4 pb-4 pt-4 sm:px-5 sm:pb-5">
@@ -248,18 +366,34 @@ export default function RoomJoinPage() {
                   </h1>
                   <p className="mt-1 text-[11px] text-[var(--text-loft-secondary)]">
                     {room?.allow_guests
-                      ? l("Guests can join with a display name.", "Khách có thể tham gia với tên hiển thị.")
-                      : l("Sign in to request access.", "Đăng nhập để yêu cầu tham gia.")}
+                      ? l(
+                          "Guests can join with a display name.",
+                          "Khách có thể tham gia với tên hiển thị.",
+                        )
+                      : l(
+                          "Sign in to request access.",
+                          "Đăng nhập để yêu cầu tham gia.",
+                        )}
                   </p>
                 </div>
                 <span className="shrink-0 rounded-[6px] border border-[var(--border-loft)] px-2 py-1 text-[11px] font-medium">
-                  {room?.allow_guests ? l("Guests", "Khách") : l("Members", "Thành viên")}
+                  {room?.allow_guests
+                    ? l("Guests", "Khách")
+                    : l("Members", "Thành viên")}
                 </span>
               </div>
               {room?.is_locked ? (
                 <div className="flex items-start gap-2 border-t border-[var(--border-loft)] pt-3 text-[11px] text-[var(--text-loft-secondary)]">
-                  <Lock aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <p>{l("This room is locked. Ask the host to open it.", "Phòng đang khóa. Hãy nhờ chủ phòng mở khóa.")}</p>
+                  <Lock
+                    aria-hidden="true"
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  />
+                  <p>
+                    {l(
+                      "This room is locked. Ask the host to open it.",
+                      "Phòng đang khóa. Hãy nhờ chủ phòng mở khóa.",
+                    )}
+                  </p>
                 </div>
               ) : null}
             </div>
@@ -273,9 +407,14 @@ export default function RoomJoinPage() {
             >
               {room?.allow_guests ? (
                 <div className="flex flex-col gap-2">
-                  <label htmlFor="guest-display-name" className="text-[11px] font-medium">
+                  <label
+                    htmlFor="guest-display-name"
+                    className="text-[11px] font-medium"
+                  >
                     {l("Guest name", "Tên khách")}
-                    <span className="ml-1 text-[var(--text-loft-muted)]">{l("(optional)", "(không bắt buộc)")}</span>
+                    <span className="ml-1 text-[var(--text-loft-muted)]">
+                      {l("(optional)", "(không bắt buộc)")}
+                    </span>
                   </label>
                   <input
                     id="guest-display-name"
@@ -289,7 +428,10 @@ export default function RoomJoinPage() {
               ) : null}
               {room?.password_required ? (
                 <div className="flex flex-col gap-2">
-                  <label htmlFor="room-password" className="text-[11px] font-medium">
+                  <label
+                    htmlFor="room-password"
+                    className="text-[11px] font-medium"
+                  >
                     {l("Room password", "Mật khẩu phòng")}
                   </label>
                   <input
@@ -304,15 +446,33 @@ export default function RoomJoinPage() {
                 </div>
               ) : null}
               {error ? (
-                <div role="alert" className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px]">
-                  <CircleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px]"
+                >
+                  <CircleAlert
+                    aria-hidden="true"
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
                   <p>{tr(error)}</p>
                 </div>
               ) : null}
               {accessRequested ? (
-                <div role="status" aria-live="polite" className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px] text-[var(--text-loft-secondary)]">
-                  <ShieldCheck aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p>{l("Your request was sent. We'll take you in when it is approved.", "Yêu cầu đã được gửi. Bạn sẽ vào phòng khi được duyệt.")}</p>
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px] text-[var(--text-loft-secondary)]"
+                >
+                  <ShieldCheck
+                    aria-hidden="true"
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
+                  <p>
+                    {l(
+                      "Your request was sent. We'll take you in when it is approved.",
+                      "Yêu cầu đã được gửi. Bạn sẽ vào phòng khi được duyệt.",
+                    )}
+                  </p>
                 </div>
               ) : null}
               {room?.allow_guests ? (
@@ -328,7 +488,10 @@ export default function RoomJoinPage() {
                 >
                   {joinStep === "connecting" ? (
                     <>
-                      <Loader2 aria-hidden="true" className="h-4 w-4 motion-safe:animate-spin" />
+                      <Loader2
+                        aria-hidden="true"
+                        className="h-4 w-4 motion-safe:animate-spin"
+                      />
                       <span>{l("Joining…", "Đang tham gia…")}</span>
                     </>
                   ) : joinStep === "entering" ? (
@@ -339,7 +502,11 @@ export default function RoomJoinPage() {
                   ) : (
                     <>
                       <LogIn aria-hidden="true" className="h-4 w-4" />
-                      <span>{hasSession ? l("Join as guest", "Tham gia với tư cách khách") : l("Join", "Tham gia")}</span>
+                      <span>
+                        {hasSession
+                          ? l("Join as guest", "Tham gia với tư cách khách")
+                          : l("Join", "Tham gia")}
+                      </span>
                     </>
                   )}
                 </button>
@@ -354,7 +521,14 @@ export default function RoomJoinPage() {
                     : "hover-invert border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)]"
                 }`}
               >
-                {isRequestingAccess ? <Loader2 aria-hidden="true" className="h-4 w-4 motion-safe:animate-spin" /> : <LogIn aria-hidden="true" className="h-4 w-4" />}
+                {isRequestingAccess ? (
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-4 w-4 motion-safe:animate-spin"
+                  />
+                ) : (
+                  <LogIn aria-hidden="true" className="h-4 w-4" />
+                )}
                 <span>
                   {isRequestingAccess
                     ? l("Requesting…", "Đang yêu cầu…")

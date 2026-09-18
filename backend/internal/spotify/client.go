@@ -3,7 +3,9 @@ package spotify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,6 +21,8 @@ type TokenResult struct {
 	RefreshToken string
 	ExpiresAt    time.Time
 }
+
+var ErrInvalidGrant = errors.New("spotify: invalid_grant")
 
 // Refresh exchanges a refresh token and preserves the old refresh token when Spotify omits rotation.
 func (c TokenRefresher) Refresh(ctx context.Context, refreshToken string) (TokenResult, error) {
@@ -41,7 +45,16 @@ func (c TokenRefresher) Refresh(ctx context.Context, refreshToken string) (Token
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return TokenResult{}, fmt.Errorf("spotify token refresh status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		var errPayload struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		_ = json.Unmarshal(body, &errPayload)
+		if strings.EqualFold(errPayload.Error, "invalid_grant") {
+			return TokenResult{}, ErrInvalidGrant
+		}
+		return TokenResult{}, fmt.Errorf("spotify token refresh status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
 		AccessToken  string `json:"access_token"`

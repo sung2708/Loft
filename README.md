@@ -46,7 +46,7 @@ Requirements: Node 24+, pnpm 11+, Go 1.26+, Supabase project, and LiveKit Cloud 
 
 1. Copy `frontend/.env.example` to `frontend/.env.local` and set public values.
 2. Copy `backend/.env.example` to `backend/.env` and set server values. `go run ./cmd/server` loads this file when run from `backend`; exported shell variables take precedence.
-3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000006`) through Supabase SQL Editor or your migration runner.
+3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000011`) through Supabase SQL Editor or your migration runner.
 4. Start backend:
 
    ```powershell

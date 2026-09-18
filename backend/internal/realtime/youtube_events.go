@@ -3,6 +3,8 @@ package realtime
 import (
 	"encoding/json"
 	"fmt"
+
+	"loft/backend/internal/youtube"
 )
 
 type youtubePickCommand struct {
@@ -28,7 +30,7 @@ func validateYouTubePickCommand(raw json.RawMessage, requireVideo bool) (youtube
 	if len(raw) == 0 || json.Unmarshal(raw, &cmd) != nil {
 		return cmd, fmt.Errorf("invalid youtube pick payload")
 	}
-	if requireVideo && len(cmd.VideoID) != 11 {
+	if requireVideo && !youtube.ValidVideoID(cmd.VideoID) {
 		return cmd, fmt.Errorf("invalid youtube video id")
 	}
 	if len(cmd.Title) > 140 || len(cmd.Channel) > 80 || len(cmd.PickID) > 64 {

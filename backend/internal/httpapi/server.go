@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,20 +36,39 @@ type Server struct {
 	guestLimit           *ratelimit.Limiter
 	passwordLimit        *ratelimit.Limiter
 	roomLimit            *ratelimit.Limiter
+	spotifyConnectLimit  *ratelimit.Limiter
+	spotifySearchLimit   *ratelimit.Limiter
+	youtubePickLimit     *ratelimit.Limiter
 	origins              map[string]struct{}
+	frontendOrigin       string
 	logger               *slog.Logger
 	metrics              *observability.Metrics
 	httpLogger           *zerolog.Logger
 	spotifyMu            sync.Mutex
 	spotifyStates        map[string]spotifyOAuthState
+	spotifyStateStore    SpotifyOAuthStateStore
+	spotifyUserEpochs    map[string]int64
 	spotifyTokens        map[string]string
 	spotifyRefreshTokens map[string]string
 }
 
 type spotifyOAuthState struct {
-	UserID, Verifier, RedirectURI, ReturnTo string
-	ExpiresAt                               time.Time
+	UserID    string    `json:"user_id"`
+	Verifier  string    `json:"verifier"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Epoch     int64     `json:"epoch"`
 }
+
+// SpotifyOAuthStateStore coordinates short-lived OAuth transactions across
+// backend instances. Implementations must consume a state atomically.
+type SpotifyOAuthStateStore interface {
+	PutOAuthState(context.Context, string, []byte, time.Duration) error
+	ConsumeOAuthState(context.Context, string) ([]byte, bool, error)
+	GetUserOAuthEpoch(context.Context, string) (int64, error)
+	BumpUserOAuthEpoch(context.Context, string) (int64, error)
+}
+
+const spotifyStateCapacity = 1024
 
 type RoomDeletionGuard interface {
 	BeginDelete(roomID string) bool
@@ -86,15 +106,42 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		logger = slog.Default()
 	}
 	allowed := make(map[string]struct{}, len(origins))
+	frontendOrigin := ""
 	for _, origin := range origins {
+		origin = strings.TrimRight(origin, "/")
+		if frontendOrigin == "" {
+			frontendOrigin = origin
+		}
 		allowed[origin] = struct{}{}
 	}
 	var guard RoomDeletionGuard
 	if len(deletion) > 0 {
 		guard = deletion[0]
 	}
-	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService, spotifyStates: make(map[string]spotifyOAuthState), spotifyTokens: make(map[string]string), spotifyRefreshTokens: make(map[string]string),
-		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
+	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService, origins: allowed, frontendOrigin: frontendOrigin, spotifyStates: make(map[string]spotifyOAuthState), spotifyUserEpochs: make(map[string]int64), spotifyTokens: make(map[string]string), spotifyRefreshTokens: make(map[string]string),
+		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), spotifyConnectLimit: ratelimit.New(5, 10*time.Minute, 2), spotifySearchLimit: ratelimit.New(20, time.Minute, 5), youtubePickLimit: ratelimit.New(15, time.Minute, 5), logger: logger, metrics: observability.NewMetrics()}
+}
+
+// ConfigureSpotifyOAuthStateStore enables cross-instance OAuth callbacks.
+// When configured, an unavailable store fails the flow closed rather than
+// silently falling back to process-local state.
+func (s *Server) ConfigureSpotifyOAuthStateStore(store SpotifyOAuthStateStore) {
+	s.spotifyMu.Lock()
+	s.spotifyStateStore = store
+	s.spotifyMu.Unlock()
+}
+
+// ConfigureSpotifyFrontendOrigin sets the trusted, canonical frontend used
+// after a provider callback. It must be one of the CORS allowlist origins.
+func (s *Server) ConfigureSpotifyFrontendOrigin(origin string) error {
+	origin = strings.TrimRight(origin, "/")
+	if _, ok := s.origins[origin]; !ok || origin == "" {
+		return fmt.Errorf("Spotify frontend origin is not allowed")
+	}
+	s.spotifyMu.Lock()
+	s.frontendOrigin = origin
+	s.spotifyMu.Unlock()
+	return nil
 }
 
 // ConfigureObservability is called once during process bootstrap before routes
@@ -114,6 +161,8 @@ func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
 	s.guestLimit.SetDistributed("guest_session", remote)
 	s.passwordLimit.SetDistributed("room_password", remote)
 	s.roomLimit.SetDistributed("room_create", remote)
+	s.spotifyConnectLimit.SetDistributed("spotify_oauth", remote)
+	s.spotifySearchLimit.SetDistributed("spotify_search", remote)
 }
 
 func (s *Server) Routes(ws http.Handler) http.Handler {
@@ -250,6 +299,25 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Ping(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Database is unavailable")
 		return
+	}
+	if os.Getenv("SPOTIFY_ENABLED") == "true" {
+		s.spotifyMu.Lock()
+		stateStore := s.spotifyStateStore
+		s.spotifyMu.Unlock()
+		pinger, ok := stateStore.(interface {
+			Ping(context.Context) error
+		})
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Spotify OAuth state is unavailable")
+			return
+		}
+		redisCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := pinger.Ping(redisCtx)
+		cancel()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Spotify OAuth state is unavailable")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }

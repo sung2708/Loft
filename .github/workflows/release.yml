@@ -1,0 +1,269 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing SemVer tag to deploy (for example v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  GO_VERSION_FILE: backend/go.mod
+  NODE_VERSION: "24"
+  PNPM_VERSION: "11.26.0"
+
+jobs:
+  release-metadata:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.release.outputs.commit_sha }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate tag
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PUSHED_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$PUSHED_TAG"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a stable SemVer tag such as v1.2.3; received: $tag" >&2
+            exit 1
+          fi
+
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+          commit_sha="$(git rev-list -n 1 "$tag")"
+          test -n "$commit_sha"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
+
+  backend-quality:
+    name: Backend quality gates
+    needs: release-metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.commit_sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: Test with race detector
+        working-directory: backend
+        run: go test -race ./...
+
+      - name: Build
+        working-directory: backend
+        run: go build ./...
+
+  frontend-quality:
+    name: Frontend quality gates
+    needs: release-metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.commit_sha }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: frontend
+        run: pnpm lint
+
+      - name: Type-check
+        working-directory: frontend
+        run: pnpm exec tsc --noEmit
+
+      - name: Test
+        working-directory: frontend
+        run: pnpm test
+
+      - name: Build
+        working-directory: frontend
+        run: pnpm build
+
+  deploy-backend:
+    name: Deploy backend to Render
+    needs: [release-metadata, backend-quality, frontend-quality]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger exact-commit deploy
+        id: deploy
+        env:
+          COMMIT_SHA: ${{ needs.release-metadata.outputs.commit_sha }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+
+          response_file="$(mktemp)"
+          status_code="$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header "Accept: application/json" \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "{\"commitId\":\"$COMMIT_SHA\"}" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+
+          if [[ "$status_code" != "201" && "$status_code" != "202" ]]; then
+            echo "Render rejected the deploy with HTTP $status_code" >&2
+            jq . "$response_file" >&2 || true
+            exit 1
+          fi
+
+          deploy_id="$(jq -r '.id // empty' "$response_file")"
+          if [[ -z "$deploy_id" ]]; then
+            echo "Render did not return a deploy ID." >&2
+            jq . "$response_file" >&2 || true
+            exit 1
+          fi
+
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Render deployment
+        env:
+          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..60}; do
+            response="$(curl --fail --silent --show-error \
+              --header "Accept: application/json" \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID")"
+            status="$(jq -r '.status // empty' <<< "$response")"
+            echo "Render deploy status: $status"
+
+            case "$status" in
+              live)
+                exit 0
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render deployment failed with status: $status" >&2
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for Render deployment." >&2
+          exit 1
+
+      - name: Verify backend readiness
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$BACKEND_URL"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            --retry-delay 5 "${BACKEND_URL%/}/health"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            --retry-delay 5 "${BACKEND_URL%/}/ready"
+
+  deploy-frontend:
+    name: Deploy frontend to Vercel
+    needs: [release-metadata, deploy-backend]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.commit_sha }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Pull Vercel production settings
+        working-directory: frontend
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: pnpm dlx vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build for Vercel
+        working-directory: frontend
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: pnpm dlx vercel@latest build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy to Vercel production
+        working-directory: frontend
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: pnpm dlx vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN"

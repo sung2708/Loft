@@ -99,20 +99,29 @@ export const LobbyHeader: React.FC = () => {
       ? `${window.location.pathname}${window.location.search}`
       : pathname || "/";
   const authNext =
-    pathname && !pathname.startsWith("/auth/")
-      ? currentPath
-      : "/";
-  const navItems = [{
-    label: isAuthenticated ? t.account.yourRooms : locale === "vi" ? "Phòng" : "Spaces",
-    href: roomsHref,
-    active: pathname === roomsHref,
-  }];
+    pathname && !pathname.startsWith("/auth/") ? currentPath : "/";
+  const navItems = [
+    {
+      label: isAuthenticated
+        ? t.account.yourRooms
+        : locale === "vi"
+          ? "Phòng"
+          : "Spaces",
+      href: roomsHref,
+      active: pathname === roomsHref,
+    },
+  ];
 
   return (
     <AppHeader
       subtitle=""
       center={
-        <nav aria-label={locale === "vi" ? "Điều hướng chính" : "Primary navigation"} className="flex items-center gap-6">
+        <nav
+          aria-label={
+            locale === "vi" ? "Điều hướng chính" : "Primary navigation"
+          }
+          className="flex items-center gap-6"
+        >
           {navItems.map((item) => (
             <Link
               key={item.label}
@@ -144,8 +153,12 @@ export const LobbyHeader: React.FC = () => {
             }
             aria-label={
               theme === "dark"
-                ? locale === "vi" ? "Chuyển sang giao diện sáng" : "Switch to light theme"
-                : locale === "vi" ? "Chuyển sang giao diện tối" : "Switch to dark theme"
+                ? locale === "vi"
+                  ? "Chuyển sang giao diện sáng"
+                  : "Switch to light theme"
+                : locale === "vi"
+                  ? "Chuyển sang giao diện tối"
+                  : "Switch to dark theme"
             }
             aria-pressed={theme === "dark"}
             className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--text-loft-secondary)]"
@@ -160,7 +173,12 @@ export const LobbyHeader: React.FC = () => {
           {/* Auth State in Header */}
           {isLoading ? (
             /* Subtle anti-flicker loading skeleton */
-            <div aria-label={locale === "vi" ? "Đang tải tài khoản" : "Loading account"} className="h-8 w-8 rounded-full bg-[var(--border-loft)] motion-safe:animate-pulse" />
+            <div
+              aria-label={
+                locale === "vi" ? "Đang tải tài khoản" : "Loading account"
+              }
+              className="h-8 w-8 rounded-full bg-[var(--border-loft)] motion-safe:animate-pulse"
+            />
           ) : isAuthenticated ? (
             /* Authenticated: Interactive Avatar with Dropdown */
             <div className="relative">
@@ -266,6 +284,7 @@ export const LobbyHeader: React.FC = () => {
                       onClick={async () => {
                         setIsMenuOpen(false);
                         await signOut();
+                        window.location.replace("/");
                       }}
                       role="menuitem"
                       className="btn-press hover-invert flex w-full items-center gap-3 rounded-[6px] px-3 py-2 text-[11px] font-medium text-[var(--text-loft-primary)]"

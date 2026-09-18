@@ -64,6 +64,3 @@ func TestDecodeCredentialKey(t *testing.T) {
 		}
 	}
 }
-
-
-

@@ -3,9 +3,17 @@
 import { create } from "zustand";
 import { useEffect } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { getSupabase, signInWithGoogle as startGoogleSignIn } from "@/lib/supabase/client";
+import {
+  getSupabase,
+  signInWithGoogle as startGoogleSignIn,
+} from "@/lib/supabase/client";
 import { safeAuthDestination } from "@/lib/authRedirect";
-import { api } from "@/lib/api";
+import { api, clearRoomCredentials } from "@/lib/api";
+import {
+  SPOTIFY_OAUTH_ATTEMPT_KEY,
+  SPOTIFY_RETURN_TO_KEY,
+} from "@/lib/spotify/oauth";
+import { useSpotifyStore } from "@/stores/useSpotifyStore";
 import type { ApiIdentity } from "@/types/api";
 
 export type AuthState =
@@ -27,23 +35,6 @@ interface AuthStore {
   signInWithGoogle: (next?: string) => Promise<void>;
 }
 
-function resumePendingAuthDestination() {
-  if (typeof window === "undefined") return;
-  // If we are currently on an auth callback route, let the callback page manage completion
-  if (window.location.pathname.startsWith("/auth/")) return;
-
-  const storedNext = window.sessionStorage.getItem("loft.auth.next");
-  if (!storedNext) return;
-
-  const destination = safeAuthDestination(storedNext, "/");
-  const current = `${window.location.pathname}${window.location.search}`;
-  window.sessionStorage.removeItem("loft.auth.next");
-
-  if (destination !== current) {
-    window.location.replace(destination);
-  }
-}
-
 export const useAuthStore = create<AuthStore>((set) => ({
   authState: { status: "loading" },
   initialized: false,
@@ -60,33 +51,34 @@ export const useAuthStore = create<AuthStore>((set) => ({
     let isSubscribed = true;
 
     // 1. Initial Session Resolution
-    void supabase.auth.getSession().then(async ({ data: { session }, error }) => {
-      if (!isSubscribed) return;
-      if (error || !session) {
-        set({ authState: { status: "anonymous" }, initialized: true });
-        return;
-      }
+    void supabase.auth
+      .getSession()
+      .then(async ({ data: { session }, error }) => {
+        if (!isSubscribed) return;
+        if (error || !session) {
+          set({ authState: { status: "anonymous" }, initialized: true });
+          return;
+        }
 
-      let identity: ApiIdentity | null = null;
-      try {
-        identity = await api.me(session.access_token);
-      } catch {
-        // Fallback gracefully to Supabase user metadata
-      }
+        let identity: ApiIdentity | null = null;
+        try {
+          identity = await api.me(session.access_token);
+        } catch {
+          // Fallback gracefully to Supabase user metadata
+        }
 
-      if (isSubscribed) {
-        resumePendingAuthDestination();
-        set({
-          authState: {
-            status: "authenticated",
-            user: session.user,
-            session,
-            identity,
-          },
-          initialized: true,
-        });
-      }
-    });
+        if (isSubscribed) {
+          set({
+            authState: {
+              status: "authenticated",
+              user: session.user,
+              session,
+              identity,
+            },
+            initialized: true,
+          });
+        }
+      });
 
     // 2. Auth State Change Listener
     const {
@@ -95,11 +87,22 @@ export const useAuthStore = create<AuthStore>((set) => ({
       if (!isSubscribed) return;
 
       if (event === "SIGNED_OUT" || !session) {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.removeItem("loft.auth.next");
+          window.sessionStorage.removeItem(SPOTIFY_RETURN_TO_KEY);
+          window.sessionStorage.removeItem(SPOTIFY_OAUTH_ATTEMPT_KEY);
+          clearRoomCredentials();
+        }
+        useSpotifyStore.getState().reset();
         set({ authState: { status: "anonymous" } });
         return;
       }
 
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+      if (
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "USER_UPDATED"
+      ) {
         let identity: ApiIdentity | null = null;
         try {
           identity = await api.me(session.access_token);
@@ -108,7 +111,6 @@ export const useAuthStore = create<AuthStore>((set) => ({
         }
 
         if (isSubscribed) {
-          resumePendingAuthDestination();
           set({
             authState: {
               status: "authenticated",
@@ -136,6 +138,13 @@ export const useAuthStore = create<AuthStore>((set) => ({
         // Continue clearing local state
       }
     }
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem("loft.auth.next");
+      window.sessionStorage.removeItem(SPOTIFY_RETURN_TO_KEY);
+      window.sessionStorage.removeItem(SPOTIFY_OAUTH_ATTEMPT_KEY);
+      clearRoomCredentials();
+    }
+    useSpotifyStore.getState().reset();
     set({ authState: { status: "anonymous" } });
   },
 
@@ -154,7 +163,8 @@ export const useAuthStore = create<AuthStore>((set) => ({
 }));
 
 export function useAuth() {
-  const { authState, initializeAuth, signOut, signInWithGoogle } = useAuthStore();
+  const { authState, initializeAuth, signOut, signInWithGoogle } =
+    useAuthStore();
 
   useEffect(() => {
     const cleanup = initializeAuth();

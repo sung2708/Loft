@@ -53,7 +53,6 @@ func DecodeCredentialKey(rawKey string) ([]byte, error) {
 	return nil, fmt.Errorf("invalid credential key: must decode to exactly 32 bytes")
 }
 
-
 type Credentials struct {
 	UserID       string
 	AccessToken  string

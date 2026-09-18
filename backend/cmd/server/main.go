@@ -55,15 +55,34 @@ func main() {
 	hub := realtime.New(database, guests, users, cfg.FrontendOrigins, slogLogger)
 	hub.SetParticipantEvictor(liveKitService)
 	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, slogLogger, hub)
+	if err := api.ConfigureSpotifyFrontendOrigin(cfg.FrontendURL); err != nil {
+		logger.Error().Err(err).Msg("invalid Spotify frontend origin")
+		os.Exit(1)
+	}
 	api.ConfigureObservability(logger, observability.NewMetrics())
 	if cfg.RedisURL != "" {
 		bus, err := realtime.NewRedisBus(cfg.RedisURL, cfg.InstanceID, slogLogger)
 		if err != nil {
 			logger.Error().Err(err).Msg("redis disabled; serving local realtime only")
+			if cfg.SpotifyEnabled {
+				logger.Error().Msg("Spotify requires Redis-backed OAuth state")
+				os.Exit(1)
+			}
 		} else {
+			if cfg.SpotifyEnabled {
+				redisCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err := bus.Ping(redisCtx)
+				cancel()
+				if err != nil {
+					bus.Close()
+					logger.Error().Err(err).Msg("Spotify requires a reachable Redis-backed OAuth state store")
+					os.Exit(1)
+				}
+			}
 			hub.SetBus(bus)
 			hub.ConfigureDistributedRateLimits(bus)
 			api.ConfigureDistributedRateLimits(bus)
+			api.ConfigureSpotifyOAuthStateStore(bus)
 			bus.Start(ctx, hub.DeliverRemote)
 			defer bus.Close()
 		}

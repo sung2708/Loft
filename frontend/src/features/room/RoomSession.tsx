@@ -23,8 +23,9 @@ import {
 import { Track, ConnectionState, ConnectionQuality } from "livekit-client";
 import { motion } from "framer-motion";
 import { Hand, MicOff } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, clearCredential } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
 import { LIVEKIT_URL } from "@/lib/config";
 import { RoomSocket } from "@/lib/realtime";
 import { useRoomStore } from "@/stores/useRoomStore";
@@ -50,7 +51,8 @@ import { isFrontCameraSelfView } from "./cameraOrientation";
 import { hasActiveScreenShare } from "./screenShare";
 import type { RoomCommandType } from "@/types/room";
 
-const currentText = (english: string) => translateUI(useI18nStore.getState().locale, english);
+const currentText = (english: string) =>
+  translateUI(useI18nStore.getState().locale, english);
 
 interface SessionValue {
   token?: string;
@@ -89,6 +91,7 @@ const SessionContext = createContext<SessionValue>({
 export const useRoomSession = () => useContext(SessionContext);
 
 export function RoomSession({ credential }: { credential: RoomCredential }) {
+  const router = useRouter();
   const socketRef = useRef<RoomSocket | null>(null);
   const [liveKitToken, setLiveKitToken] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -111,8 +114,13 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
 
   useEffect(() => {
     const previous = previousConnectionState.current;
-    if (connectionState === "RECONNECTING" && previous === "CONNECTED") playSfx("disconnect");
-    if (connectionState === "CONNECTED" && (previous === "RECONNECTING" || previous === "RESYNCING")) playSfx("reconnect");
+    if (connectionState === "RECONNECTING" && previous === "CONNECTED")
+      playSfx("disconnect");
+    if (
+      connectionState === "CONNECTED" &&
+      (previous === "RECONNECTING" || previous === "RESYNCING")
+    )
+      playSfx("reconnect");
     previousConnectionState.current = connectionState;
   }, [connectionState]);
 
@@ -123,14 +131,19 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     const socket = new RoomSocket(credential, {
       getCredential: async () => {
         if (credential.type === "user") {
-          const session = (await getSupabase()?.auth.getSession())?.data.session;
+          const session = (await getSupabase()?.auth.getSession())?.data
+            .session;
           if (!session) throw new Error("Sign in again to reconnect.");
           currentCredential = { ...credential, token: session.access_token };
         }
         return currentCredential;
       },
       onState: (state, error) => {
-        if (state === "FAILED" && error && (error.includes("removed") || error.includes("rejoin"))) {
+        if (
+          state === "FAILED" &&
+          error &&
+          (error.includes("removed") || error.includes("rejoin"))
+        ) {
           playSfx("remove-from-room");
         }
         useRoomStore.getState().setConnectionState(state, error);
@@ -142,7 +155,9 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           useMusicStore.getState().replaceMedia(event.payload.media);
           useYouTubePicksStore.getState().replace(event.payload.picks ?? []);
           if (currentCredential.type === "user" && currentCredential.token) {
-            void useSpotifyStore.getState().fetchStatus(currentCredential.token);
+            void useSpotifyStore
+              .getState()
+              .fetchStatus(currentCredential.token);
           }
           if (!enteredRoom.current) {
             enteredRoom.current = true;
@@ -152,27 +167,34 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           // with the same identity and displace the active participant.
           if (!mediaRequested) {
             mediaRequested = true;
-            void api.liveKitToken(credential.roomId, currentCredential)
-              .then(({ token }) => { if (!disposed) setLiveKitToken(token); })
+            void api
+              .liveKitToken(credential.roomId, currentCredential)
+              .then(({ token }) => {
+                if (!disposed) setLiveKitToken(token);
+              })
               .catch(() => {
                 mediaRequested = false;
-                if (!disposed) setMediaError(currentText("Voice and video couldn’t connect. Check your connection and try again."));
+                if (!disposed)
+                  setMediaError(
+                    currentText(
+                      "Voice and video couldn’t connect. Check your connection and try again.",
+                    ),
+                  );
               });
           }
         } else if (event.type === "participant.joined") {
           useRoomStore.getState().participantJoined(event.payload);
           playSfx("participant-join");
-        }
-        else if (event.type === "participant.left") {
+        } else if (event.type === "participant.left") {
           useRoomStore.getState().participantLeft(event.payload.connection_id);
           playSfx("participant-leave");
-        }
-        else if (event.type === "host.changed") {
+        } else if (event.type === "host.changed") {
           useRoomStore.getState().hostChanged(event.payload.host);
           playSfx("host-transfer");
-        }
-        else if (event.type === "room.locked")
-          useRoomStore.getState().roomLocked(event.payload.locked, event.payload.version);
+        } else if (event.type === "room.locked")
+          useRoomStore
+            .getState()
+            .roomLocked(event.payload.locked, event.payload.version);
         else if (event.type === "room.appearance.updated")
           useRoomStore.getState().roomAppearanceUpdated(event.payload);
         else if (event.type === "chat.message")
@@ -184,26 +206,54 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
             );
         else if (event.type === "media.state")
           useMusicStore.getState().setMedia(event.payload);
-        else if (event.type === "youtube.pick.created" || event.type === "youtube.pick.voted")
+        else if (
+          event.type === "youtube.pick.created" ||
+          event.type === "youtube.pick.voted"
+        )
           useYouTubePicksStore.getState().upsert(event.payload);
         else if (event.type === "youtube.pick.promoted")
           useYouTubePicksStore.getState().remove(event.payload.id);
-        else if (event.type === "connection.pong" && event.payload.client_time > 0)
-          useMusicStore.getState().setClockOffset(event.payload.server_time - (event.payload.client_time + Date.now()) / 2);
+        else if (
+          event.type === "connection.pong" &&
+          event.payload.client_time > 0
+        )
+          useMusicStore
+            .getState()
+            .setClockOffset(
+              event.payload.server_time -
+                (event.payload.client_time + Date.now()) / 2,
+            );
         else if (event.type === "reaction.sent") {
-          useReactionStore.getState().append({ displayName: event.payload.display_name, emoji: event.payload.emoji });
-        }
-        else if (event.type === "wave.sent") {
+          useReactionStore
+            .getState()
+            .append({
+              displayName: event.payload.display_name,
+              emoji: event.payload.emoji,
+            });
+        } else if (event.type === "wave.sent") {
           useReactionStore.getState().appendWave(event.payload.display_name);
-        }
-        else if (event.type === "participant.hand_changed") {
-          useRoomStore.getState().handChanged(event.payload.connection_id, event.payload.raised, event.payload.social_version);
+        } else if (event.type === "participant.hand_changed") {
+          useRoomStore
+            .getState()
+            .handChanged(
+              event.payload.connection_id,
+              event.payload.raised,
+              event.payload.social_version,
+            );
           if (event.payload.raised) playSfx("raise-hand");
-        }
-        else if (event.type === "error") {
-          if (event.payload.code === "MEDIA_COMMAND_REJECTED" || event.payload.code === "MEDIA_RATE_LIMITED") useMusicStore.getState().setError(event.payload.message);
-          else if (event.payload.code === "ROOM_COMMAND_REJECTED") useRoomStore.getState().setGovernanceError(event.payload.message);
-          else if (event.payload.code === "REACTION_RATE_LIMITED" || event.payload.code === "WAVE_RATE_LIMITED") return;
+        } else if (event.type === "error") {
+          if (
+            event.payload.code === "MEDIA_COMMAND_REJECTED" ||
+            event.payload.code === "MEDIA_RATE_LIMITED"
+          )
+            useMusicStore.getState().setError(event.payload.message);
+          else if (event.payload.code === "ROOM_COMMAND_REJECTED")
+            useRoomStore.getState().setGovernanceError(event.payload.message);
+          else if (
+            event.payload.code === "REACTION_RATE_LIMITED" ||
+            event.payload.code === "WAVE_RATE_LIMITED"
+          )
+            return;
           else useChatStore.getState().setSendError(event.payload.message);
         }
       },
@@ -232,24 +282,46 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     if (!sent)
       useChatStore
         .getState()
-        .setSendError(currentText("Still reconnecting. Try again in a moment."));
+        .setSendError(
+          currentText("Still reconnecting. Try again in a moment."),
+        );
     return sent;
   }, []);
-  const sendCommand: SessionValue["sendCommand"] = useCallback((type, payload) => {
-    const sent = socketRef.current?.send(type, payload) ?? false;
-    if (!sent) {
-      if (type === "room.lock" || type === "room.appearance.update" || type === "participant.kick" || type === "participant.ban" || type === "host.transfer") {
-        useRoomStore.getState().setGovernanceError(currentText("Still reconnecting. Try again shortly."));
-      } else if (type !== "reaction.send" && type !== "wave.send" && type !== "participant.hand.set") {
-        useMusicStore.getState().setError(currentText("Still reconnecting. Try again shortly."));
+  const sendCommand: SessionValue["sendCommand"] = useCallback(
+    (type, payload) => {
+      const sent = socketRef.current?.send(type, payload) ?? false;
+      if (!sent) {
+        if (
+          type === "room.lock" ||
+          type === "room.appearance.update" ||
+          type === "participant.kick" ||
+          type === "participant.ban" ||
+          type === "host.transfer"
+        ) {
+          useRoomStore
+            .getState()
+            .setGovernanceError(
+              currentText("Still reconnecting. Try again shortly."),
+            );
+        } else if (
+          type !== "reaction.send" &&
+          type !== "wave.send" &&
+          type !== "participant.hand.set"
+        ) {
+          useMusicStore
+            .getState()
+            .setError(currentText("Still reconnecting. Try again shortly."));
+        }
       }
-    }
-    return sent;
-  }, []);
+      return sent;
+    },
+    [],
+  );
   const leave = useCallback(() => {
     socketRef.current?.close(true);
-    window.location.assign("/");
-  }, []);
+    clearCredential(credential.roomId);
+    router.replace(credential.type === "user" ? "/home" : "/");
+  }, [credential.roomId, credential.type, router]);
 
   // A kicked or otherwise permanently rejected application session must also
   // tear down the LiveKit tree. Keeping the media provider mounted while the
@@ -324,7 +396,10 @@ function LiveMediaContext({
   setMediaError,
   token,
   credential,
-}: Pick<SessionValue, "sendChat" | "sendCommand" | "leave" | "mediaError" | "token" | "credential"> & {
+}: Pick<
+  SessionValue,
+  "sendChat" | "sendCommand" | "leave" | "mediaError" | "token" | "credential"
+> & {
   setMediaError: (message: string | null) => void;
 }) {
   const {
@@ -349,7 +424,8 @@ function LiveMediaContext({
   const screenShareActive = hasActiveScreenShare(tracks);
 
   useEffect(() => {
-    if (initialized.current || connectionState !== ConnectionState.Connected) return;
+    if (initialized.current || connectionState !== ConnectionState.Connected)
+      return;
     initialized.current = true;
     if (!isSecureMediaContext()) {
       sessionStorage.removeItem("loft.room.media");
@@ -392,7 +468,10 @@ function LiveMediaContext({
           leave();
           return;
         }
-        void liveRoom.disconnect().catch(() => undefined).finally(leave);
+        void liveRoom
+          .disconnect()
+          .catch(() => undefined)
+          .finally(leave);
       },
       mediaError,
       clearMediaError: () => setMediaError(null),
@@ -456,13 +535,17 @@ function LiveMediaContext({
             );
             return;
           }
-          await localParticipant.setScreenShareEnabled(!isScreenShareEnabled, {
-            audio: true,
-            contentHint: "detail",
-            resolution: { width: 1920, height: 1080, frameRate: 15 },
-          }, {
-            degradationPreference: "maintain-resolution",
-          });
+          await localParticipant.setScreenShareEnabled(
+            !isScreenShareEnabled,
+            {
+              audio: true,
+              contentHint: "detail",
+              resolution: { width: 1920, height: 1080, frameRate: 15 },
+            },
+            {
+              degradationPreference: "maintain-resolution",
+            },
+          );
           playSfx(isScreenShareEnabled ? "screen-end" : "screen-start");
           setMediaError(null);
         } catch (error) {
@@ -505,7 +588,10 @@ export function MediaStage() {
     const element = stageRef.current;
     if (!element) return;
     const observer = new ResizeObserver(([entry]) => {
-      setStageSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+      setStageSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -534,7 +620,8 @@ export function MediaStage() {
     return p ? !p.isMicrophoneEnabled : true;
   };
   const qualityFor = (identity: string) =>
-    mediaParticipants.find((item) => item.identity === identity)?.connectionQuality ?? ConnectionQuality.Unknown;
+    mediaParticipants.find((item) => item.identity === identity)
+      ?.connectionQuality ?? ConnectionQuality.Unknown;
   const layout = deriveStageLayout(
     participants.length,
     Boolean(screen),
@@ -545,36 +632,37 @@ export function MediaStage() {
     <div ref={stageRef} className="w-full h-full min-h-0 p-3 sm:p-6">
       {layout.mode === "screen-share" && screen ? (
         <div className="w-full h-full min-h-0 flex flex-col gap-3">
-        <div className="flex-1 min-h-0 rounded-[6px] overflow-hidden bg-[#101113] shadow-2xl">
-          <VideoTrack
-            trackRef={screen}
-            className="w-full h-full object-contain"
-          />
-        </div>
-        <div className="text-[11px] text-center text-[var(--text-loft-secondary)]">
-          {screen.participant.name || screen.participant.identity} {tr("is sharing")}
-        </div>
-        <div
-          className="flex-none min-h-20 overflow-x-auto flex gap-2 pb-1"
-          aria-label={tr("Room participants")}
-        >
-          {participants.map((participant) => {
-            const camera = cameraFor(participant.livekit_identity);
-            return (
-              <ParticipantMediaTile
-                key={participant.connection_id}
-                name={participant.display_name}
-                avatarUrl={participant.avatar_url}
-                compact
-                speaking={isSpeaking(participant.livekit_identity)}
-                muted={isMuted(participant.livekit_identity)}
-                quality={qualityFor(participant.livekit_identity)}
-                camera={camera}
-                raisedHand={participant.raised_hand ?? false}
-              />
-            );
-          })}
-        </div>
+          <div className="flex-1 min-h-0 rounded-[6px] overflow-hidden bg-[#101113] shadow-2xl">
+            <VideoTrack
+              trackRef={screen}
+              className="w-full h-full object-contain"
+            />
+          </div>
+          <div className="text-[11px] text-center text-[var(--text-loft-secondary)]">
+            {screen.participant.name || screen.participant.identity}{" "}
+            {tr("is sharing")}
+          </div>
+          <div
+            className="flex-none min-h-20 overflow-x-auto flex gap-2 pb-1"
+            aria-label={tr("Room participants")}
+          >
+            {participants.map((participant) => {
+              const camera = cameraFor(participant.livekit_identity);
+              return (
+                <ParticipantMediaTile
+                  key={participant.connection_id}
+                  name={participant.display_name}
+                  avatarUrl={participant.avatar_url}
+                  compact
+                  speaking={isSpeaking(participant.livekit_identity)}
+                  muted={isMuted(participant.livekit_identity)}
+                  quality={qualityFor(participant.livekit_identity)}
+                  camera={camera}
+                  raisedHand={participant.raised_hand ?? false}
+                />
+              );
+            })}
+          </div>
         </div>
       ) : layout.mode === "empty" ? (
         <EmptyStage />
@@ -663,15 +751,28 @@ function ParticipantMediaTile({
               onLoad={(event) => {
                 const intrinsic = event.currentTarget.naturalWidth;
                 if (intrinsic > 0) {
-                  setAvatarSize(Math.min(128, Math.max(1, Math.floor(intrinsic / window.devicePixelRatio))));
+                  setAvatarSize(
+                    Math.min(
+                      128,
+                      Math.max(
+                        1,
+                        Math.floor(intrinsic / window.devicePixelRatio),
+                      ),
+                    ),
+                  );
                 }
               }}
               onError={() => setAvatarFailed(true)}
-              style={{ width: compact ? Math.min(48, avatarSize) : avatarSize, height: compact ? Math.min(48, avatarSize) : avatarSize }}
+              style={{
+                width: compact ? Math.min(48, avatarSize) : avatarSize,
+                height: compact ? Math.min(48, avatarSize) : avatarSize,
+              }}
               className="max-w-[40%] max-h-[65%] rounded-full object-cover shrink-0"
             />
           ) : (
-            <span className={`${compact ? "w-10 h-10 text-[11px]" : solo ? "w-24 h-24 text-[11px]" : "w-16 h-16 text-[11px]"} rounded-full bg-[#101113]/20 text-[var(--text-loft-primary)] flex items-center justify-center font-medium shrink-0`}>
+            <span
+              className={`${compact ? "w-10 h-10 text-[11px]" : solo ? "w-24 h-24 text-[11px]" : "w-16 h-16 text-[11px]"} rounded-full bg-[#101113]/20 text-[var(--text-loft-primary)] flex items-center justify-center font-medium shrink-0`}
+            >
               {name.slice(0, 1).toUpperCase()}
             </span>
           )}
@@ -685,7 +786,9 @@ function ParticipantMediaTile({
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-[var(--text-loft-secondary)] mt-1">{tr("Camera off")}</div>
+              <div className="text-[11px] text-[var(--text-loft-secondary)] mt-1">
+                {tr("Camera off")}
+              </div>
             </div>
           )}
         </div>
@@ -698,7 +801,10 @@ function ParticipantMediaTile({
             </span>
           )}
           <span className="truncate">{name}</span>
-          <span aria-label={`Connection quality: ${quality}`} className={`w-2 h-2 rounded-full ${quality === ConnectionQuality.Excellent ? "bg-[#101113]" : quality === ConnectionQuality.Good ? "bg-[#101113]" : quality === ConnectionQuality.Poor ? "bg-[#101113]" : "bg-white/40"}`} />
+          <span
+            aria-label={`Connection quality: ${quality}`}
+            className={`w-2 h-2 rounded-full ${quality === ConnectionQuality.Excellent ? "bg-[#101113]" : quality === ConnectionQuality.Good ? "bg-[#101113]" : quality === ConnectionQuality.Poor ? "bg-[#101113]" : "bg-white/40"}`}
+          />
         </div>
       )}
     </motion.div>
@@ -715,7 +821,9 @@ export function EmptyStage() {
         </div>
         <h2 className="text-[11px] font-medium mb-2">{tr("Room is ready")}</h2>
         <p className="text-[11px] text-[var(--text-loft-secondary)]">
-          {tr("Turn on camera, share screen, or settle in with voice. You’re here together.")}
+          {tr(
+            "Turn on camera, share screen, or settle in with voice. You’re here together.",
+          )}
         </p>
       </div>
     </div>

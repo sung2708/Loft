@@ -44,7 +44,6 @@ func (s *spotifyTestStore) SaveSpotifyCredentials(_ context.Context, c spotify.C
 	return nil
 }
 
-
 func TestSpotifyStatus(t *testing.T) {
 	t.Setenv("SPOTIFY_ENABLED", "true")
 	secret := "01234567890123456789012345678901"
@@ -158,7 +157,7 @@ func TestSpotifyOAuthCallbackJSON(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if res["status"] != "failed" || res["error"] != "spotify_auth_failed" {
+	if res["status"] != "failed" || res["error"] != "oauth_expired" {
 		t.Fatalf("unexpected json response: %v", res)
 	}
 }
@@ -166,7 +165,7 @@ func TestSpotifyOAuthCallbackJSON(t *testing.T) {
 func TestSpotifyConnectCustomRedirect(t *testing.T) {
 	t.Setenv("SPOTIFY_ENABLED", "true")
 	t.Setenv("SPOTIFY_CLIENT_ID", "dummy_client_id")
-	t.Setenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:3000/auth/spotify/callback")
+	t.Setenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8080/api/v1/spotify/callback")
 	secret := "01234567890123456789012345678901"
 	users := auth.NewSupabaseVerifier("https://example.supabase.co", "authenticated", secret)
 	liveKitService := livekit.New("key", "secret")
@@ -185,7 +184,7 @@ func TestSpotifyConnectCustomRedirect(t *testing.T) {
 		t.Fatalf("sign token: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/spotify/connect?redirect_uri=http://localhost:3000/auth/spotify/callback&return_to=/room/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/spotify/connect?redirect_uri=https://evil.example/auth/spotify/callback&return_to=//evil.example", nil)
 	req.Header.Set("Authorization", "Bearer "+userToken)
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
@@ -202,9 +201,10 @@ func TestSpotifyConnectCustomRedirect(t *testing.T) {
 	if authURL == "" {
 		t.Fatalf("expected non-empty url in response")
 	}
-	// Verify that the auth URL contains redirect_uri=http://localhost:3000/auth/spotify/callback
-	if !strings.Contains(authURL, "redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fauth%2Fspotify%2Fcallback") {
-		t.Fatalf("expected auth URL to contain client-provided redirect_uri, got %s", authURL)
+	// The browser cannot select a callback destination. Spotify must always
+	// return to the configured backend endpoint.
+	if !strings.Contains(authURL, "redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fapi%2Fv1%2Fspotify%2Fcallback") {
+		t.Fatalf("expected configured backend redirect_uri, got %s", authURL)
 	}
 }
 
@@ -217,7 +217,7 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 func TestSpotifyOAuthCallbackSuccessWithPaddedKey(t *testing.T) {
 	t.Setenv("SPOTIFY_ENABLED", "true")
 	t.Setenv("SPOTIFY_CLIENT_ID", "test_client_id")
-	t.Setenv("SPOTIFY_REDIRECT_URI", "http://localhost:3000/auth/spotify/callback")
+	t.Setenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8080/api/v1/spotify/callback")
 	// The exact padded key from backend/.env
 	paddedKey := "/iJc1EhvJLCdGt2wGJm6r1SIDjFcyScuh1aft0FHUxo="
 	t.Setenv("SPOTIFY_CREDENTIAL_KEY", paddedKey)
@@ -248,11 +248,9 @@ func TestSpotifyOAuthCallbackSuccessWithPaddedKey(t *testing.T) {
 	stateID := "valid_oauth_state_uuid"
 	server.spotifyMu.Lock()
 	server.spotifyStates[stateID] = spotifyOAuthState{
-		UserID:      "user_abc_123",
-		Verifier:    "verifier_xyz_123",
-		RedirectURI: "http://localhost:3000/auth/spotify/callback",
-		ReturnTo:    "/settings",
-		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		UserID:    "user_abc_123",
+		Verifier:  "verifier_xyz_123",
+		ExpiresAt: time.Now().Add(10 * time.Minute),
 	}
 	server.spotifyMu.Unlock()
 
@@ -296,4 +294,56 @@ func TestSpotifyOAuthCallbackSuccessWithPaddedKey(t *testing.T) {
 	}
 }
 
+func TestSpotifyOAuthCallbackBrowserRedirectDoesNotExposeAuthorizationCode(t *testing.T) {
+	t.Setenv("SPOTIFY_ENABLED", "true")
+	t.Setenv("SPOTIFY_CLIENT_ID", "test_client_id")
+	t.Setenv("SPOTIFY_REDIRECT_URI", "https://api.mingly.site/api/v1/spotify/callback")
+	t.Setenv("SPOTIFY_CREDENTIAL_KEY", "/iJc1EhvJLCdGt2wGJm6r1SIDjFcyScuh1aft0FHUxo=")
 
+	secret := "01234567890123456789012345678901"
+	users := auth.NewSupabaseVerifier("https://example.supabase.co", "authenticated", secret)
+	liveKitService := livekit.New("key", "secret")
+	store := &spotifyTestStore{fakeStore: &fakeStore{}}
+	server := New(store, users, auth.NewGuestTokens("guest-secret", time.Hour), liveKitService, []string{"https://mingly.site"}, nil)
+	handler := server.Routes(nil)
+
+	origTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = origTransport }()
+	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "accounts.spotify.com" && req.URL.Path == "/api/token" {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"access_token":"access","refresh_token":"refresh","expires_in":3600,"scope":"streaming"}`)),
+				Header:     make(http.Header),
+			}, nil
+		}
+		return origTransport.RoundTrip(req)
+	})
+
+	stateID := "browser_redirect_state"
+	server.spotifyStates[stateID] = spotifyOAuthState{
+		UserID:    "user_abc_123",
+		Verifier:  "verifier_xyz_123",
+		ExpiresAt: time.Now().Add(spotifyOAuthStateTTL),
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/spotify/callback?state="+stateID+"&code=secret-code", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	if location != "https://mingly.site/auth/spotify/callback?status=connected" {
+		t.Fatalf("unexpected callback location: %s", location)
+	}
+	if strings.Contains(location, "code") || strings.Contains(location, "state") {
+		t.Fatalf("sensitive OAuth parameters leaked in redirect: %s", location)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected Cache-Control no-store, got %q", got)
+	}
+	if got := rr.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("expected Referrer-Policy no-referrer, got %q", got)
+	}
+}

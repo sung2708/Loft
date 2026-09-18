@@ -23,6 +23,9 @@ func (p *Postgres) SaveSpotifyCredentials(ctx context.Context, c spotify.Credent
 
 func (p *Postgres) LoadSpotifyCredentials(ctx context.Context, userID string) (accessCiphertext, refreshCiphertext string, scopes []string, expiresAt time.Time, revokedAt *time.Time, err error) {
 	err = p.pool.QueryRow(ctx, `SELECT access_token_ciphertext, refresh_token_ciphertext, scopes, expires_at, revoked_at FROM spotify_connections WHERE user_id=$1`, userID).Scan(&accessCiphertext, &refreshCiphertext, &scopes, &expiresAt, &revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = domain.ErrNotFound
+	}
 	return
 }
 
@@ -36,14 +39,47 @@ func (p *Postgres) UpdateSpotifyTokens(ctx context.Context, userID, accessCipher
 	return err
 }
 
+func (p *Postgres) ReplaceSpotifyTokensIfCurrent(ctx context.Context, userID, expectedRefreshCipher, accessCipher, refreshCipher string, expiresAt time.Time) (bool, error) {
+	tag, err := p.pool.Exec(ctx, `UPDATE spotify_connections
+		SET access_token_ciphertext=$3, refresh_token_ciphertext=$4, expires_at=$5, updated_at=NOW()
+		WHERE user_id=$1 AND refresh_token_ciphertext=$2 AND revoked_at IS NULL`, userID, expectedRefreshCipher, accessCipher, refreshCipher, expiresAt)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (p *Postgres) RevokeSpotifyCredentialsIfCurrent(ctx context.Context, userID, expectedRefreshCipher string, at time.Time) (bool, error) {
+	tag, err := p.pool.Exec(ctx, `UPDATE spotify_connections
+		SET revoked_at=$3, updated_at=NOW()
+		WHERE user_id=$1 AND refresh_token_ciphertext=$2 AND revoked_at IS NULL`, userID, expectedRefreshCipher, at)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (p *Postgres) DisconnectSpotify(ctx context.Context, userID string) error {
 	_, err := p.pool.Exec(ctx, `DELETE FROM spotify_connections WHERE user_id=$1`, userID)
 	return err
 }
 
 func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_picks (id, room_id, video_id, title, channel, suggested_by, active) VALUES ($1,$2,$3,$4,$5,$6,$7)`, pick.ID, pick.RoomID, pick.VideoID, pick.Title, pick.Channel, pick.SuggestedBy, pick.Active)
-	return err
+	tag, err := p.pool.Exec(ctx, `
+		INSERT INTO youtube_room_picks (id, room_id, video_id, title, channel, suggested_by, active)
+		SELECT $1, $2, $3, $4, $5, $6, $7
+		WHERE (SELECT COUNT(*) FROM youtube_room_picks WHERE room_id = $2 AND active) < $8`,
+		pick.ID, pick.RoomID, pick.VideoID, pick.Title, pick.Channel, pick.SuggestedBy, pick.Active, MaxActivePicks)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.ErrConflict
+		}
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPickCapacityReached
+	}
+	return nil
 }
 
 func (p *Postgres) ListRoomPicks(ctx context.Context, roomID string) ([]YouTubeRoomPick, error) {
@@ -85,13 +121,42 @@ func (p *Postgres) ListRoomPickVoters(ctx context.Context, roomID string) (map[s
 	return voters, rows.Err()
 }
 
-func (p *Postgres) VoteRoomPick(ctx context.Context, pickID, userID string) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_pick_votes (pick_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, pickID, userID)
-	return err
+func (p *Postgres) VoteRoomPick(ctx context.Context, roomID, pickID, userID string) error {
+	var pickExists, voteInserted bool
+	err := p.pool.QueryRow(ctx, `
+		WITH target_pick AS (
+			SELECT id FROM youtube_room_picks WHERE id = $1 AND room_id = $2 AND active = TRUE
+		),
+		inserted_vote AS (
+			INSERT INTO youtube_room_pick_votes (pick_id, user_id)
+			SELECT id, $3 FROM target_pick
+			ON CONFLICT (pick_id, user_id) DO NOTHING
+			RETURNING pick_id
+		)
+		SELECT
+			EXISTS(SELECT 1 FROM target_pick) AS pick_exists,
+			EXISTS(SELECT 1 FROM inserted_vote) AS vote_inserted`, pickID, roomID, userID).Scan(&pickExists, &voteInserted)
+	if err != nil {
+		return err
+	}
+	if !pickExists {
+		return domain.ErrNotFound
+	}
+	if !voteInserted {
+		return ErrAlreadyVoted
+	}
+	return nil
 }
-func (p *Postgres) PromoteRoomPick(ctx context.Context, pickID string) error {
-	_, err := p.pool.Exec(ctx, `UPDATE youtube_room_picks SET active=FALSE WHERE id=$1 AND active`, pickID)
-	return err
+
+func (p *Postgres) PromoteRoomPick(ctx context.Context, roomID, pickID string) error {
+	tag, err := p.pool.Exec(ctx, `UPDATE youtube_room_picks SET active=FALSE WHERE id=$1 AND room_id=$2 AND active`, pickID, roomID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 func (p *Postgres) SetAutoplay(ctx context.Context, settings YouTubeMediaSettings) error {
 	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_media_settings (room_id, autoplay_enabled, updated_by) VALUES ($1,$2,$3) ON CONFLICT (room_id) DO UPDATE SET autoplay_enabled=EXCLUDED.autoplay_enabled, updated_by=EXCLUDED.updated_by, updated_at=NOW()`, settings.RoomID, settings.AutoplayEnabled, settings.UpdatedBy)

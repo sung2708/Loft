@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"math/rand"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"loft/backend/internal/domain"
+	"loft/backend/internal/youtube"
 )
 
 type youtubeTrack struct {
@@ -55,32 +55,9 @@ var (
 )
 
 func parseYouTubeID(raw string) (string, error) {
-	if len(raw) > 2048 {
+	id, err := youtube.VideoID(raw)
+	if err != nil {
 		return "", errInvalidMedia
-	}
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" {
-		return "", errInvalidMedia
-	}
-	host := strings.ToLower(u.Hostname())
-	var id string
-	switch host {
-	case "youtube.com", "www.youtube.com", "m.youtube.com":
-		if u.Path == "/watch" {
-			id = u.Query().Get("v")
-		} else if strings.HasPrefix(u.Path, "/shorts/") {
-			id = strings.TrimPrefix(u.Path, "/shorts/")
-		}
-	case "youtu.be":
-		id = strings.TrimPrefix(u.Path, "/")
-	}
-	if len(id) != 11 {
-		return "", errInvalidMedia
-	}
-	for _, char := range id {
-		if !(char >= 'a' && char <= 'z') && !(char >= 'A' && char <= 'Z') && !(char >= '0' && char <= '9') && char != '-' && char != '_' {
-			return "", errInvalidMedia
-		}
 	}
 	return id, nil
 }
@@ -153,6 +130,9 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 			track.Channel = track.Channel[:80]
 		}
 		if m.Current != nil {
+			if len(m.Queue) >= 50 {
+				return errQueueFull
+			}
 			m.Queue = append([]youtubeTrack{*m.Current}, m.Queue...)
 		}
 		m.Current = &track
@@ -163,7 +143,7 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		return nil
 	}
 	if kind == "media.ended" {
-		if !domain.CanJoin(room, actor) {
+		if !domain.CanControlMedia(room, actor) {
 			return errMediaDenied
 		}
 		if m.Current == nil || command.VideoID != m.Current.VideoID {
@@ -342,14 +322,18 @@ func (m *mediaState) finish(now time.Time) bool {
 	if m.Current == nil || m.Status != "PLAYING" || m.Current.DurationSec <= 0 {
 		return false
 	}
-	if m.PositionMs+now.Sub(m.StartedAt).Milliseconds() < m.Current.DurationSec*1000 {
+	elapsed := time.Duration(m.PositionMs)*time.Millisecond + now.Sub(m.StartedAt)
+	total := time.Duration(m.Current.DurationSec) * time.Second
+	// Allow 50ms jitter tolerance for OS scheduler timer granularity so a track
+	// that completed its duration is not rejected due to sub-millisecond truncation.
+	if elapsed+50*time.Millisecond < total {
 		return false
 	}
 	if m.Repeat {
 		m.PositionMs = 0
-		m.StartedAt = now
+		m.StartedAt = now.UTC()
 	} else {
-		m.advance(now)
+		m.advance(now.UTC())
 	}
 	m.Version++
 	return true

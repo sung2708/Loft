@@ -101,6 +101,13 @@ func NewRedisBus(rawURL, instanceID string, logger *slog.Logger) (*RedisBus, err
 		ownedRooms: make(map[string]string), pendingRPC: make(map[string]chan mediaRPCResponse), rpcRequests: make(chan mediaRPCRequest, 128)}, nil
 }
 
+// Ping verifies the Redis dependency without mutating room state. It is used
+// during bootstrap and readiness checks for features that cannot safely fall
+// back to process-local coordination (for example OAuth state).
+func (b *RedisBus) Ping(ctx context.Context) error {
+	return b.client.Ping(ctx).Err()
+}
+
 func (b *RedisBus) Publish(ctx context.Context, roomID string, data []byte) error {
 	payload, err := json.Marshal(interNodeEvent{OriginInstanceID: b.instanceID, EventID: uuid.NewString(), RoomID: roomID, Data: data})
 	if err != nil {

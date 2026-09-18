@@ -28,7 +28,7 @@ const (
 	ansiFgMagenta   = "\x1b[35m"
 	ansiFgCyan      = "\x1b[36m"
 	ansiFgWhite     = "\x1b[37m"
-	ansiFgGray      = "\x1b[90m"   // bright-black / dark-gray
+	ansiFgGray      = "\x1b[90m" // bright-black / dark-gray
 	ansiFgBrGreen   = "\x1b[92m"
 	ansiFgBrYellow  = "\x1b[93m"
 	ansiFgBrBlue    = "\x1b[94m"
@@ -142,10 +142,10 @@ func NewLogger(appEnv string, output io.Writer) zerolog.Logger {
 	//   message    → primary log line
 	//   error      → error detail
 	zerolog.TimeFieldFormat = time.RFC3339
-	zerolog.TimestampFieldName = "dt"     // BetterStack indexes "dt" as the canonical timestamp
-	zerolog.LevelFieldName = "level"      // standard; BetterStack uses this for severity
-	zerolog.MessageFieldName = "message"  // BetterStack also accepts "message" (not only "msg")
-	zerolog.ErrorFieldName = "error"      // searchable error field
+	zerolog.TimestampFieldName = "time"  // canonical timestamp field
+	zerolog.LevelFieldName = "level"     // standard; BetterStack uses this for severity
+	zerolog.MessageFieldName = "message" // BetterStack also accepts "message" (not only "msg")
+	zerolog.ErrorFieldName = "error"     // searchable error field
 
 	if strings.EqualFold(appEnv, "development") {
 		output = newConsoleWriter(output)

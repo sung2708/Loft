@@ -1407,21 +1407,24 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				h.sendError(c, "YOUTUBE_PICK_REJECTED", err.Error())
 				continue
 			}
-			h.mu.Lock()
-			state := h.rooms[c.roomID]
-			var changed youtubeRoomPick
-			var media mediaState
-			previous := uint64(0)
-			if state == nil {
-				h.mu.Unlock()
-				h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room unavailable")
-				continue
-			}
+
 			switch envelope.Type {
 			case "youtube.pick.create":
+				h.mu.Lock()
+				state := h.rooms[c.roomID]
+				if state == nil {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room unavailable")
+					continue
+				}
 				if !domain.CanCreateRoomPick(state.room, c.identity) {
 					h.mu.Unlock()
 					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Permission denied")
+					continue
+				}
+				if len(state.picks) >= store.MaxActivePicks {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room pick capacity reached (maximum 50 picks)")
 					continue
 				}
 				duplicate := false
@@ -1436,93 +1439,221 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Video already exists in Room Picks")
 					continue
 				}
-				changed = youtubeRoomPick{ID: uuid.NewString(), VideoID: cmd.VideoID, Title: cmd.Title, Channel: cmd.Channel, SuggestedBy: c.identity.ID, Voters: map[string]struct{}{}}
-				state.picks = append(state.picks, changed)
+				pickID := uuid.NewString()
+				pickToPersist := store.YouTubeRoomPick{
+					ID:          pickID,
+					RoomID:      c.roomID,
+					VideoID:     cmd.VideoID,
+					Title:       cmd.Title,
+					Channel:     cmd.Channel,
+					SuggestedBy: c.identity.ID,
+					Active:      true,
+				}
+				h.mu.Unlock()
+
+				var persistErr error
+				if repo, ok := h.store.(interface {
+					CreateRoomPick(context.Context, store.YouTubeRoomPick) error
+				}); ok {
+					dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+					persistErr = repo.CreateRoomPick(dbCtx, pickToPersist)
+					cancel()
+				}
+				if persistErr != nil {
+					if errors.Is(persistErr, store.ErrPickCapacityReached) {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room pick capacity reached (maximum 50 picks)")
+					} else if errors.Is(persistErr, domain.ErrConflict) {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Video already exists in Room Picks")
+					} else {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Could not save room pick")
+					}
+					continue
+				}
+
+				h.mu.Lock()
+				state = h.rooms[c.roomID]
+				if state == nil {
+					h.mu.Unlock()
+					continue
+				}
+				alreadyPresent := false
+				for _, p := range state.picks {
+					if p.ID == pickID || p.VideoID == cmd.VideoID {
+						alreadyPresent = true
+						break
+					}
+				}
+				created := youtubeRoomPick{
+					ID:          pickID,
+					VideoID:     cmd.VideoID,
+					Title:       cmd.Title,
+					Channel:     cmd.Channel,
+					SuggestedBy: c.identity.ID,
+					Votes:       0,
+					Voters:      map[string]struct{}{},
+				}
+				if !alreadyPresent {
+					state.picks = append(state.picks, created)
+				}
+				h.mu.Unlock()
+
+				h.broadcast(c.roomID, event("youtube.pick.created", c.roomID, created), "")
+
 			case "youtube.pick.vote":
+				h.mu.Lock()
+				state := h.rooms[c.roomID]
+				if state == nil {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room unavailable")
+					continue
+				}
 				if !domain.CanVoteRoomPick(state.room, c.identity) {
 					h.mu.Unlock()
 					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Permission denied")
 					continue
 				}
 				found := false
-				alreadyVoted := false
-				for i := range state.picks {
-					if state.picks[i].ID == cmd.PickID {
+				for _, p := range state.picks {
+					if p.ID == cmd.PickID {
 						found = true
-						if _, seen := state.picks[i].Voters[c.identity.ID]; seen {
-							alreadyVoted = true
+						if _, seen := p.Voters[c.identity.ID]; seen {
+							h.mu.Unlock()
+							h.sendError(c, "YOUTUBE_PICK_REJECTED", "You already voted for this pick")
+							found = false
 							break
 						}
-						state.picks[i].Voters[c.identity.ID] = struct{}{}
-						state.picks[i].Votes++
-						changed = state.picks[i]
 						break
 					}
 				}
 				if !found {
 					h.mu.Unlock()
-					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
 					continue
 				}
-				if alreadyVoted {
-					h.mu.Unlock()
-					h.sendError(c, "YOUTUBE_PICK_REJECTED", "You already voted for this pick")
+				h.mu.Unlock()
+
+				var persistErr error
+				if repo, ok := h.store.(interface {
+					VoteRoomPick(context.Context, string, string, string) error
+				}); ok {
+					dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+					persistErr = repo.VoteRoomPick(dbCtx, c.roomID, cmd.PickID, c.identity.ID)
+					cancel()
+				}
+				if persistErr != nil {
+					if errors.Is(persistErr, store.ErrAlreadyVoted) {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "You already voted for this pick")
+					} else if errors.Is(persistErr, domain.ErrNotFound) {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
+					} else {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Could not save vote")
+					}
 					continue
 				}
+
+				h.mu.Lock()
+				state = h.rooms[c.roomID]
+				var votedPick youtubeRoomPick
+				if state != nil {
+					for i := range state.picks {
+						if state.picks[i].ID == cmd.PickID {
+							if state.picks[i].Voters == nil {
+								state.picks[i].Voters = make(map[string]struct{})
+							}
+							if _, seen := state.picks[i].Voters[c.identity.ID]; !seen {
+								state.picks[i].Voters[c.identity.ID] = struct{}{}
+								state.picks[i].Votes++
+							}
+							votedPick = state.picks[i]
+							break
+						}
+					}
+				}
+				h.mu.Unlock()
+
+				if votedPick.ID != "" {
+					h.broadcast(c.roomID, event("youtube.pick.voted", c.roomID, votedPick), "")
+				}
+
 			case "youtube.pick.promote":
+				h.mu.Lock()
+				state := h.rooms[c.roomID]
+				if state == nil {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room unavailable")
+					continue
+				}
 				if !domain.CanPromoteRoomPick(state.room, c.identity) {
 					h.mu.Unlock()
 					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Permission denied")
 					continue
 				}
-				for i := range state.picks {
-					if state.picks[i].ID == cmd.PickID {
-						changed = state.picks[i]
-						state.picks = append(state.picks[:i], state.picks[i+1:]...)
+				var pickToPromote youtubeRoomPick
+				for _, p := range state.picks {
+					if p.ID == cmd.PickID {
+						pickToPromote = p
 						break
 					}
 				}
-				if changed.ID != "" {
-					raw, _ := json.Marshal(mediaCommand{URL: "https://www.youtube.com/watch?v=" + changed.VideoID, Title: changed.Title, Channel: changed.Channel})
+				if pickToPromote.ID == "" {
+					h.mu.Unlock()
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
+					continue
+				}
+				h.mu.Unlock()
+
+				var persistErr error
+				if repo, ok := h.store.(interface {
+					PromoteRoomPick(context.Context, string, string) error
+				}); ok {
+					dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+					persistErr = repo.PromoteRoomPick(dbCtx, c.roomID, pickToPromote.ID)
+					cancel()
+				}
+				if persistErr != nil {
+					if errors.Is(persistErr, domain.ErrNotFound) {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
+					} else {
+						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Could not promote room pick")
+					}
+					continue
+				}
+
+				h.mu.Lock()
+				state = h.rooms[c.roomID]
+				var promoted youtubeRoomPick
+				var media mediaState
+				var previous uint64
+				var previousState mediaState
+				if state != nil {
+					for i := range state.picks {
+						if state.picks[i].ID == pickToPromote.ID {
+							promoted = state.picks[i]
+							state.picks = append(state.picks[:i], state.picks[i+1:]...)
+							break
+						}
+					}
+					if promoted.ID == "" {
+						promoted = pickToPromote
+					}
+					raw, _ := json.Marshal(mediaCommand{URL: "https://www.youtube.com/watch?v=" + promoted.VideoID, Title: promoted.Title, Channel: promoted.Channel})
 					previous = state.media.Version
+					previousState = state.media.snapshot()
 					_ = state.media.applyMedia("media.play_now", raw, state.room, c.identity, time.Now().UTC())
 					media = state.media.snapshot()
 					h.scheduleMediaEnd(c.roomID, state)
 				}
-			}
-			h.mu.Unlock()
-			if changed.ID == "" {
-				h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
-				continue
-			}
-			persisted := true
-			switch envelope.Type {
-			case "youtube.pick.create":
-				if repo, ok := h.store.(interface {
-					CreateRoomPick(context.Context, store.YouTubeRoomPick) error
-				}); ok {
-					persisted = repo.CreateRoomPick(ctx, store.YouTubeRoomPick{ID: changed.ID, RoomID: c.roomID, VideoID: changed.VideoID, Title: changed.Title, Channel: changed.Channel, SuggestedBy: changed.SuggestedBy, Active: true}) == nil
+				h.mu.Unlock()
+
+				if promoted.ID != "" {
+					h.broadcast(c.roomID, event("youtube.pick.promoted", c.roomID, promoted), "")
 				}
-			case "youtube.pick.vote":
-				if repo, ok := h.store.(interface {
-					VoteRoomPick(context.Context, string, string) error
-				}); ok {
-					persisted = repo.VoteRoomPick(ctx, changed.ID, c.identity.ID) == nil
+				if media.Version > 0 {
+					if err := h.publishMediaState(ctx, c.roomID, previous, media); err != nil {
+						if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
+							h.rollbackMediaState(c.roomID, media.Version, previousState)
+						}
+					}
 				}
-			case "youtube.pick.promote":
-				if repo, ok := h.store.(interface {
-					PromoteRoomPick(context.Context, string) error
-				}); ok {
-					persisted = repo.PromoteRoomPick(ctx, changed.ID) == nil
-				}
-			}
-			if !persisted {
-				h.sendError(c, "YOUTUBE_PICK_REJECTED", "Could not save room pick")
-				continue
-			}
-			h.broadcast(c.roomID, event(envelope.Type+"d", c.roomID, changed), "")
-			if media.Version > 0 {
-				_ = h.publishMediaState(ctx, c.roomID, previous, media)
 			}
 		case "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play_now", "media.play", "media.pause", "media.seek", "media.duration", "media.repeat", "media.autoplay.set", "media.unavailable", "media.ended":
 			key := c.roomID + ":" + c.identity.LiveKitIdentity()
@@ -1606,18 +1737,34 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			if promotedAutoplayPick != nil {
 				h.broadcast(c.roomID, event("youtube.pick.promoted", c.roomID, *promotedAutoplayPick), "")
 				if repo, ok := h.store.(interface {
-					PromoteRoomPick(context.Context, string) error
+					PromoteRoomPick(context.Context, string, string) error
 				}); ok {
-					go func(id string) {
+					go func(rID, id string) {
 						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 						defer cancel()
-						_ = repo.PromoteRoomPick(ctx, id)
-					}(promotedAutoplayPick.ID)
+						_ = repo.PromoteRoomPick(ctx, rID, id)
+					}(c.roomID, promotedAutoplayPick.ID)
 				}
 			}
 			if err := h.publishMediaState(ctx, c.roomID, previous, media); err != nil {
 				if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
 					h.rollbackMediaState(c.roomID, media.Version, previousState)
+					if promotedAutoplayPick != nil {
+						h.mu.Lock()
+						if s := h.rooms[c.roomID]; s != nil {
+							hasPick := false
+							for _, ep := range s.picks {
+								if ep.ID == promotedAutoplayPick.ID {
+									hasPick = true
+									break
+								}
+							}
+							if !hasPick {
+								s.picks = append([]youtubeRoomPick{*promotedAutoplayPick}, s.picks...)
+							}
+						}
+						h.mu.Unlock()
+					}
 				}
 				h.sendError(c, "MEDIA_COMMAND_REJECTED", "Media authority changed; retry")
 			}
@@ -1988,19 +2135,21 @@ func (h *Hub) scheduleMediaEnd(roomID string, state *roomState) {
 			return
 		}
 		previousState := state.media.snapshot()
-		if !state.media.finish(time.Now().UTC()) {
+		if !state.media.finish(time.Now()) {
 			h.scheduleMediaEnd(roomID, state)
 			h.mu.Unlock()
 			return
 		}
+		var promotedAutoplayPick *youtubeRoomPick
 		if state.media.Current == nil && state.media.Autoplay && len(state.picks) > 0 {
 			best := 0
 			for i := 1; i < len(state.picks); i++ {
-				if state.picks[i].Votes > state.picks[best].Votes {
+				if state.picks[i].Votes > state.picks[best].Votes || (state.picks[i].Votes == state.picks[best].Votes && state.picks[i].ID < state.picks[best].ID) {
 					best = i
 				}
 			}
 			pick := state.picks[best]
+			promotedAutoplayPick = &pick
 			state.picks = append(state.picks[:best], state.picks[best+1:]...)
 			state.media.Current = &youtubeTrack{ID: uuid.NewString(), VideoID: pick.VideoID, Title: pick.Title, Channel: pick.Channel, AddedBy: "Suggested"}
 			state.media.Status = "PLAYING"
@@ -2011,9 +2160,39 @@ func (h *Hub) scheduleMediaEnd(roomID string, state *roomState) {
 		previous := media.Version - 1
 		h.scheduleMediaEnd(roomID, state)
 		h.mu.Unlock()
+
+		if promotedAutoplayPick != nil {
+			h.broadcast(roomID, event("youtube.pick.promoted", roomID, *promotedAutoplayPick), "")
+			if repo, ok := h.store.(interface {
+				PromoteRoomPick(context.Context, string, string) error
+			}); ok {
+				go func(rID, id string) {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = repo.PromoteRoomPick(ctx, rID, id)
+				}(roomID, promotedAutoplayPick.ID)
+			}
+		}
+
 		if err := h.publishMediaState(context.Background(), roomID, previous, media); err != nil {
 			if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
 				h.rollbackMediaState(roomID, media.Version, previousState)
+				if promotedAutoplayPick != nil {
+					h.mu.Lock()
+					if s := h.rooms[roomID]; s != nil {
+						hasPick := false
+						for _, ep := range s.picks {
+							if ep.ID == promotedAutoplayPick.ID {
+								hasPick = true
+								break
+							}
+						}
+						if !hasPick {
+							s.picks = append([]youtubeRoomPick{*promotedAutoplayPick}, s.picks...)
+						}
+					}
+					h.mu.Unlock()
+				}
 			}
 			h.logger.Warn("media progression publish rejected", "room_id", roomID, "error", err)
 		}

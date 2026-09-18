@@ -7,6 +7,17 @@
       "has": [
         {
           "type": "host",
+          "value": "www.mingly.site"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "destination": "https://mingly.site/$1",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
           "value": "loft-amber.vercel.app"
         }
       ]

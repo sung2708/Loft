@@ -35,7 +35,10 @@ import { useMusicPlayerStore } from "@/stores/useMusicPlayerStore";
 import { useUIText } from "@/lib/i18n/uiText";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
 import { KickParticipantDialog } from "@/components/room/KickParticipantDialog";
-import { ParticipantMenu, type ParticipantAction } from "@/components/room/ParticipantMenu";
+import {
+  ParticipantMenu,
+  type ParticipantAction,
+} from "@/components/room/ParticipantMenu";
 import { SocialActions } from "@/components/room/SocialActions";
 import { RoomAtmosphere } from "./RoomAtmosphere";
 import { SettingsDrawer } from "./SettingsDrawer";
@@ -46,10 +49,16 @@ export function RoomView() {
   const drawer = useUIStore((state) => state.activeDrawer);
   const connection = useRoomStore((state) => state.connectionState);
   const room = useRoomStore((state) => state.room);
-  const [musicPlayerSurface, setMusicPlayerSurface] = useState<HTMLDivElement | null>(null);
-  const handleMusicPlayerSurface = useCallback((surface: HTMLDivElement | null) => {
-    setMusicPlayerSurface((current) => (current === surface ? current : surface));
-  }, []);
+  const [musicPlayerSurface, setMusicPlayerSurface] =
+    useState<HTMLDivElement | null>(null);
+  const handleMusicPlayerSurface = useCallback(
+    (surface: HTMLDivElement | null) => {
+      setMusicPlayerSurface((current) =>
+        current === surface ? current : surface,
+      );
+    },
+    [],
+  );
   return (
     <main className="fixed inset-0 flex flex-col overflow-hidden bg-[var(--bg-loft-base)] text-[var(--text-loft-primary)]">
       <RoomHeader />
@@ -91,7 +100,10 @@ function Stage() {
   const reactions = useReactionStore((state) => state.reactions);
   useEffect(() => {
     if (!reactions.length) return;
-    const timer = setInterval(() => useReactionStore.getState().clearExpired(Date.now()), 500);
+    const timer = setInterval(
+      () => useReactionStore.getState().clearExpired(Date.now()),
+      500,
+    );
     return () => clearInterval(timer);
   }, [reactions.length]);
   return (
@@ -99,8 +111,14 @@ function Stage() {
       <div className="relative w-full h-full">
         {media.mediaConnected ? <MediaStage /> : <EmptyStage />}
         {media.mediaError && (
-          <div role="alert" className="absolute left-1/2 top-4 z-30 flex max-w-[min(30rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-center text-[11px] text-[var(--text-loft-primary)] shadow-lg">
-            <span>{media.mediaError.replace(/\.+$/, "")}. {tr("Chat remains available.")}</span>
+          <div
+            role="alert"
+            className="absolute left-1/2 top-4 z-30 flex max-w-[min(30rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-center text-[11px] text-[var(--text-loft-primary)] shadow-lg"
+          >
+            <span>
+              {media.mediaError.replace(/\.+$/, "")}.{" "}
+              {tr("Chat remains available.")}
+            </span>
             <button
               type="button"
               onClick={() => media.clearMediaError?.()}
@@ -111,8 +129,29 @@ function Stage() {
             </button>
           </div>
         )}
-        <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 gap-2 overflow-hidden">
-          {reactions.map((reaction) => <motion.div key={reaction.emoji} initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }} transition={{ duration: reducedMotion ? 0 : 0.2 }} className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-1 text-[11px] shadow-lg" title={reaction.displayName} aria-label={`${reaction.displayName}: ${reaction.emoji}`}>{reaction.emoji}{reaction.count > 1 && <span className="ml-1 text-[11px] font-medium">×{reaction.count}</span>}</motion.div>)}
+        <div
+          aria-live="polite"
+          className="pointer-events-none absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 gap-2 overflow-hidden"
+        >
+          {reactions.map((reaction) => (
+            <motion.div
+              key={reaction.emoji}
+              initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }}
+              transition={{ duration: reducedMotion ? 0 : 0.2 }}
+              className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-1 text-[11px] shadow-lg"
+              title={reaction.displayName}
+              aria-label={`${reaction.displayName}: ${reaction.emoji}`}
+            >
+              {reaction.emoji}
+              {reaction.count > 1 && (
+                <span className="ml-1 text-[11px] font-medium">
+                  ×{reaction.count}
+                </span>
+              )}
+            </motion.div>
+          ))}
         </div>
       </div>
     </RoomAtmosphere>
@@ -123,22 +162,29 @@ function RoomLoading() {
   const tr = useUIText();
   const state = useRoomStore((item) => item.connectionState);
   const error = useRoomStore((item) => item.connectionError);
+  const terminalAdmissionFailure = Boolean(
+    error &&
+    /room is full|room is locked|you were removed|cannot rejoin/i.test(error),
+  );
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-7 text-center shadow-[8px_8px_0_color-mix(in_srgb,var(--border-loft)_12%,transparent)]">
         <div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-[var(--border-loft)]/20 border-t-[var(--accent-blue)] animate-spin" />
         <h2 className="font-medium">
-            {tr(state === "FAILED" ? "Couldn’t join room" : "Joining…")}
+          {tr(state === "FAILED" ? "Couldn’t join room" : "Joining…")}
         </h2>
         <p className="text-[11px] text-[var(--text-loft-secondary)] mt-2">
           {tr(error ?? "Syncing current room state.")}
         </p>
         {state === "FAILED" && (
           <button
-            onClick={() => location.reload()}
+            onClick={() => {
+              if (terminalAdmissionFailure) window.location.replace("/");
+              else location.reload();
+            }}
             className="btn-press mt-4 rounded-[6px] bg-[#101113] px-4 py-2 text-[11px] text-white"
           >
-            {tr("Try again")}
+            {tr(terminalAdmissionFailure ? "Return home" : "Try again")}
           </button>
         )}
       </div>
@@ -182,10 +228,14 @@ function RoomHeader() {
   const subtitle = (
     <span className="flex min-w-0 items-center gap-1">
       <span className="truncate">
-        {count} {tr("present")} · {tr(room?.allow_guests ? "Guests welcome" : "Members only")}
+        {count} {tr("present")} ·{" "}
+        {tr(room?.allow_guests ? "Guests welcome" : "Members only")}
       </span>
       {room?.is_locked ? (
-        <span className="inline-flex shrink-0 items-center gap-1" title={tr("Room locked")}>
+        <span
+          className="inline-flex shrink-0 items-center gap-1"
+          title={tr("Room locked")}
+        >
           <Lock className="h-3 w-3" /> {tr("Locked")}
         </span>
       ) : null}
@@ -198,91 +248,92 @@ function RoomHeader() {
       subtitle={subtitle}
       actions={
         <>
-        <button
-          onClick={copy}
-          aria-label={tr("Invite")}
-          disabled={!room}
-          className="btn-press h-8 px-3 rounded-full border border-[var(--border-loft)] text-[11px] flex items-center gap-2"
-        >
-          {copied ? (
-            <Check className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
-          ) : (
-            <Copy className="w-3.5 h-3.5" />
-          )}
-          <span className="hidden sm:inline">{tr("Invite")}</span>
-        </button>
-        {Boolean(
-          room &&
-            ((self?.identity_type === "user" && self.identity_id === room.owner_id) ||
+          <button
+            onClick={copy}
+            aria-label={tr("Invite")}
+            disabled={!room}
+            className="btn-press h-8 px-3 rounded-full border border-[var(--border-loft)] text-[11px] flex items-center gap-2"
+          >
+            {copied ? (
+              <Check className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
+            ) : (
+              <Copy className="w-3.5 h-3.5" />
+            )}
+            <span className="hidden sm:inline">{tr("Invite")}</span>
+          </button>
+          {Boolean(
+            room &&
+            ((self?.identity_type === "user" &&
+              self.identity_id === room.owner_id) ||
               self?.role === "host"),
-        ) && (
-          <button
-            type="button"
-            onClick={() => useUIStore.getState().toggleDrawer("settings")}
-            aria-label={tr("Room settings")}
-            aria-pressed={activeDrawer === "settings"}
-            title={tr("Room settings")}
-            className={`btn-press h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center transition-colors cursor-pointer ${
-              activeDrawer === "settings"
-                ? "bg-[#101113] text-white border-[var(--border-loft)] shadow-sm shadow-[#101113]/30"
-                : "hover-invert hover:bg-[var(--border-loft-light)]"
-            }`}
-          >
-            <Settings2 className="w-4 h-4" />
-          </button>
-        )}
-        <div ref={appearanceRef} className="relative">
-          <button
-            type="button"
-            aria-label={tr("Appearance")}
-            aria-haspopup="menu"
-            aria-expanded={appearanceOpen}
-            onClick={() => setAppearanceOpen((open) => !open)}
-            className="h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center hover-invert hover:bg-[var(--border-loft-light)]"
-          >
-            <SunMoon className="w-4 h-4" />
-          </button>
-          {appearanceOpen && (
-            <div
-              role="menu"
-              aria-label={tr("Appearance")}
-              className="absolute right-0 top-full mt-2 z-50 min-w-52 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
+          ) && (
+            <button
+              type="button"
+              onClick={() => useUIStore.getState().toggleDrawer("settings")}
+              aria-label={tr("Room settings")}
+              aria-pressed={activeDrawer === "settings"}
+              title={tr("Room settings")}
+              className={`btn-press h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center transition-colors cursor-pointer ${
+                activeDrawer === "settings"
+                  ? "bg-[#101113] text-white border-[var(--border-loft)] shadow-sm shadow-[#101113]/30"
+                  : "hover-invert hover:bg-[var(--border-loft-light)]"
+              }`}
             >
-              {(["system", "light", "dark"] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={theme === option}
-                  onClick={() => {
-                    setTheme(option);
-                    setAppearanceOpen(false);
-                  }}
-                  className="w-full rounded-[6px] px-3 py-2 text-left text-[11px] capitalize text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft-light)] flex items-center justify-between gap-3"
-                >
-                  {tr(option.charAt(0).toUpperCase() + option.slice(1))}
-                  {theme === option && (
-                    <Check className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
-                  )}
-                </button>
-              ))}
-            </div>
+              <Settings2 className="w-4 h-4" />
+            </button>
           )}
-        </div>
-        <div
-          title={self?.display_name}
-          className="w-8 h-8 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center font-medium text-[11px] overflow-hidden"
-        >
-          {self?.avatar_url ? (
-            <img
-              src={self.avatar_url}
-              alt=""
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            (self?.display_name?.slice(0, 1).toUpperCase() ?? "?")
-          )}
-        </div>
+          <div ref={appearanceRef} className="relative">
+            <button
+              type="button"
+              aria-label={tr("Appearance")}
+              aria-haspopup="menu"
+              aria-expanded={appearanceOpen}
+              onClick={() => setAppearanceOpen((open) => !open)}
+              className="h-8 w-8 rounded-full border border-[var(--border-loft)] flex items-center justify-center hover-invert hover:bg-[var(--border-loft-light)]"
+            >
+              <SunMoon className="w-4 h-4" />
+            </button>
+            {appearanceOpen && (
+              <div
+                role="menu"
+                aria-label={tr("Appearance")}
+                className="absolute right-0 top-full mt-2 z-50 min-w-52 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
+              >
+                {(["system", "light", "dark"] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={theme === option}
+                    onClick={() => {
+                      setTheme(option);
+                      setAppearanceOpen(false);
+                    }}
+                    className="w-full rounded-[6px] px-3 py-2 text-left text-[11px] capitalize text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft-light)] flex items-center justify-between gap-3"
+                  >
+                    {tr(option.charAt(0).toUpperCase() + option.slice(1))}
+                    {theme === option && (
+                      <Check className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div
+            title={self?.display_name}
+            className="w-8 h-8 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center font-medium text-[11px] overflow-hidden"
+          >
+            {self?.avatar_url ? (
+              <img
+                src={self.avatar_url}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              (self?.display_name?.slice(0, 1).toUpperCase() ?? "?")
+            )}
+          </div>
         </>
       }
     />
@@ -305,13 +356,15 @@ function ConnectionBadge() {
       ) : (
         <Wifi className="w-3.5 h-3.5 animate-pulse" />
       )}
-      {tr(state === "RESYNCING"
-        ? "Resyncing…"
-        : state === "RECONNECTING"
-          ? "Reconnecting…"
-          : failed
-            ? "Offline"
-            : "Connecting…")}
+      {tr(
+        state === "RESYNCING"
+          ? "Resyncing…"
+          : state === "RECONNECTING"
+            ? "Reconnecting…"
+            : failed
+              ? "Offline"
+              : "Connecting…",
+      )}
     </div>
   );
 }
@@ -347,12 +400,14 @@ function CallDock() {
   const count = useRoomStore((state) => state.participants.length);
   const self = useRoomStore((state) => state.self);
 
-  const sendReaction = (emoji: string) => media.sendCommand("reaction.send", { emoji });
+  const sendReaction = (emoji: string) =>
+    media.sendCommand("reaction.send", { emoji });
   const sendWave = () => media.sendCommand("wave.send", {});
-  const toggleHand = () => media.sendCommand("participant.hand.set", {
-    raised: !(self?.raised_hand ?? false),
-    expected_social_version: self?.social_version ?? 0,
-  });
+  const toggleHand = () =>
+    media.sendCommand("participant.hand.set", {
+      raised: !(self?.raised_hand ?? false),
+      expected_social_version: self?.social_version ?? 0,
+    });
   const control =
     "room-dock-control btn-press relative !h-10 !w-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
   return (
@@ -418,10 +473,18 @@ function CallDock() {
             {count}
           </b>
         </button>
-        <button onClick={() => {
-          if (drawer !== "music") useMusicPlayerStore.getState().requestAudioActivation();
-          toggleDrawer("music");
-        }} className={`room-dock-optional ${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`} title={tr("Shared Queue")} aria-label={tr("Shared Queue")}><Music2 className="w-4 h-4" /></button>
+        <button
+          onClick={() => {
+            if (drawer !== "music")
+              useMusicPlayerStore.getState().requestAudioActivation();
+            toggleDrawer("music");
+          }}
+          className={`room-dock-optional ${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`}
+          title={tr("Shared Queue")}
+          aria-label={tr("Shared Queue")}
+        >
+          <Music2 className="w-4 h-4" />
+        </button>
         <span className="room-dock-optional room-dock-separator w-px h-6 bg-[var(--border-loft)]" />
         <div className="room-dock-optional contents">
           <SocialActions
@@ -491,7 +554,8 @@ function DrawerFrame({
 }
 
 function renderMessageContent(content: string, isMine?: boolean) {
-  const urlRegex = /(https?:\/\/[^\s<]+[^<.,:;"')\]!?\s]|www\.[^\s<]+[^<.,:;"')\]!?\s])/gi;
+  const urlRegex =
+    /(https?:\/\/[^\s<]+[^<.,:;"')\]!?\s]|www\.[^\s<]+[^<.,:;"')\]!?\s])/gi;
   const parts = content.split(urlRegex);
   if (parts.length <= 1) return content;
 
@@ -546,7 +610,8 @@ function ChatDrawer() {
           </p>
         )}
         {messages.map((message) => {
-          const isSystem = message.sender_id === "system" || message.sender_id === "";
+          const isSystem =
+            message.sender_id === "system" || message.sender_id === "";
           if (isSystem) {
             return (
               <div key={message.id} className="flex justify-center my-2">
@@ -593,7 +658,11 @@ function ChatDrawer() {
         })}
         <div ref={end} />
       </div>
-      {error && <p className="px-4 pb-1 text-[11px] text-[var(--text-loft-primary)]">{tr(error)}</p>}
+      {error && (
+        <p className="px-4 pb-1 text-[11px] text-[var(--text-loft-primary)]">
+          {tr(error)}
+        </p>
+      )}
       <form
         onSubmit={submit}
         className="flex gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3"
@@ -626,43 +695,65 @@ function PeopleDrawer() {
   const connection = useRoomStore((state) => state.connectionState);
   const session = useRoomSession();
   const locale = useI18nStore((state) => state.locale);
-  const [joinRequests, setJoinRequests] = useState<Array<{ user_id: string; display_name: string; avatar_url?: string }>>([]);
+  const [joinRequests, setJoinRequests] = useState<
+    Array<{ user_id: string; display_name: string; avatar_url?: string }>
+  >([]);
   const [newJoinRequest, setNewJoinRequest] = useState(false);
   // The server-published host authority is authoritative. A participant role
   // is display state and can lag during reconnect/failover.
   const isHost = Boolean(
-    self && host && host.state === "connected" && host.connection_id === self.connection_id,
+    self &&
+    host &&
+    host.state === "connected" &&
+    host.connection_id === self.connection_id,
   );
-  const [pendingModeration, setPendingModeration] = useState<{ connectionId: string; name: string; action: "kick" | "ban" } | null>(null);
+  const [pendingModeration, setPendingModeration] = useState<{
+    connectionId: string;
+    name: string;
+    action: "kick" | "ban";
+  } | null>(null);
   const closeKickDialog = useCallback(() => setPendingModeration(null), []);
   const lockRoom = () => {
     if (!room) return;
     useRoomStore.getState().setGovernanceError(null);
-    session.sendCommand("room.lock", { locked: !room.is_locked, expected_version: room.version });
+    session.sendCommand("room.lock", {
+      locked: !room.is_locked,
+      expected_version: room.version,
+    });
   };
   const moderate = () => {
     if (!pendingModeration) return;
     useRoomStore.getState().setGovernanceError(null);
     const sent = session.sendCommand(
-      pendingModeration.action === "ban" ? "participant.ban" : "participant.kick",
+      pendingModeration.action === "ban"
+        ? "participant.ban"
+        : "participant.kick",
       pendingModeration.action === "ban"
         ? { connection_id: pendingModeration.connectionId, duration_hours: 1 }
         : { connection_id: pendingModeration.connectionId },
     );
     if (sent) setPendingModeration(null);
   };
-  const handleParticipantAction = (person: (typeof people)[number], action: ParticipantAction) => {
+  const handleParticipantAction = (
+    person: (typeof people)[number],
+    action: ParticipantAction,
+  ) => {
     if (action === "transfer") {
       if (room) {
         useRoomStore.getState().setGovernanceError(null);
         session.sendCommand("host.transfer", {
           target_connection_id: person.connection_id,
-          expected_authority_version: useRoomStore.getState().host?.version ?? 0,
+          expected_authority_version:
+            useRoomStore.getState().host?.version ?? 0,
         });
       }
       return;
     }
-    setPendingModeration({ connectionId: person.connection_id, name: person.display_name, action });
+    setPendingModeration({
+      connectionId: person.connection_id,
+      name: person.display_name,
+      action,
+    });
   };
   useEffect(() => {
     if (!isHost || !room || !session.token) return;
@@ -675,16 +766,23 @@ function PeopleDrawer() {
           if (requests.length > current.length) setNewJoinRequest(true);
           return requests;
         });
-      } catch { if (active) setJoinRequests([]); }
+      } catch {
+        if (active) setJoinRequests([]);
+      }
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 3000);
-    return () => { active = false; window.clearInterval(timer); };
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [isHost, room, session.token]);
   const resolveRequest = async (userID: string, approve: boolean) => {
     if (!room || !session.token) return;
     await api.resolveJoinRequest(session.token, room.id, userID, approve);
-    setJoinRequests((current) => current.filter((item) => item.user_id !== userID));
+    setJoinRequests((current) =>
+      current.filter((item) => item.user_id !== userID),
+    );
   };
   return (
     <>
@@ -692,8 +790,14 @@ function PeopleDrawer() {
         {isHost && room && (
           <div className="border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 pb-4 pt-4">
             {newJoinRequest && joinRequests.length > 0 && (
-              <button type="button" onClick={() => setNewJoinRequest(false)} className="mb-3 w-full rounded-[6px] border border-[var(--accent-blue)] bg-[var(--bg-loft-card)] px-3 py-2 text-left text-[11px] font-medium text-[var(--text-loft-primary)] shadow-sm">
-                {locale === "vi" ? "Có yêu cầu tham gia mới" : "New join request"}
+              <button
+                type="button"
+                onClick={() => setNewJoinRequest(false)}
+                className="mb-3 w-full rounded-[6px] border border-[var(--accent-blue)] bg-[var(--bg-loft-card)] px-3 py-2 text-left text-[11px] font-medium text-[var(--text-loft-primary)] shadow-sm"
+              >
+                {locale === "vi"
+                  ? "Có yêu cầu tham gia mới"
+                  : "New join request"}
               </button>
             )}
             <button
@@ -703,17 +807,44 @@ function PeopleDrawer() {
               aria-pressed={room.is_locked}
               className="btn-press flex w-full items-center justify-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-[11px] font-medium hover-invert disabled:opacity-50"
             >
-              {room.is_locked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+              {room.is_locked ? (
+                <Unlock className="w-4 h-4" />
+              ) : (
+                <Lock className="w-4 h-4" />
+              )}
               {tr(room.is_locked ? "Unlock room" : "Lock room")}
             </button>
             {!room.allow_guests && joinRequests.length > 0 && (
               <div className="mt-3 space-y-2">
-                <p className="text-[11px] font-medium text-[var(--text-loft-secondary)]">{locale === "vi" ? `Yêu cầu tham gia · ${joinRequests.length}` : `Join requests · ${joinRequests.length}`}</p>
+                <p className="text-[11px] font-medium text-[var(--text-loft-secondary)]">
+                  {locale === "vi"
+                    ? `Yêu cầu tham gia · ${joinRequests.length}`
+                    : `Join requests · ${joinRequests.length}`}
+                </p>
                 {joinRequests.map((request) => (
-                  <div key={request.user_id} className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 text-[11px] shadow-sm">
-                    <span className="min-w-0 flex-1 truncate">{request.display_name}</span>
-                    <button type="button" onClick={() => void resolveRequest(request.user_id, false)} className="rounded-[5px] px-2 py-1 text-[var(--text-loft-secondary)] hover-invert">{locale === "vi" ? "Từ chối" : "Decline"}</button>
-                    <button type="button" onClick={() => void resolveRequest(request.user_id, true)} className="btn-press rounded-[5px] bg-[#101113] px-2 py-1 text-white">{locale === "vi" ? "Duyệt" : "Approve"}</button>
+                  <div
+                    key={request.user_id}
+                    className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 text-[11px] shadow-sm"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {request.display_name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void resolveRequest(request.user_id, false)
+                      }
+                      className="rounded-[5px] px-2 py-1 text-[var(--text-loft-secondary)] hover-invert"
+                    >
+                      {locale === "vi" ? "Từ chối" : "Decline"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void resolveRequest(request.user_id, true)}
+                      className="btn-press rounded-[5px] bg-[#101113] px-2 py-1 text-white"
+                    >
+                      {locale === "vi" ? "Duyệt" : "Approve"}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -753,19 +884,26 @@ function PeopleDrawer() {
                   <Crown className="w-3.5 h-3.5" /> {tr("Host")}
                 </span>
               )}
-              {isHost && person.role !== "host" && person.connection_id !== self?.connection_id && (
-                <ParticipantMenu
-                  participant={person}
-                  canTransfer={Boolean(room && person.identity_type === "user")}
-                  disabled={connection !== "CONNECTED"}
-                  onAction={(action) => handleParticipantAction(person, action)}
-                />
-              )}
+              {isHost &&
+                person.role !== "host" &&
+                person.connection_id !== self?.connection_id && (
+                  <ParticipantMenu
+                    participant={person}
+                    canTransfer={Boolean(
+                      room && person.identity_type === "user",
+                    )}
+                    disabled={connection !== "CONNECTED"}
+                    onAction={(action) =>
+                      handleParticipantAction(person, action)
+                    }
+                  />
+                )}
             </div>
           ))}
         </div>
         <div className="flex items-center gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-4 text-[11px] text-[var(--text-loft-secondary)]">
-          <Settings2 className="w-4 h-4" /> {tr("Presence follows active browser connections.")}
+          <Settings2 className="w-4 h-4" />{" "}
+          {tr("Presence follows active browser connections.")}
         </div>
       </DrawerFrame>
       {pendingModeration && (

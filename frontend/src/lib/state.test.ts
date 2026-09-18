@@ -15,6 +15,11 @@ describe("safeAuthDestination", () => {
     expect(safeAuthDestination("https://evil.example")).toBe("/");
     expect(safeAuthDestination("//evil.example")).toBe("/");
     expect(safeAuthDestination("/\\evil.example")).toBe("/");
+    expect(safeAuthDestination("/%2f%2fevil.example")).toBe("/");
+    expect(safeAuthDestination("/%252f%252fevil.example")).toBe("/");
+    expect(
+      safeAuthDestination("/settings%0d%0aLocation:https://evil.example"),
+    ).toBe("/");
     expect(safeAuthDestination(null)).toBe("/");
     expect(safeAuthDestination(undefined)).toBe("/");
   });
@@ -22,10 +27,15 @@ describe("safeAuthDestination", () => {
   it("rejects auth callback routes to prevent redirect loops", () => {
     expect(safeAuthDestination("/auth/callback")).toBe("/");
     expect(safeAuthDestination("/auth/callback?code=123")).toBe("/");
+    expect(safeAuthDestination("/auth/spotify/callback?status=connected")).toBe(
+      "/",
+    );
   });
 
   it("supports custom fallback destination", () => {
-    expect(safeAuthDestination("https://evil.example", "/custom")).toBe("/custom");
+    expect(safeAuthDestination("https://evil.example", "/custom")).toBe(
+      "/custom",
+    );
   });
 });
 
