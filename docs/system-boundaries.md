@@ -84,7 +84,7 @@ Clear ownership boundaries prevent state drift, security vulnerabilities, and di
   - React virtual DOM, layout transitions, Stage vs. Drawer modes.
   - Local browser device enumeration (`navigator.mediaDevices.getUserMedia`).
   - Audio output volume sliders, local mute toggles.
-  - Synchronizing third-party iframes (YouTube IFrame API, Spotify Web Playback SDK).
+  - Synchronizing the YouTube IFrame API.
 - **Security Invariant:** The client cannot declare itself "Host", change permissions, or force playback state without a valid server-accepted WebSocket event.
 
 ---

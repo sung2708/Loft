@@ -15,6 +15,7 @@ describe("safeAuthDestination", () => {
     expect(safeAuthDestination("https://evil.example")).toBe("/");
     expect(safeAuthDestination("//evil.example")).toBe("/");
     expect(safeAuthDestination("/\\evil.example")).toBe("/");
+    expect(safeAuthDestination("/room/a:b")).toBe("/");
     expect(safeAuthDestination(null)).toBe("/");
     expect(safeAuthDestination(undefined)).toBe("/");
   });

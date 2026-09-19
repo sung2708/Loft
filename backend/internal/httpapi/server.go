@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,28 +25,19 @@ import (
 )
 
 type Server struct {
-	store                domain.Store
-	deletion             RoomDeletionGuard
-	users                *auth.SupabaseVerifier
-	guests               *auth.GuestTokens
-	livekit              *livekit.TokenService
-	lookupLimit          *ratelimit.Limiter
-	guestLimit           *ratelimit.Limiter
-	passwordLimit        *ratelimit.Limiter
-	roomLimit            *ratelimit.Limiter
-	origins              map[string]struct{}
-	logger               *slog.Logger
-	metrics              *observability.Metrics
-	httpLogger           *zerolog.Logger
-	spotifyMu            sync.Mutex
-	spotifyStates        map[string]spotifyOAuthState
-	spotifyTokens        map[string]string
-	spotifyRefreshTokens map[string]string
-}
-
-type spotifyOAuthState struct {
-	UserID, Verifier, RedirectURI, ReturnTo string
-	ExpiresAt                               time.Time
+	store         domain.Store
+	deletion      RoomDeletionGuard
+	users         *auth.SupabaseVerifier
+	guests        *auth.GuestTokens
+	livekit       *livekit.TokenService
+	lookupLimit   *ratelimit.Limiter
+	guestLimit    *ratelimit.Limiter
+	passwordLimit *ratelimit.Limiter
+	roomLimit     *ratelimit.Limiter
+	origins       map[string]struct{}
+	logger        *slog.Logger
+	metrics       *observability.Metrics
+	httpLogger    *zerolog.Logger
 }
 
 type RoomDeletionGuard interface {
@@ -93,7 +83,7 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 	if len(deletion) > 0 {
 		guard = deletion[0]
 	}
-	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService, spotifyStates: make(map[string]spotifyOAuthState), spotifyTokens: make(map[string]string), spotifyRefreshTokens: make(map[string]string),
+	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
 		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
@@ -148,12 +138,6 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Get("/ready", s.ready)
 		r.Get("/readyz", s.ready)
 		r.Route("/api/v1", func(r chi.Router) {
-			r.Get("/spotify/status", s.spotifyStatus)
-			r.Get("/spotify/connect", s.spotifyConnect)
-			r.Get("/spotify/callback", s.spotifyCallback)
-			r.Get("/spotify/search", s.spotifySearch)
-			r.Post("/spotify/disconnect", s.spotifyDisconnect)
-			r.Post("/spotify/revoke", s.spotifyRevoke)
 			r.Get("/youtube/search", s.youtubeSearch)
 			r.Get("/rooms/{roomID}/youtube/picks", s.listYouTubePicks)
 			r.Post("/rooms/{roomID}/youtube/picks", s.createYouTubePick)

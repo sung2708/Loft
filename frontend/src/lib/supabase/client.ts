@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { safeAuthDestination } from "@/lib/authRedirect";
 
 let client: SupabaseClient | null | undefined;
 
@@ -18,8 +19,9 @@ export function getSupabase(): SupabaseClient | null {
 export async function signInWithGoogle(next = "/") {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Supabase is not configured");
-  sessionStorage.setItem("loft.auth.next", next);
-  const callback = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+  const destination = safeAuthDestination(next, "/");
+  sessionStorage.setItem("loft.auth.next", destination);
+  const callback = `${window.location.origin}/auth/callback?next=${encodeURIComponent(destination)}`;
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: { redirectTo: callback },

@@ -42,7 +42,7 @@ export function LegalPage({ copies }: { copies: LegalPageCopies }) {
           <p className="eyebrow">Mingly</p>
           <h1 className="mt-3 text-[clamp(2rem,5vw,3rem)] font-medium leading-none tracking-[-0.04em]">{copy.title}</h1>
           <p className="mt-5 max-w-2xl text-[11px] leading-6 text-[var(--text-loft-secondary)]">{copy.summary}</p>
-          <p className="mt-5 text-[11px] text-[var(--text-loft-muted)]">{copy.updatedLabel}: 17/09/2026</p>
+          <p className="mt-5 text-[11px] text-[var(--text-loft-muted)]">{copy.updatedLabel}: 20/09/2026</p>
         </header>
         {copy.notice && <aside className="mt-6 rounded-[10px] border border-[var(--accent-blue)]/30 bg-[var(--accent-blue)]/8 px-4 py-3 text-[11px] leading-6 text-[var(--text-loft-secondary)]">{copy.notice}</aside>}
         <div className="divide-y utility-rule">

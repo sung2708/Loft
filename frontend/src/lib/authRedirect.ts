@@ -7,7 +7,8 @@ export function safeAuthDestination(
     !value.startsWith("/") ||
     value.startsWith("//") ||
     value.includes("\\") ||
-    value.startsWith("/auth/")
+    value.startsWith("/auth/") ||
+    value.includes(":")
   ) {
     return fallback;
   }

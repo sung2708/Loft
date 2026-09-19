@@ -1,7 +1,6 @@
 import { useI18nStore } from "./useTranslation";
 
 const vietnamese: Record<string, string> = {
-  "Connecting Spotify…": "Đang kết nối Spotify…",
   "Enter the room password to join.": "Nhập mật khẩu phòng để tham gia.",
   "That password doesn't look right. Try again.": "Mật khẩu chưa đúng. Hãy thử lại.",
   "Please wait a moment before trying again": "Vui lòng chờ một chút rồi thử lại.",

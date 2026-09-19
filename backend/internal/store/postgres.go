@@ -10,36 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"loft/backend/internal/domain"
-	"loft/backend/internal/spotify"
 )
 
 type Postgres struct{ pool *pgxpool.Pool }
-
-func (p *Postgres) SaveSpotifyCredentials(ctx context.Context, c spotify.Credentials, accessCiphertext, refreshCiphertext string) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO spotify_connections (user_id, access_token_ciphertext, refresh_token_ciphertext, scopes, expires_at, revoked_at)
-		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id) DO UPDATE SET access_token_ciphertext=EXCLUDED.access_token_ciphertext, refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext, scopes=EXCLUDED.scopes, expires_at=EXCLUDED.expires_at, revoked_at=EXCLUDED.revoked_at, updated_at=NOW()`, c.UserID, accessCiphertext, refreshCiphertext, c.Scopes, c.ExpiresAt, c.RevokedAt)
-	return err
-}
-
-func (p *Postgres) LoadSpotifyCredentials(ctx context.Context, userID string) (accessCiphertext, refreshCiphertext string, scopes []string, expiresAt time.Time, revokedAt *time.Time, err error) {
-	err = p.pool.QueryRow(ctx, `SELECT access_token_ciphertext, refresh_token_ciphertext, scopes, expires_at, revoked_at FROM spotify_connections WHERE user_id=$1`, userID).Scan(&accessCiphertext, &refreshCiphertext, &scopes, &expiresAt, &revokedAt)
-	return
-}
-
-func (p *Postgres) RevokeSpotifyCredentials(ctx context.Context, userID string, at time.Time) error {
-	_, err := p.pool.Exec(ctx, `UPDATE spotify_connections SET revoked_at=$2, updated_at=NOW() WHERE user_id=$1`, userID, at)
-	return err
-}
-
-func (p *Postgres) UpdateSpotifyTokens(ctx context.Context, userID, accessCiphertext, refreshCiphertext string, expiresAt time.Time) error {
-	_, err := p.pool.Exec(ctx, `UPDATE spotify_connections SET access_token_ciphertext=$2, refresh_token_ciphertext=$3, expires_at=$4, revoked_at=NULL, updated_at=NOW() WHERE user_id=$1`, userID, accessCiphertext, refreshCiphertext, expiresAt)
-	return err
-}
-
-func (p *Postgres) DisconnectSpotify(ctx context.Context, userID string) error {
-	_, err := p.pool.Exec(ctx, `DELETE FROM spotify_connections WHERE user_id=$1`, userID)
-	return err
-}
 
 func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) error {
 	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_picks (id, room_id, video_id, title, channel, suggested_by, active) VALUES ($1,$2,$3,$4,$5,$6,$7)`, pick.ID, pick.RoomID, pick.VideoID, pick.Title, pick.Channel, pick.SuggestedBy, pick.Active)

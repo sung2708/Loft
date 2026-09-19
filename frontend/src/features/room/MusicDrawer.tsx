@@ -24,7 +24,6 @@ import { useMusicPlayerStore } from "@/stores/useMusicPlayerStore";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useRoomSession } from "./RoomSession";
 import { useTranslation } from "@/lib/i18n/useTranslation";
-import { SpotifyPanel } from "./SpotifyPanel";
 import { YouTubeRoomPicks } from "./YouTubeRoomPicks";
 import { useAuth } from "@/lib/auth/useAuth";
 import { API_URL } from "@/lib/config";
@@ -71,7 +70,6 @@ export function MusicDrawer({
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const [musicTab, setMusicTab] = useState<"queue" | "spotify">("queue");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Array<{ video_id: string; title: string; channel: string; thumbnail?: string }>>([]);
   const [searching, setSearching] = useState(false);
@@ -388,14 +386,8 @@ export function MusicDrawer({
           <X className="w-4 h-4" />
         </button>
       </div>
-      <div className="flex shrink-0 gap-1 border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-2" role="tablist" aria-label={mq.sharedQueue}>
-        <button type="button" role="tab" aria-selected={musicTab === "queue"} onClick={() => setMusicTab("queue")} className={`btn-press flex-1 rounded-[5px] px-2 py-2 text-[11px] font-medium ${musicTab === "queue" ? "bg-[#101113] text-white shadow-sm" : "text-[var(--text-loft-secondary)] hover-invert"}`}>{mq.sharedQueue}</button>
-        <button type="button" role="tab" aria-selected={musicTab === "spotify"} onClick={() => setMusicTab("spotify")} className={`btn-press flex-1 rounded-[5px] px-2 py-2 text-[11px] font-medium ${musicTab === "spotify" ? "bg-[#101113] text-white shadow-sm" : "text-[var(--text-loft-secondary)] hover-invert"}`}>Spotify</button>
-      </div>
-      {musicTab === "spotify" && <SpotifyPanel />}
-
       {/* Drawer Body */}
-      <div role="tabpanel" className={`${musicTab === "spotify" ? "hidden" : ""} flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 text-left`}>
+      <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 text-left">
         {/* Quick Add Input Bar */}
         <form onSubmit={handleAddTrack} className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-2 shadow-sm">
           <div className="relative flex-1 min-w-0">
