@@ -185,7 +185,11 @@ export function MusicDrawer({
     });
   }, [media, metaMap]);
 
-  const addTrackUrl = async (rawUrl: string, playNow = false) => {
+  const addTrackUrl = async (
+    rawUrl: string,
+    playNow = false,
+    clearSearch = false,
+  ) => {
     if (!available || !rawUrl.trim() || isAdding) return;
     setIsAdding(true);
     const trimmed = rawUrl.trim();
@@ -212,7 +216,14 @@ export function MusicDrawer({
       channel: metaChannel,
     });
 
-    if (sent) setUrl("");
+    if (sent) {
+      setUrl("");
+      if (clearSearch) {
+        setSearchQuery("");
+        setSearchResults([]);
+        setSearched(false);
+      }
+    }
     setIsAdding(false);
   };
 
@@ -475,6 +486,8 @@ export function MusicDrawer({
                       onClick={() =>
                         void addTrackUrl(
                           `https://www.youtube.com/watch?v=${result.video_id}`,
+                          false,
+                          true,
                         )
                       }
                       className="rounded border border-[var(--border-loft)] px-2 py-1 text-[10px] hover-invert disabled:opacity-40"
@@ -487,6 +500,7 @@ export function MusicDrawer({
                       onClick={() =>
                         void addTrackUrl(
                           `https://www.youtube.com/watch?v=${result.video_id}`,
+                          true,
                           true,
                         )
                       }
