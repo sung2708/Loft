@@ -49,7 +49,7 @@ backend/
 │   ├── media/                      # Synchronized media playback and queue
 │   │   ├── controller.go           # Clock drift, play/pause/seek math
 │   │   ├── queue.go                # Queue mutation logic and deduplication
-│   │   └── provider.go             # YouTube, Spotify, SoundCloud capability interfaces
+│   │   └── provider.go             # YouTube capability interface
 │   ├── chat/                       # Room messaging
 │   │   ├── handler.go
 │   │   └── batcher.go              # Async batch persistence to PostgreSQL

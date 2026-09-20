@@ -1,6 +1,6 @@
 export type StageMode = "stage" | "screenshare" | "video" | "preflight";
 
-export type DrawerType = "chat" | "people" | "music" | "spotify" | "settings" | null;
+export type DrawerType = "chat" | "people" | "music" | "settings" | null;
 
 export type ThemeMode = "system" | "dark" | "light";
 

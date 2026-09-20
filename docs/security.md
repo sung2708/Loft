@@ -46,16 +46,13 @@ func checkOrigin(r *http.Request) bool {
 
 ## 4. Media Link Validation & SSRF Prevention
 
-Users submit media links (YouTube, Spotify, SoundCloud) to the shared queue. The server **never** fetches arbitrary URLs submitted by clients.
+Users submit YouTube links to the shared queue. The server **never** fetches arbitrary URLs submitted by clients.
 
 ### URL Validation & Normalization Pipeline
 1. **Strict Hostname Whitelist:**
    - YouTube: `youtube.com`, `www.youtube.com`, `m.youtube.com`, `youtu.be`
-   - Spotify: `open.spotify.com`
-   - SoundCloud: `soundcloud.com`, `m.soundcloud.com`
 2. **Provider ID Extraction via Regex:**
    - YouTube Video ID: `^[a-zA-Z0-9_-]{11}$`
-   - Spotify Track ID: `^[a-zA-Z0-9]{22}$`
 3. **Stored Representation:** The database and queue store **only** `{ provider: "youtube", media_id: "dQw4w9WgXcQ" }`. The raw user URL is discarded.
 
 ### SSRF Protection Policy
@@ -119,3 +116,10 @@ Any logged attribute matching these keys is replaced with `"[REDACTED]"`.
 ## 9. Room Appearance privacy boundary
 
 The server accepts only closed semantic atmosphere and accent values plus a boolean adaptive preference. It rejects arbitrary CSS, colors, and URLs. Derived palettes stay in browser memory and are never uploaded, logged, persisted, included in snapshots, or relayed through Redis. Personal `light|dark|system` preference and the compatibility-sensitive `loft.theme` key remain client-owned.
+
+## 10. Authentication redirect policy
+
+- OAuth redirect targets are constructed from `window.location.origin` and a fixed local callback path.
+- The server accepts only configured frontend origins and never trusts arbitrary absolute or protocol-relative URLs from clients.
+- Post-login destinations must be internal paths; `/auth/callback`, `//...`, backslashes, and non-HTTP schemes are rejected and fall back to `/`.
+- Authorization codes, access tokens, refresh tokens, and redirect parameters are never logged or reflected into arbitrary origins.

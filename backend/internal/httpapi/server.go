@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,36 +26,19 @@ import (
 )
 
 type Server struct {
-	store                domain.Store
-	deletion             RoomDeletionGuard
-	users                *auth.SupabaseVerifier
-	guests               *auth.GuestTokens
-	livekit              *livekit.TokenService
-	lookupLimit          *ratelimit.Limiter
-	guestLimit           *ratelimit.Limiter
-	passwordLimit        *ratelimit.Limiter
-	roomLimit            *ratelimit.Limiter
-	spotifyConnectLimit  *ratelimit.Limiter
-	spotifySearchLimit   *ratelimit.Limiter
-	youtubePickLimit     *ratelimit.Limiter
-	origins              map[string]struct{}
-	frontendOrigin       string
-	logger               *slog.Logger
-	metrics              *observability.Metrics
-	httpLogger           *zerolog.Logger
-	spotifyMu            sync.Mutex
-	spotifyStates        map[string]spotifyOAuthState
-	spotifyStateStore    SpotifyOAuthStateStore
-	spotifyUserEpochs    map[string]int64
-	spotifyTokens        map[string]string
-	spotifyRefreshTokens map[string]string
-}
-
-type spotifyOAuthState struct {
-	UserID    string    `json:"user_id"`
-	Verifier  string    `json:"verifier"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Epoch     int64     `json:"epoch"`
+	store         domain.Store
+	deletion      RoomDeletionGuard
+	users         *auth.SupabaseVerifier
+	guests        *auth.GuestTokens
+	livekit       *livekit.TokenService
+	lookupLimit   *ratelimit.Limiter
+	guestLimit    *ratelimit.Limiter
+	passwordLimit *ratelimit.Limiter
+	roomLimit     *ratelimit.Limiter
+	origins       map[string]struct{}
+	logger        *slog.Logger
+	metrics       *observability.Metrics
+	httpLogger    *zerolog.Logger
 }
 
 // SpotifyOAuthStateStore coordinates short-lived OAuth transactions across
@@ -118,30 +100,8 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 	if len(deletion) > 0 {
 		guard = deletion[0]
 	}
-	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService, origins: allowed, frontendOrigin: frontendOrigin, spotifyStates: make(map[string]spotifyOAuthState), spotifyUserEpochs: make(map[string]int64), spotifyTokens: make(map[string]string), spotifyRefreshTokens: make(map[string]string),
-		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), spotifyConnectLimit: ratelimit.New(5, 10*time.Minute, 2), spotifySearchLimit: ratelimit.New(20, time.Minute, 5), youtubePickLimit: ratelimit.New(15, time.Minute, 5), logger: logger, metrics: observability.NewMetrics()}
-}
-
-// ConfigureSpotifyOAuthStateStore enables cross-instance OAuth callbacks.
-// When configured, an unavailable store fails the flow closed rather than
-// silently falling back to process-local state.
-func (s *Server) ConfigureSpotifyOAuthStateStore(store SpotifyOAuthStateStore) {
-	s.spotifyMu.Lock()
-	s.spotifyStateStore = store
-	s.spotifyMu.Unlock()
-}
-
-// ConfigureSpotifyFrontendOrigin sets the trusted, canonical frontend used
-// after a provider callback. It must be one of the CORS allowlist origins.
-func (s *Server) ConfigureSpotifyFrontendOrigin(origin string) error {
-	origin = strings.TrimRight(origin, "/")
-	if _, ok := s.origins[origin]; !ok || origin == "" {
-		return fmt.Errorf("Spotify frontend origin is not allowed")
-	}
-	s.spotifyMu.Lock()
-	s.frontendOrigin = origin
-	s.spotifyMu.Unlock()
-	return nil
+	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
+		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
 // ConfigureObservability is called once during process bootstrap before routes
@@ -197,12 +157,6 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Get("/ready", s.ready)
 		r.Get("/readyz", s.ready)
 		r.Route("/api/v1", func(r chi.Router) {
-			r.Get("/spotify/status", s.spotifyStatus)
-			r.Get("/spotify/connect", s.spotifyConnect)
-			r.Get("/spotify/callback", s.spotifyCallback)
-			r.Get("/spotify/search", s.spotifySearch)
-			r.Post("/spotify/disconnect", s.spotifyDisconnect)
-			r.Post("/spotify/revoke", s.spotifyRevoke)
 			r.Get("/youtube/search", s.youtubeSearch)
 			r.Get("/rooms/{roomID}/youtube/picks", s.listYouTubePicks)
 			r.Post("/rooms/{roomID}/youtube/picks", s.createYouTubePick)

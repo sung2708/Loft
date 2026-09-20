@@ -33,7 +33,6 @@ import { useChatStore } from "@/stores/useChatStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useMusicStore } from "@/stores/useMusicStore";
 import { useYouTubePicksStore } from "@/stores/useYouTubePicksStore";
-import { useSpotifyStore } from "@/stores/useSpotifyStore";
 import { useReactionStore } from "@/stores/useReactionStore";
 import { useSfxStore } from "@/stores/useSfxStore";
 import { playSfx, sfx, unlockSfx } from "@/lib/sfx";
@@ -163,11 +162,6 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           useChatStore.getState().replace(event.payload.messages);
           useMusicStore.getState().replaceMedia(event.payload.media);
           useYouTubePicksStore.getState().replace(event.payload.picks ?? []);
-          if (currentCredential.type === "user" && currentCredential.token) {
-            void useSpotifyStore
-              .getState()
-              .fetchStatus(currentCredential.token);
-          }
           if (!enteredRoom.current) {
             enteredRoom.current = true;
             playSfx("room-enter");

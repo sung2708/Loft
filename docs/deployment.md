@@ -66,10 +66,11 @@ Apply in order:
 5. `000005_temporary_room_bans.up.sql`
 6. `000006_room_appearance.up.sql`
 7. `000007_room_join_requests.up.sql`
-8. `000008_spotify_connections.up.sql`
-9. `000009_spotify_room_picks.up.sql`
+8. `000008_spotify_connections.up.sql` (historical)
+9. `000009_spotify_room_picks.up.sql` (historical)
 10. `000010_youtube_room_picks.up.sql`
 11. `000011_youtube_media_settings.up.sql`
+12. `000012_remove_spotify.up.sql`
 
 Do not edit applied migration files. Use a new numbered migration for schema changes.
 
@@ -112,6 +113,7 @@ After deployment:
 - `GET /ready` returns 200.
 - Frontend API requests use the production backend and pass CORS preflight for GET, POST, PATCH, and DELETE.
 - Google callback returns to `https://mingly.site/auth/callback`.
+- OAuth callback accepts only configured frontend origins and internal post-login paths; external and protocol-relative destinations fall back to `/`.
 - Create, join, password admission, room settings, LiveKit token issuance, WebSocket reconnect, and invite metadata work.
 - `/metrics` is reachable only through trusted monitoring infrastructure.
 

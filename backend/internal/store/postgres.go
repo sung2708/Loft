@@ -10,59 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"loft/backend/internal/domain"
-	"loft/backend/internal/spotify"
 )
 
 type Postgres struct{ pool *pgxpool.Pool }
-
-func (p *Postgres) SaveSpotifyCredentials(ctx context.Context, c spotify.Credentials, accessCiphertext, refreshCiphertext string) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO spotify_connections (user_id, access_token_ciphertext, refresh_token_ciphertext, scopes, expires_at, revoked_at)
-		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id) DO UPDATE SET access_token_ciphertext=EXCLUDED.access_token_ciphertext, refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext, scopes=EXCLUDED.scopes, expires_at=EXCLUDED.expires_at, revoked_at=EXCLUDED.revoked_at, updated_at=NOW()`, c.UserID, accessCiphertext, refreshCiphertext, c.Scopes, c.ExpiresAt, c.RevokedAt)
-	return err
-}
-
-func (p *Postgres) LoadSpotifyCredentials(ctx context.Context, userID string) (accessCiphertext, refreshCiphertext string, scopes []string, expiresAt time.Time, revokedAt *time.Time, err error) {
-	err = p.pool.QueryRow(ctx, `SELECT access_token_ciphertext, refresh_token_ciphertext, scopes, expires_at, revoked_at FROM spotify_connections WHERE user_id=$1`, userID).Scan(&accessCiphertext, &refreshCiphertext, &scopes, &expiresAt, &revokedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = domain.ErrNotFound
-	}
-	return
-}
-
-func (p *Postgres) RevokeSpotifyCredentials(ctx context.Context, userID string, at time.Time) error {
-	_, err := p.pool.Exec(ctx, `UPDATE spotify_connections SET revoked_at=$2, updated_at=NOW() WHERE user_id=$1`, userID, at)
-	return err
-}
-
-func (p *Postgres) UpdateSpotifyTokens(ctx context.Context, userID, accessCiphertext, refreshCiphertext string, expiresAt time.Time) error {
-	_, err := p.pool.Exec(ctx, `UPDATE spotify_connections SET access_token_ciphertext=$2, refresh_token_ciphertext=$3, expires_at=$4, revoked_at=NULL, updated_at=NOW() WHERE user_id=$1`, userID, accessCiphertext, refreshCiphertext, expiresAt)
-	return err
-}
-
-func (p *Postgres) ReplaceSpotifyTokensIfCurrent(ctx context.Context, userID, expectedRefreshCipher, accessCipher, refreshCipher string, expiresAt time.Time) (bool, error) {
-	tag, err := p.pool.Exec(ctx, `UPDATE spotify_connections
-		SET access_token_ciphertext=$3, refresh_token_ciphertext=$4, expires_at=$5, updated_at=NOW()
-		WHERE user_id=$1 AND refresh_token_ciphertext=$2 AND revoked_at IS NULL`, userID, expectedRefreshCipher, accessCipher, refreshCipher, expiresAt)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
-}
-
-func (p *Postgres) RevokeSpotifyCredentialsIfCurrent(ctx context.Context, userID, expectedRefreshCipher string, at time.Time) (bool, error) {
-	tag, err := p.pool.Exec(ctx, `UPDATE spotify_connections
-		SET revoked_at=$3, updated_at=NOW()
-		WHERE user_id=$1 AND refresh_token_ciphertext=$2 AND revoked_at IS NULL`, userID, expectedRefreshCipher, at)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
-}
-
-func (p *Postgres) DisconnectSpotify(ctx context.Context, userID string) error {
-	_, err := p.pool.Exec(ctx, `DELETE FROM spotify_connections WHERE user_id=$1`, userID)
-	return err
-}
 
 func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) error {
 	tag, err := p.pool.Exec(ctx, `

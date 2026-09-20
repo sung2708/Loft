@@ -75,7 +75,7 @@ To ensure architectural discipline, rapid iteration, and maintainability by a si
 | :--- | :--- | :--- |
 | **Media Transport** | Custom WebRTC SFU, Pion SFU rewrite, Janus, Mediasoup, Kurento | LiveKit is the dedicated, production-tested SFU infrastructure. |
 | **Media Streaming** | Video transcoding server, FFmpeg restreaming, RTMP ingestion, HLS/DASH packaging | Mingly synchronizes state, not bytes. Providers stream directly to clients. |
-| **Third-Party Media** | Spotify Web SDK, SoundCloud Widget, Vimeo, Twitch | Deferred to MVP 3. MVP 2 focuses exclusively on perfecting YouTube. |
+| **Third-Party Media** | SoundCloud Widget, Vimeo, Twitch, external music OAuth providers | Deferred. MVP 2 focuses exclusively on perfecting YouTube. |
 | **Message Brokers** | Apache Kafka, RabbitMQ, NATS JetStream, Apache Pulsar | Massive operational overhead. Redis Pub/Sub is sufficient for ephemeral fan-out. |
 | **Orchestration** | Kubernetes, Istio/Linkerd service mesh, Nomad clusters | Modular monolith deploys via lightweight Docker Compose / Nomad / fly.io. |
 | **Architecture Styles** | Microservices, CQRS, Event Sourcing, Saga orchestrators | Mingly uses a Go modular monolith with transactional PostgreSQL and Redis. |

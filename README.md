@@ -18,7 +18,7 @@ Mingly is a shared space to talk, watch, listen, and hang out with your people. 
 - Redis Pub/Sub fan-out, distributed admission/rate limits, and ephemeral presence leases
 - System/light/dark appearance, responsive Stage-first room UI
 
-MVP3 also includes persistent room access, host lifecycle/moderation, social reactions, and durable room appearance. Spotify/SoundCloud, recording, discovery, and billing remain out of scope.
+MVP3 also includes persistent room access, host lifecycle/moderation, social reactions, and durable room appearance. External music OAuth, recording, discovery, and billing remain out of scope.
 
 ## Architecture and authority
 
@@ -46,7 +46,7 @@ Requirements: Node 24+, pnpm 11+, Go 1.26+, Supabase project, and LiveKit Cloud 
 
 1. Copy `frontend/.env.example` to `frontend/.env.local` and set public values.
 2. Copy `backend/.env.example` to `backend/.env` and set server values. `go run ./cmd/server` loads this file when run from `backend`; exported shell variables take precedence.
-3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000011`) through Supabase SQL Editor or your migration runner.
+3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000012`) through Supabase SQL Editor or your migration runner.
 4. Start backend:
 
    ```powershell
@@ -138,7 +138,7 @@ Cloud credentials, Redis/LiveKit services, and browser device permissions are re
 - Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage falls back to bounded local behavior.
 - A room admits one active connection per verified identity. A same-tab reload replaces the previous socket; a different tab receives `DUPLICATE_SESSION`. Idle application connections expire after roughly 30 seconds without traffic, and room capacity is enforced locally and through Redis leases.
 - Authenticated invite holders may join; durable non-owner membership is reserved for later product rules.
-- Advanced moderation dashboards, Spotify/SoundCloud, recording, and discovery remain deferred. The current host can transfer realtime authority, lock admission, remove a participant, or apply a room-scoped one-hour temporary ban.
+- Advanced moderation dashboards, external music OAuth, recording, and discovery remain deferred. The current host can transfer realtime authority, lock admission, remove a participant, or apply a room-scoped one-hour temporary ban.
 - LiveKit and Supabase availability depend on configured external projects.
 - Social reactions use ❤️, 😂, 🔥, 👏, and 😭. Wave is room-level and ephemeral; Raise Hand is
   self-controlled and reconnect-aware. Automatic AFK is intentionally not inferred.
