@@ -634,19 +634,19 @@ export function MediaStage() {
   return (
     <div ref={stageRef} className="w-full h-full min-h-0 p-3 sm:p-6">
       {layout.mode === "screen-share" && screen ? (
-        <div className="w-full h-full min-h-0 flex flex-col gap-3">
-          <div className="flex-1 min-h-0 rounded-[6px] overflow-hidden bg-[#101113] shadow-2xl">
+        <div className="grid h-full min-h-0 w-full grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 lg:grid-cols-[minmax(0,1fr)_11rem] lg:grid-rows-1">
+          <div className="relative min-h-0 min-w-0 overflow-hidden rounded-[6px] bg-[#101113] shadow-2xl">
             <VideoTrack
               trackRef={screen}
-              className="w-full h-full object-contain"
+              className="h-full w-full object-cover"
             />
-          </div>
-          <div className="text-[11px] text-center text-[var(--text-loft-secondary)]">
-            {screen.participant.name || screen.participant.identity}{" "}
-            {tr("is sharing")}
+            <div className="absolute bottom-3 left-3 rounded-[5px] bg-[#101113]/80 px-2 py-1 text-[11px] text-white">
+              {screen.participant.name || screen.participant.identity}{" "}
+              {tr("is sharing")}
+            </div>
           </div>
           <div
-            className="flex-none min-h-20 overflow-x-auto flex gap-2 pb-1"
+            className="flex min-h-20 min-w-0 gap-2 overflow-x-auto pb-1 lg:min-h-0 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden"
             aria-label={tr("Room participants")}
           >
             {participants.map((participant) => {
