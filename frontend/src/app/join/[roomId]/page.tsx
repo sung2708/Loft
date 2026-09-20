@@ -102,6 +102,41 @@ export default function RoomJoinPage() {
     };
   }, []);
 
+  // Auto-admit authenticated users if access is already granted and no password/lock is required
+  useEffect(() => {
+    if (!room || !hasSession || room.password_required || room.is_locked) return;
+    let active = true;
+    void (async () => {
+      const session = (await getSupabase()?.auth.getSession())?.data.session;
+      if (!active || !session) return;
+      try {
+        const result = await api.requestRoomAccess(
+          session.access_token,
+          room.id,
+        );
+        if (
+          result.status === "approved" ||
+          result.status === "not_required"
+        ) {
+          const me = await api.me(session.access_token);
+          if (!active) return;
+          saveCredential(room.id, {
+            token: session.access_token,
+            type: "user",
+            roomId: room.id,
+            displayName: me.display_name,
+          });
+          router.replace(`/room/${encodeURIComponent(room.slug)}`);
+        }
+      } catch {
+        /* User can still interact manually if auto-admission fails */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [room, hasSession, router]);
+
   // Keep the waiting page live after a host approves the request. The same
   // endpoint is idempotent and reports `approved` once membership is created.
   useEffect(() => {

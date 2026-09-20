@@ -99,7 +99,9 @@ export const LobbyHeader: React.FC = () => {
       ? `${window.location.pathname}${window.location.search}`
       : pathname || "/";
   const authNext =
-    pathname && !pathname.startsWith("/auth/") ? currentPath : "/";
+    pathname && !pathname.startsWith("/auth/") && currentPath !== "/"
+      ? currentPath
+      : "/home";
   const navItems = [
     {
       label: isAuthenticated

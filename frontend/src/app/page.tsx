@@ -14,6 +14,7 @@ import { api } from "@/lib/api";
 import { normalizeRoomInput } from "@/lib/roomInput";
 import type { ApiRoom, ApiRoomPreview } from "@/types/api";
 import { EASE_ENTRANCE, EASE_SPATIAL } from "@/lib/motion";
+import { safeAuthDestination } from "@/lib/authRedirect";
 import {
   Link2,
   Terminal,
@@ -41,6 +42,16 @@ export default function LobbyPage() {
   const [deletingRoom, setDeletingRoom] = useState<ApiRoom | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // If already authenticated and arrival included a ?next= parameter, redirect immediately
+  useEffect(() => {
+    if (!isAuthLoading && isAuthenticated && typeof window !== "undefined") {
+      const queryNext = new URLSearchParams(window.location.search).get("next");
+      if (queryNext && queryNext !== "/") {
+        router.replace(safeAuthDestination(queryNext, "/home"));
+      }
+    }
+  }, [isAuthLoading, isAuthenticated, router]);
 
   // Fetch real owned/recent rooms when authenticated
   useEffect(() => {
@@ -75,6 +86,7 @@ export default function LobbyPage() {
     try {
       const { room } = await api.resolveRoom(normalized.value);
       setResolvedRoom(room);
+      router.push(`/room/${encodeURIComponent(room.slug)}`);
     } catch {
       setResolvedRoom(null);
       setError(t.lobby.roomNotFound);
@@ -84,10 +96,10 @@ export default function LobbyPage() {
   };
 
   const handleSignIn = () => {
-    let nextDestination = "/";
+    let nextDestination = "/home";
     if (typeof window !== "undefined") {
       const queryNext = new URLSearchParams(window.location.search).get("next");
-      if (queryNext) nextDestination = queryNext;
+      if (queryNext) nextDestination = safeAuthDestination(queryNext, "/home");
     }
     void signInWithGoogle(nextDestination);
   };

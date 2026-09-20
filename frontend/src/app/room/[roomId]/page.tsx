@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, loadCredential } from "@/lib/api";
+import { api, loadCredential, saveCredential } from "@/lib/api";
+import { getSupabase } from "@/lib/supabase/client";
 import { RoomSession } from "@/features/room/RoomSession";
 import type { RoomCredential } from "@/types/api";
 import { useUIText } from "@/lib/i18n/uiText";
@@ -15,9 +16,11 @@ export default function ActiveRoomPage() {
   const [credential, setCredential] = useState<RoomCredential | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    let active = true;
     void (async () => {
       try {
         const room = await api.room(identifier);
+        if (!active) return;
         if (room.slug && room.slug !== identifier) {
           router.replace(`/room/${encodeURIComponent(room.slug)}`);
           return;
@@ -27,14 +30,49 @@ export default function ActiveRoomPage() {
           setCredential(existing);
           return;
         }
-        // /join is the only place that obtains a new guest credential or
-        // checks account admission. It prevents deep links from bypassing the
-        // access-request UX and failing later inside a live room session.
+
+        // If user already has an authenticated account, attempt direct admission
+        const supabase = getSupabase();
+        const session = (await supabase?.auth.getSession())?.data.session;
+        if (!active) return;
+
+        if (session && !room.password_required && !room.is_locked) {
+          try {
+            const access = await api.requestRoomAccess(
+              session.access_token,
+              room.id,
+            );
+            if (
+              access.status === "approved" ||
+              access.status === "not_required"
+            ) {
+              const me = await api.me(session.access_token);
+              if (!active) return;
+              const cred: RoomCredential = {
+                token: session.access_token,
+                type: "user",
+                roomId: room.id,
+                displayName: me.display_name,
+              };
+              saveCredential(room.id, cred);
+              setCredential(cred);
+              return;
+            }
+          } catch {
+            // Fall through to /join
+          }
+        }
+
         router.replace(`/join/${encodeURIComponent(room.slug)}`);
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Room not found");
+        if (active) {
+          setError(caught instanceof Error ? caught.message : "Room not found");
+        }
       }
     })();
+    return () => {
+      active = false;
+    };
   }, [identifier, router]);
   if (error)
     return (

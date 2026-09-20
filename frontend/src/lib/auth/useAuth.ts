@@ -35,26 +35,39 @@ interface AuthStore {
   signInWithGoogle: (next?: string) => Promise<void>;
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
+let authSubscription: { unsubscribe: () => void } | null = null;
+let activeAuthSubscribers = 0;
+
+export const useAuthStore = create<AuthStore>((set, get) => ({
   authState: { status: "loading" },
   initialized: false,
 
   setAuthState: (authState) => set({ authState }),
 
   initializeAuth: () => {
+    activeAuthSubscribers += 1;
+    if (authSubscription) {
+      return () => {
+        activeAuthSubscribers -= 1;
+        if (activeAuthSubscribers <= 0 && authSubscription) {
+          authSubscription.unsubscribe();
+          authSubscription = null;
+        }
+      };
+    }
+
     const supabase = getSupabase();
     if (!supabase) {
       set({ authState: { status: "anonymous" }, initialized: true });
-      return () => {};
+      return () => {
+        activeAuthSubscribers -= 1;
+      };
     }
-
-    let isSubscribed = true;
 
     // 1. Initial Session Resolution
     void supabase.auth
       .getSession()
       .then(async ({ data: { session }, error }) => {
-        if (!isSubscribed) return;
         if (error || !session) {
           set({ authState: { status: "anonymous" }, initialized: true });
           return;
@@ -67,25 +80,21 @@ export const useAuthStore = create<AuthStore>((set) => ({
           // Fallback gracefully to Supabase user metadata
         }
 
-        if (isSubscribed) {
-          set({
-            authState: {
-              status: "authenticated",
-              user: session.user,
-              session,
-              identity,
-            },
-            initialized: true,
-          });
-        }
+        set({
+          authState: {
+            status: "authenticated",
+            user: session.user,
+            session,
+            identity,
+          },
+          initialized: true,
+        });
       });
 
     // 2. Auth State Change Listener
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!isSubscribed) return;
-
       if (event === "SIGNED_OUT" || !session) {
         if (typeof window !== "undefined") {
           window.sessionStorage.removeItem("loft.auth.next");
@@ -94,7 +103,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
           clearRoomCredentials();
         }
         useSpotifyStore.getState().reset();
-        set({ authState: { status: "anonymous" } });
+        set({ authState: { status: "anonymous" }, initialized: true });
         return;
       }
 
@@ -110,22 +119,26 @@ export const useAuthStore = create<AuthStore>((set) => ({
           // Keep usable even if custom identity fails
         }
 
-        if (isSubscribed) {
-          set({
-            authState: {
-              status: "authenticated",
-              user: session.user,
-              session,
-              identity,
-            },
-          });
-        }
+        set({
+          authState: {
+            status: "authenticated",
+            user: session.user,
+            session,
+            identity,
+          },
+          initialized: true,
+        });
       }
     });
 
+    authSubscription = subscription;
+
     return () => {
-      isSubscribed = false;
-      subscription.unsubscribe();
+      activeAuthSubscribers -= 1;
+      if (activeAuthSubscribers <= 0 && authSubscription) {
+        authSubscription.unsubscribe();
+        authSubscription = null;
+      }
     };
   },
 

@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { useChatStore } from "@/stores/useChatStore";
 import { useRoomStore } from "@/stores/useRoomStore";
@@ -42,7 +43,7 @@ import {
 import { SocialActions } from "@/components/room/SocialActions";
 import { RoomAtmosphere } from "./RoomAtmosphere";
 import { SettingsDrawer } from "./SettingsDrawer";
-import { api } from "@/lib/api";
+import { api, clearCredential } from "@/lib/api";
 import { useMobileDrawerFocus } from "./useMobileDrawerFocus";
 
 export function RoomView() {
@@ -159,9 +160,11 @@ function Stage() {
 }
 
 function RoomLoading() {
+  const router = useRouter();
   const tr = useUIText();
   const state = useRoomStore((item) => item.connectionState);
   const error = useRoomStore((item) => item.connectionError);
+  const roomId = useRoomStore((item) => item.room?.id);
   const terminalAdmissionFailure = Boolean(
     error &&
     /room is full|room is locked|you were removed|cannot rejoin/i.test(error),
@@ -179,8 +182,12 @@ function RoomLoading() {
         {state === "FAILED" && (
           <button
             onClick={() => {
-              if (terminalAdmissionFailure) window.location.replace("/");
-              else location.reload();
+              if (terminalAdmissionFailure) {
+                if (roomId) clearCredential(roomId);
+                router.replace("/");
+              } else {
+                location.reload();
+              }
             }}
             className="btn-press mt-4 rounded-[6px] bg-[#101113] px-4 py-2 text-[11px] text-white"
           >

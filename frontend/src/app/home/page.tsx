@@ -15,8 +15,8 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ApiError, api } from "@/lib/api";
-import { getSupabase } from "@/lib/supabase/client";
+import { ApiError, api, saveCredential } from "@/lib/api";
+import { useAuth } from "@/lib/auth/useAuth";
 import { useTranslation } from "@/lib/i18n/useTranslation";
 import type { ApiIdentity, ApiRoom } from "@/types/api";
 import { LobbyHeader } from "@/components/lobby/LobbyHeader";
@@ -77,7 +77,13 @@ export default function HomePage() {
   const tr = useUIText();
   const { locale, t } = useTranslation();
   const isVietnamese = locale === "vi";
-  const [, setIdentity] = useState<ApiIdentity | null>(null);
+  const {
+    isLoading: isAuthLoading,
+    isAuthenticated,
+    session,
+    identity: authIdentity,
+  } = useAuth();
+  const [identity, setIdentity] = useState<ApiIdentity | null>(null);
   const [rooms, setRooms] = useState<ApiRoom[]>([]);
   const [name, setName] = useState("");
   const [allowGuests, setAllowGuests] = useState(true);
@@ -90,26 +96,28 @@ export default function HomePage() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsRoom, setSettingsRoom] = useState<ApiRoom | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const createDialogRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
+    if (isAuthLoading) return;
+
+    if (!isAuthenticated || !session?.access_token) {
+      const target = typeof window !== "undefined"
+        ? `${window.location.pathname}${window.location.search}`
+        : "/home";
+      router.replace(`/?next=${encodeURIComponent(target)}`);
+      return;
+    }
+
     let active = true;
+    const token = session.access_token;
 
     void (async () => {
-      const session = (await getSupabase()?.auth.getSession())?.data.session;
-      if (!session) {
-        const target = `${window.location.pathname}${window.location.search}`;
-        window.location.replace(`/?next=${encodeURIComponent(target)}`);
-        return;
-      }
-
-      if (active) setAccessToken(session.access_token);
       try {
         const [me, list] = await Promise.all([
-          api.me(session.access_token),
-          api.rooms(session.access_token),
+          authIdentity ? Promise.resolve(authIdentity) : api.me(token),
+          api.rooms(token),
         ]);
         if (!active) return;
 
@@ -135,7 +143,7 @@ export default function HomePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [isAuthLoading, isAuthenticated, session?.access_token, authIdentity, router]);
 
   useEffect(() => {
     if (!creating) return;
@@ -175,19 +183,31 @@ export default function HomePage() {
     event.preventDefault();
     if (isSubmitting) return;
 
-    const session = (await getSupabase()?.auth.getSession())?.data.session;
-    if (!session) return;
+    const token = session?.access_token;
+    if (!token) return;
 
     setError(null);
     setIsSubmitting(true);
     try {
       const room = await api.createRoom(
-        session.access_token,
+        token,
         name,
         allowGuests,
         passwordEnabled,
         password,
       );
+      const hostDisplayName =
+        identity?.display_name ||
+        authIdentity?.display_name ||
+        session.user?.user_metadata?.name ||
+        session.user?.email?.split("@")[0] ||
+        "Host";
+      saveCredential(room.id, {
+        token,
+        type: "user",
+        roomId: room.id,
+        displayName: hostDisplayName,
+      });
       router.replace(`/room/${encodeURIComponent(room.slug)}`);
     } catch (caught) {
       setError(roomActionError(caught, "Could not create room"));
@@ -201,8 +221,8 @@ export default function HomePage() {
     setDeleting(true);
     setError(null);
     try {
-      const session = (await getSupabase()?.auth.getSession())?.data.session;
-      if (!session) {
+      const token = session?.access_token;
+      if (!token) {
         setError(
           isVietnamese
             ? "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
@@ -210,7 +230,7 @@ export default function HomePage() {
         );
         return;
       }
-      await api.deleteRoom(session.access_token, deletingRoom.id);
+      await api.deleteRoom(token, deletingRoom.id);
       setRooms((current) =>
         current.filter((room) => room.id !== deletingRoom.id),
       );
@@ -414,10 +434,10 @@ export default function HomePage() {
         }}
         onConfirm={() => void remove()}
       />
-      {settingsRoom && accessToken ? (
+      {settingsRoom && session?.access_token ? (
         <RoomSettings
           room={settingsRoom}
-          token={accessToken}
+          token={session.access_token}
           locale={locale}
           onCancel={() => setSettingsRoom(null)}
           onSaved={(updated) => {

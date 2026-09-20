@@ -139,12 +139,21 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         return currentCredential;
       },
       onState: (state, error) => {
-        if (
-          state === "FAILED" &&
-          error &&
-          (error.includes("removed") || error.includes("rejoin"))
-        ) {
-          playSfx("remove-from-room");
+        if (state === "FAILED") {
+          if (
+            error &&
+            (error.includes("removed") || error.includes("rejoin"))
+          ) {
+            playSfx("remove-from-room");
+          }
+          if (
+            error &&
+            /room is full|room is locked|you were removed|cannot rejoin|unauthorized/i.test(
+              error,
+            )
+          ) {
+            clearCredential(credential.roomId);
+          }
         }
         useRoomStore.getState().setConnectionState(state, error);
       },

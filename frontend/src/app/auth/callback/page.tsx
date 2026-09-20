@@ -45,9 +45,9 @@ export default function AuthCallbackPage() {
         return;
       }
       const storedNext = sessionStorage.getItem("loft.auth.next");
-      const destination = safeAuthDestination(storedNext, "/");
+      const destination = safeAuthDestination(storedNext, "/home");
       sessionStorage.removeItem("loft.auth.next");
-      router.replace(destination);
+      router.replace(destination === "/" ? "/home" : destination);
     })();
   }, [router]);
   return (
