@@ -9,11 +9,6 @@ import {
 } from "@/lib/supabase/client";
 import { safeAuthDestination } from "@/lib/authRedirect";
 import { api, clearRoomCredentials } from "@/lib/api";
-import {
-  SPOTIFY_OAUTH_ATTEMPT_KEY,
-  SPOTIFY_RETURN_TO_KEY,
-} from "@/lib/spotify/oauth";
-import { useSpotifyStore } from "@/stores/useSpotifyStore";
 import type { ApiIdentity } from "@/types/api";
 
 export type AuthState =
@@ -98,11 +93,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       if (event === "SIGNED_OUT" || !session) {
         if (typeof window !== "undefined") {
           window.sessionStorage.removeItem("loft.auth.next");
-          window.sessionStorage.removeItem(SPOTIFY_RETURN_TO_KEY);
-          window.sessionStorage.removeItem(SPOTIFY_OAUTH_ATTEMPT_KEY);
           clearRoomCredentials();
         }
-        useSpotifyStore.getState().reset();
         set({ authState: { status: "anonymous" }, initialized: true });
         return;
       }
@@ -153,11 +145,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem("loft.auth.next");
-      window.sessionStorage.removeItem(SPOTIFY_RETURN_TO_KEY);
-      window.sessionStorage.removeItem(SPOTIFY_OAUTH_ATTEMPT_KEY);
       clearRoomCredentials();
     }
-    useSpotifyStore.getState().reset();
     set({ authState: { status: "anonymous" } });
   },
 

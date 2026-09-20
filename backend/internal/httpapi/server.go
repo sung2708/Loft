@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -26,31 +25,21 @@ import (
 )
 
 type Server struct {
-	store         domain.Store
-	deletion      RoomDeletionGuard
-	users         *auth.SupabaseVerifier
-	guests        *auth.GuestTokens
-	livekit       *livekit.TokenService
-	lookupLimit   *ratelimit.Limiter
-	guestLimit    *ratelimit.Limiter
-	passwordLimit *ratelimit.Limiter
-	roomLimit     *ratelimit.Limiter
-	origins       map[string]struct{}
-	logger        *slog.Logger
-	metrics       *observability.Metrics
-	httpLogger    *zerolog.Logger
+	store            domain.Store
+	deletion         RoomDeletionGuard
+	users            *auth.SupabaseVerifier
+	guests           *auth.GuestTokens
+	livekit          *livekit.TokenService
+	lookupLimit      *ratelimit.Limiter
+	guestLimit       *ratelimit.Limiter
+	passwordLimit    *ratelimit.Limiter
+	roomLimit        *ratelimit.Limiter
+	youtubePickLimit *ratelimit.Limiter
+	origins          map[string]struct{}
+	logger           *slog.Logger
+	metrics          *observability.Metrics
+	httpLogger       *zerolog.Logger
 }
-
-// SpotifyOAuthStateStore coordinates short-lived OAuth transactions across
-// backend instances. Implementations must consume a state atomically.
-type SpotifyOAuthStateStore interface {
-	PutOAuthState(context.Context, string, []byte, time.Duration) error
-	ConsumeOAuthState(context.Context, string) ([]byte, bool, error)
-	GetUserOAuthEpoch(context.Context, string) (int64, error)
-	BumpUserOAuthEpoch(context.Context, string) (int64, error)
-}
-
-const spotifyStateCapacity = 1024
 
 type RoomDeletionGuard interface {
 	BeginDelete(roomID string) bool
@@ -101,7 +90,7 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		guard = deletion[0]
 	}
 	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
+		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
 // ConfigureObservability is called once during process bootstrap before routes
@@ -121,8 +110,7 @@ func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
 	s.guestLimit.SetDistributed("guest_session", remote)
 	s.passwordLimit.SetDistributed("room_password", remote)
 	s.roomLimit.SetDistributed("room_create", remote)
-	s.spotifyConnectLimit.SetDistributed("spotify_oauth", remote)
-	s.spotifySearchLimit.SetDistributed("spotify_search", remote)
+	s.youtubePickLimit.SetDistributed("youtube_picks", remote)
 }
 
 func (s *Server) Routes(ws http.Handler) http.Handler {
@@ -253,25 +241,6 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Ping(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Database is unavailable")
 		return
-	}
-	if os.Getenv("SPOTIFY_ENABLED") == "true" {
-		s.spotifyMu.Lock()
-		stateStore := s.spotifyStateStore
-		s.spotifyMu.Unlock()
-		pinger, ok := stateStore.(interface {
-			Ping(context.Context) error
-		})
-		if !ok {
-			writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Spotify OAuth state is unavailable")
-			return
-		}
-		redisCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		err := pinger.Ping(redisCtx)
-		cancel()
-		if err != nil {
-			writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Spotify OAuth state is unavailable")
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }

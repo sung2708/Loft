@@ -26,11 +26,7 @@ const copies: LegalPageCopies = {
       { title: "Using the service", paragraphs: ["Use Mingly only for lawful purposes, respect other people, and comply with the terms of connected services such as Google, YouTube, and LiveKit."] },
       { title: "Rooms and moderation", paragraphs: ["Room hosts are responsible for the people they invite and for guest access, passwords, room locks, and moderation actions. Hosts can invite, remove, or block participants through the permissions provided in the app."] },
       { title: "Prohibited conduct", paragraphs: ["Do not use Mingly to harass, defraud, invade privacy, distribute unlawful content, or attempt unauthorized access to a room, account, or system.", "You are responsible for having the rights needed for content, links, or media you share. Do not copy, extract, download, restream, or bypass limitations of third-party content services."] },
-<<<<<<< HEAD
       { title: "Embedded content and third-party services", paragraphs: ["YouTube has its own terms. When you use this feature, you agree to comply with its applicable terms. Mingly does not own YouTube content and may limit the feature when required by the provider or for security."] },
-=======
-      { title: "Embedded content and third-party services", paragraphs: ["YouTube has its own terms. When you use the embedded player, you agree to comply with YouTube's applicable terms. Mingly does not own that content and may limit the feature when required by the provider or for security."] },
->>>>>>> f14779a85777caf55db9d838b0154860a4ef55ce
       { title: "Accounts, safety, and enforcement", paragraphs: ["You are responsible for activity on your account and in your rooms. Do not share sign-in credentials or attempt to bypass permission limits. We may suspend, limit, or end access where there is a security risk, a violation, or a valid legal requirement."] },
       { title: "Service changes", paragraphs: ["Mingly may update, limit, or discontinue a feature for security, maintenance, or service improvement. Updated terms will be published on this page."] },
     ],
