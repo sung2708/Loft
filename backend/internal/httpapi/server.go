@@ -33,6 +33,7 @@ type Server struct {
 	lookupLimit      *ratelimit.Limiter
 	guestLimit       *ratelimit.Limiter
 	passwordLimit    *ratelimit.Limiter
+	boardLimit       *ratelimit.Limiter
 	roomLimit        *ratelimit.Limiter
 	youtubePickLimit *ratelimit.Limiter
 	origins          map[string]struct{}
@@ -90,7 +91,7 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		guard = deletion[0]
 	}
 	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
+		boardLimit: ratelimit.New(20, time.Second, 20), lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
 // ConfigureObservability is called once during process bootstrap before routes
@@ -111,6 +112,7 @@ func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
 	s.passwordLimit.SetDistributed("room_password", remote)
 	s.roomLimit.SetDistributed("room_create", remote)
 	s.youtubePickLimit.SetDistributed("youtube_picks", remote)
+	s.boardLimit.SetDistributed("board_write", remote)
 }
 
 func (s *Server) Routes(ws http.Handler) http.Handler {
@@ -146,6 +148,8 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Get("/readyz", s.ready)
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Get("/youtube/search", s.youtubeSearch)
+			r.Get("/rooms/{roomID}/whiteboard", s.whiteboard)
+			r.Patch("/rooms/{roomID}/whiteboard", s.whiteboard)
 			r.Get("/rooms/{roomID}/youtube/picks", s.listYouTubePicks)
 			r.Post("/rooms/{roomID}/youtube/picks", s.createYouTubePick)
 			r.Post("/rooms/{roomID}/youtube/picks/vote", s.voteYouTubePick)
@@ -164,6 +168,7 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 			r.Get("/rooms", s.listRooms)
 			r.Post("/rooms", s.createRoom)
 			r.Delete("/rooms/{roomID}", s.deleteRoom)
+			r.Post("/rooms/{roomID}/end", s.endRoom)
 		})
 	})
 	return r
@@ -181,6 +186,9 @@ func (s *Server) deleteRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room, err := s.store.GetRoom(r.Context(), roomID)
+	if errors.Is(err, domain.ErrRoomEnded) {
+		err = nil
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
 		return
@@ -223,6 +231,10 @@ func (s *Server) resolveRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room, err := s.store.GetRoom(r.Context(), identifier)
+	if errors.Is(err, domain.ErrRoomEnded) {
+		writeError(w, http.StatusGone, "ROOM_ENDED", "This room has ended")
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
 		return
@@ -251,6 +263,10 @@ func (s *Server) getRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrRoomEnded) {
+		writeError(w, http.StatusGone, "ROOM_ENDED", "This room has ended")
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
 		return
@@ -268,6 +284,10 @@ func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrRoomEnded) {
+		writeError(w, http.StatusGone, "ROOM_ENDED", "This room has ended")
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
 		return
@@ -326,6 +346,10 @@ func (s *Server) updateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrRoomEnded) {
+		writeError(w, http.StatusGone, "ROOM_ENDED", "This room has ended")
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "This room isn't available.")
 		return
@@ -456,6 +480,10 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrRoomEnded) {
+		writeError(w, http.StatusGone, "ROOM_ENDED", "This room has ended")
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
 		return
@@ -478,6 +506,10 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) liveKitToken(w http.ResponseWriter, r *http.Request) {
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrRoomEnded) {
+		writeError(w, http.StatusGone, "ROOM_ENDED", "This room has ended")
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
 		return
@@ -562,6 +594,10 @@ func (s *Server) requestJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
+	if errors.Is(err, domain.ErrRoomEnded) {
+		writeError(w, http.StatusGone, "ROOM_ENDED", "This room has ended")
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "ROOM_NOT_FOUND", "Room not found")
 		return
@@ -661,7 +697,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		if _, ok := s.origins[origin]; ok {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Guest-Token")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Guest-Token, If-None-Match")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {

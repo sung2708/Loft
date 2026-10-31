@@ -32,6 +32,7 @@ interface AuthStore {
 
 let authSubscription: { unsubscribe: () => void } | null = null;
 let activeAuthSubscribers = 0;
+let authRevision = 0;
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
   authState: { status: "loading" },
@@ -60,9 +61,11 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
 
     // 1. Initial Session Resolution
+    const initialRevision = ++authRevision;
     void supabase.auth
       .getSession()
       .then(async ({ data: { session }, error }) => {
+        if (initialRevision !== authRevision) return;
         if (error || !session) {
           set({ authState: { status: "anonymous" }, initialized: true });
           return;
@@ -75,6 +78,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           // Fallback gracefully to Supabase user metadata
         }
 
+        if (initialRevision !== authRevision) return;
         set({
           authState: {
             status: "authenticated",
@@ -91,7 +95,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT" || !session) {
-        if (typeof window !== "undefined") {
+        authRevision += 1;
+        if (event === "SIGNED_OUT" && typeof window !== "undefined") {
           window.sessionStorage.removeItem("loft.auth.next");
           clearRoomCredentials();
         }
@@ -104,6 +109,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         event === "TOKEN_REFRESHED" ||
         event === "USER_UPDATED"
       ) {
+        const revision = ++authRevision;
         let identity: ApiIdentity | null = null;
         try {
           identity = await api.me(session.access_token);
@@ -111,6 +117,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           // Keep usable even if custom identity fails
         }
 
+        if (revision !== authRevision) return;
         set({
           authState: {
             status: "authenticated",

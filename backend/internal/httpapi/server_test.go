@@ -195,8 +195,8 @@ func TestPrivateRoomRequiresHostApproval(t *testing.T) {
 	const ownerID = "4ff036f8-834c-4cb5-9097-30710442e19e"
 	const requesterID = "5ff036f8-834c-4cb5-9097-30710442e19e"
 	store := &membershipStore{
-		fakeStore: &fakeStore{room: domain.Room{ID: roomID, OwnerID: ownerID, AllowGuests: false}},
-		members:   map[string]bool{ownerID: true}, requests: make(map[string]domain.JoinRequest),
+		fakeStore: &fakeStore{room: domain.Room{ID: roomID, OwnerID: ownerID, AllowGuests: false, PasswordRequired: true, PasswordVerifier: "private-verifier"}},
+		members:   map[string]bool{}, requests: make(map[string]domain.JoinRequest),
 	}
 	server := New(store, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	handler := server.Routes(http.NotFoundHandler())
@@ -214,6 +214,10 @@ func TestPrivateRoomRequiresHostApproval(t *testing.T) {
 		result := httptest.NewRecorder()
 		handler.ServeHTTP(result, req)
 		return result
+	}
+
+	if result := call(http.MethodGet, "/api/v1/rooms/"+roomID+"/messages", token(ownerID), nil); result.Code != http.StatusOK {
+		t.Fatalf("owner needed password or approval: %d %s", result.Code, result.Body.String())
 	}
 
 	if result := call(http.MethodGet, "/api/v1/rooms/"+roomID+"/messages", token(requesterID), nil); result.Code != http.StatusUnauthorized {

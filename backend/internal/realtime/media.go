@@ -79,7 +79,7 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		return errInvalidMedia
 	}
 	if kind == "queue.add" {
-		if !domain.CanManageQueue(room, actor) {
+		if !domain.CanAddToQueue(room, actor) {
 			return errMediaDenied
 		}
 		id, err := parseYouTubeID(command.URL)
@@ -115,7 +115,7 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		return nil
 	}
 	if kind == "media.play_now" {
-		if !domain.CanManageQueue(room, actor) {
+		if !domain.CanControlMedia(room, actor) {
 			return errMediaDenied
 		}
 		id, err := parseYouTubeID(command.URL)
@@ -142,6 +142,22 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		m.Version++
 		return nil
 	}
+	if kind == "media.duration" {
+		if !domain.CanControlMedia(room, actor) {
+			return errMediaDenied
+		}
+		if command.DurationSec < 1 || command.DurationSec > 24*60*60 {
+			return errInvalidMedia
+		}
+		// Player metadata may arrive after the room has already switched tracks.
+		if m.Current == nil || command.VideoID != m.Current.VideoID || command.ExpectedVersion != m.Version || m.Current.DurationSec == command.DurationSec {
+			return nil
+		}
+		m.Current.DurationSec = command.DurationSec
+		m.Version++
+		return nil
+	}
+
 	if kind == "media.ended" {
 		if !domain.CanControlMedia(room, actor) {
 			return errMediaDenied
@@ -192,6 +208,13 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		return errMediaStale
 	}
 	switch kind {
+	case "media.restart":
+		if m.Current == nil {
+			return errInvalidMedia
+		}
+		m.PositionMs = 0
+		m.StartedAt = now
+		m.Status = "PLAYING"
 	case "media.play":
 		if m.Current == nil {
 			return errInvalidMedia
@@ -217,11 +240,6 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 		if m.Status == "PLAYING" {
 			m.StartedAt = now
 		}
-	case "media.duration":
-		if m.Current == nil || command.VideoID != m.Current.VideoID || command.DurationSec < 1 || command.DurationSec > 24*60*60 {
-			return errInvalidMedia
-		}
-		m.Current.DurationSec = command.DurationSec
 	case "media.repeat":
 		m.Repeat = command.Repeat
 	case "media.autoplay.set":

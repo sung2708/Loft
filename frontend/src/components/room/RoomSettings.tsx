@@ -187,14 +187,14 @@ export function RoomSettings({
         {/* Modal Header */}
         <div className="h-14 px-6 flex items-center justify-between border-b border-[var(--border-loft)] shrink-0 bg-[var(--bg-loft-surface)]/60">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-[6px] bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-[10px] bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center">
               <Sliders className="w-4 h-4" />
             </div>
             <div>
-              <h2 id="room-settings-title" className="text-[11px] font-medium leading-none text-[var(--text-loft-primary)]">
+              <h2 id="room-settings-title" className="text-[13px] font-medium leading-none text-[var(--text-loft-primary)]">
                 {vi ? "Cài đặt phòng" : "Room settings"}
               </h2>
-              <p className="text-[11px] text-[var(--text-loft-muted)] mt-1 truncate max-w-[240px]">
+              <p className="text-[13px] text-[var(--text-loft-muted)] mt-1 truncate max-w-[240px]">
                 {room.name}
               </p>
             </div>
@@ -213,12 +213,12 @@ export function RoomSettings({
         {/* Modal Body */}
         <div className="p-6 space-y-5 overflow-y-auto">
           {/* Room Name Card */}
-          <div className="p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-2">
+          <div className="p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-[11px] font-medium text-[var(--text-loft-secondary)]">
+              <label className="text-[13px] font-medium text-[var(--text-loft-secondary)]">
                 {vi ? "Tên phòng" : "Room name"}
               </label>
-              <span className="text-[11px] font-mono text-[var(--text-loft-muted)]">
+              <span className="text-[13px] font-mono text-[var(--text-loft-muted)]">
                 {name.length}/80
               </span>
             </div>
@@ -230,17 +230,17 @@ export function RoomSettings({
               required
               disabled={pending}
               placeholder={vi ? "Nhập tên phòng..." : "Enter room name..."}
-              className="w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-2 text-[11px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20 disabled:opacity-50"
+              className="w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-2 text-[13px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20 disabled:opacity-50"
             />
           </div>
 
           {/* Access & Guests */}
-          <div className="flex items-center justify-between gap-3 p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
+          <div className="flex items-center justify-between gap-3 p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
             <div className="min-w-0 pr-2">
-              <div className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+              <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                 {vi ? "Cho phép khách vào" : "Allow guests"}
               </div>
-              <div className="text-[11px] text-[var(--text-loft-muted)] mt-1">
+              <div className="text-[13px] text-[var(--text-loft-muted)] mt-1">
                 {vi
                   ? "Khách vãng lai có thể tham gia mà không cần tài khoản"
                   : "Guests can join without an account"}
@@ -255,17 +255,17 @@ export function RoomSettings({
           </div>
 
           {/* Password Protection */}
-          <div className="p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-3">
+          <div className="p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-7 h-7 rounded-[6px] bg-[#26282c]/10 flex items-center justify-center text-[var(--text-loft-secondary)]">
+                <div className="w-7 h-7 rounded-[10px] bg-[#26282c]/10 flex items-center justify-center text-[var(--text-loft-secondary)]">
                   <Lock className="w-3.5 h-3.5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+                  <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                     {vi ? "Yêu cầu mật khẩu" : "Require password"}
                   </div>
-                  <div className="text-[11px] text-[var(--text-loft-muted)]">
+                  <div className="text-[13px] text-[var(--text-loft-muted)]">
                     {passwordEnabled
                       ? vi
                         ? "Phòng đang được bảo vệ bởi mật khẩu"
@@ -286,7 +286,7 @@ export function RoomSettings({
 
             {passwordEnabled && (
               <div className="relative pt-2 border-t border-[var(--border-loft)]">
-                <label className="block text-[11px] font-medium text-[var(--text-loft-secondary)] mb-1">
+                <label className="block text-[13px] font-medium text-[var(--text-loft-secondary)] mb-1">
                   {room.password_required
                     ? vi
                       ? "Mật khẩu mới (để trống nếu không đổi)"
@@ -314,7 +314,7 @@ export function RoomSettings({
                           : "Enter password (min 4 chars)..."
                     }
                     aria-label={vi ? "Mật khẩu mới" : "New password"}
-                    className="w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 pr-10 text-[11px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20"
+                    className="w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 pr-10 text-[13px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20"
                   />
                   <button
                     type="button"
@@ -330,21 +330,21 @@ export function RoomSettings({
           </div>
 
           {/* Lock Room */}
-          <div className="flex items-center justify-between gap-3 p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
+          <div className="flex items-center justify-between gap-3 p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
             <div className="flex items-center gap-3 min-w-0 pr-2">
-              <div className="w-7 h-7 rounded-[6px] bg-[#26282c]/10 text-[var(--text-loft-secondary)] flex items-center justify-center shrink-0">
+              <div className="w-7 h-7 rounded-[10px] bg-[#26282c]/10 text-[var(--text-loft-secondary)] flex items-center justify-center shrink-0">
                 <Shield className="w-3.5 h-3.5" />
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] font-medium text-[var(--text-loft-primary)] flex items-center gap-2">
+                <div className="text-[13px] font-medium text-[var(--text-loft-primary)] flex items-center gap-2">
                   <span>{vi ? "Khóa phòng với người mới" : "Lock room for new arrivals"}</span>
                   {locked && (
-                    <span className="px-2 py-1 rounded-[6px] bg-[#26282c]/15 text-[var(--text-loft-secondary)] dark:text-[var(--text-loft-secondary)] text-[11px] font-medium">
+                    <span className="px-2 py-1 rounded-[10px] bg-[#26282c]/15 text-[var(--text-loft-secondary)] dark:text-[var(--text-loft-secondary)] text-[13px] font-medium">
                       {vi ? "Đã khóa" : "Locked"}
                     </span>
                   )}
                 </div>
-                <div className="text-[11px] text-[var(--text-loft-muted)] mt-1">
+                <div className="text-[13px] text-[var(--text-loft-muted)] mt-1">
                   {vi
                     ? "Chỉ những người đang trong phòng mới tiếp tục tham gia"
                     : "Block new arrivals while current participants remain"}
@@ -362,12 +362,12 @@ export function RoomSettings({
           {/* Atmosphere & Theme (Host only) */}
           {isHost && (
             <fieldset
-              className="p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-4"
+              className="p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-4"
               aria-label={vi ? "Không khí phòng" : "Room atmosphere"}
             >
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-[var(--text-loft-primary)]" />
-                <legend className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
+                <legend className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
                   {vi ? "Không khí phòng" : "Room atmosphere"}
                 </legend>
               </div>
@@ -415,7 +415,7 @@ export function RoomSettings({
                       aria-checked={isSelected}
                       disabled={pending}
                       onClick={() => setAtmosphere(id)}
-                      className={`rounded-[6px] border p-3 text-left transition-all duration-200 cursor-pointer ${
+                      className={`rounded-[10px] border p-3 text-left transition-all duration-200 cursor-pointer ${
                         isSelected
                           ? "border-[var(--border-loft)] bg-[#101113]/10 text-[var(--text-loft-primary)] shadow-sm ring-1 ring-[var(--accent-blue)]/40"
                           : "border-[var(--border-loft)] bg-[var(--bg-loft-card)] hover-invert hover:bg-[var(--border-loft-light)] text-[var(--text-loft-secondary)]"
@@ -423,7 +423,7 @@ export function RoomSettings({
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div
-                          className={`w-6 h-6 rounded-[6px] flex items-center justify-center ${
+                          className={`w-6 h-6 rounded-[10px] flex items-center justify-center ${
                             isSelected
                               ? "bg-[#101113] text-white"
                               : "bg-[var(--border-loft)] text-[var(--bg-loft-base)]"
@@ -437,10 +437,10 @@ export function RoomSettings({
                           </div>
                         )}
                       </div>
-                      <div className="text-[11px] font-medium capitalize text-[var(--text-loft-primary)]">
+                      <div className="text-[13px] font-medium capitalize text-[var(--text-loft-primary)]">
                         {id}
                       </div>
-                      <div className="text-[11px] text-[var(--text-loft-muted)] mt-1">
+                      <div className="text-[13px] text-[var(--text-loft-muted)] mt-1">
                         {vi ? descVi : descEn}
                       </div>
                     </button>
@@ -451,10 +451,10 @@ export function RoomSettings({
               {/* Accent Color Picker */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-medium text-[var(--text-loft-secondary)]">
+                  <div className="text-[13px] font-medium text-[var(--text-loft-secondary)]">
                     {vi ? "Màu chủ đạo" : "Accent color"}
                   </div>
-                  <span className="text-[11px] font-medium capitalize text-[var(--text-loft-primary)]">
+                  <span className="text-[13px] font-medium capitalize text-[var(--text-loft-primary)]">
                     {accent}
                   </span>
                 </div>
@@ -488,7 +488,7 @@ export function RoomSettings({
               <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--border-loft)]">
                 <div className="flex items-center gap-2 min-w-0 pr-2">
                   <Music className="w-3.5 h-3.5 text-[var(--text-loft-muted)]" />
-                  <span className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+                  <span className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                     {vi ? "Tự điều chỉnh theo media đang phát" : "Adapt to shared media"}
                   </span>
                 </div>
@@ -503,16 +503,16 @@ export function RoomSettings({
           )}
 
           {/* Sound & SFX Section */}
-          <fieldset className="p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-4">
+          <fieldset className="p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-4">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-[var(--text-loft-muted)]" />
-              <legend className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
+              <legend className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
                 {vi ? "Âm thanh" : "Sounds"}
               </legend>
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+              <span className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                 {vi ? "Hiệu ứng âm thanh" : "Sound effects"}
               </span>
               <Switch
@@ -524,7 +524,7 @@ export function RoomSettings({
             </div>
 
             <div className="flex items-center justify-between pt-3 border-t border-[var(--border-loft)]">
-              <span className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+              <span className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                 {vi ? "Âm thanh trong phòng" : "Room sounds"}
               </span>
               <Switch
@@ -536,11 +536,11 @@ export function RoomSettings({
             </div>
 
             <div className="pt-3 border-t border-[var(--border-loft)] space-y-2">
-              <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center justify-between text-[13px]">
                 <span className="text-[var(--text-loft-secondary)] font-medium">
                   {vi ? "Âm lượng hiệu ứng" : "Effects volume"}
                 </span>
-                <span className="font-medium text-[var(--text-loft-primary)] px-2 py-1 rounded-[6px] bg-[var(--border-loft-light)] text-[11px]">
+                <span className="font-medium text-[var(--text-loft-primary)] px-2 py-1 rounded-[10px] bg-[var(--border-loft-light)] text-[13px]">
                   {sfxVolume}%
                 </span>
               </div>
@@ -558,7 +558,7 @@ export function RoomSettings({
 
           {/* Feedback error */}
           {error && (
-            <p role="alert" className="p-4 rounded-[6px] bg-[#101113]/10 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[11px] leading-relaxed">
+            <p role="alert" className="p-4 rounded-[10px] bg-[#101113]/10 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[13px] leading-relaxed">
               {error}
             </p>
           )}
@@ -570,14 +570,14 @@ export function RoomSettings({
             type="button"
             onClick={onCancel}
             disabled={pending}
-            className="px-4 py-2 rounded-[6px] border border-[var(--border-loft)] text-[11px] font-medium hover-invert hover:bg-[var(--border-loft-light)] transition-colors disabled:opacity-50 cursor-pointer text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)]"
+            className="px-4 py-2 rounded-[10px] border border-[var(--border-loft)] text-[13px] font-medium hover-invert hover:bg-[var(--border-loft-light)] transition-colors disabled:opacity-50 cursor-pointer text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)]"
           >
             {vi ? "Hủy" : "Cancel"}
           </button>
           <button
             type="submit"
             disabled={pending}
-            className="px-5 py-2 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white text-[11px] font-medium flex items-center gap-2 transition-all disabled:opacity-50 shadow-md shadow-[#101113]/20 active:scale-97 cursor-pointer"
+            className="px-5 py-2 rounded-[10px] bg-[#101113] hover:bg-[#101113] text-white text-[13px] font-medium flex items-center gap-2 transition-all disabled:opacity-50 shadow-md shadow-[#101113]/20 active:scale-97 cursor-pointer"
           >
             {pending ? (
               <>

@@ -57,7 +57,7 @@ func TestDeleteRoomPermission(t *testing.T) {
 
 func TestMediaControlPermission(t *testing.T) {
 	room := Room{ID: "room-1", OwnerID: "owner", AllowGuests: true}
-	if !CanControlMedia(room, Identity{Type: IdentityUser, ID: "owner"}) {
+	if !CanControlMedia(room, Identity{Type: IdentityUser, ID: "owner"}) || !CanManageQueue(room, Identity{Type: IdentityUser, ID: "owner"}) || !CanAddToQueue(room, Identity{Type: IdentityUser, ID: "owner"}) {
 		t.Fatal("owner cannot control media")
 	}
 	for _, identity := range []Identity{
@@ -67,8 +67,11 @@ func TestMediaControlPermission(t *testing.T) {
 		if CanControlMedia(room, identity) {
 			t.Fatalf("non-host controlled media: %+v", identity)
 		}
-		if !CanManageQueue(room, identity) {
-			t.Fatalf("joined participant cannot manage queue: %+v", identity)
+		if CanManageQueue(room, identity) {
+			t.Fatalf("participant can manage queue: %+v", identity)
+		}
+		if !CanAddToQueue(room, identity) {
+			t.Fatalf("participant cannot add: %+v", identity)
 		}
 	}
 }

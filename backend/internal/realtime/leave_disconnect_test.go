@@ -88,10 +88,10 @@ func TestNormalLeave(t *testing.T) {
 
 	// Verify Alice is completely removed from room state
 	hub.mu.RLock()
-	clients := hub.rooms[room.ID].clients
+	clientCount := len(hub.rooms[room.ID].clients)
 	hub.mu.RUnlock()
-	if len(clients) != 1 {
-		t.Fatalf("expected 1 remaining client in room, got %d", len(clients))
+	if clientCount != 1 {
+		t.Fatalf("expected 1 remaining client in room, got %d", clientCount)
 	}
 }
 
@@ -153,10 +153,10 @@ func TestDisconnectWithGracePeriodExpiry(t *testing.T) {
 
 	// Alice should now be removed from room state
 	hub.mu.RLock()
-	clients := hub.rooms[room.ID].clients
+	clientCount := len(hub.rooms[room.ID].clients)
 	hub.mu.RUnlock()
-	if len(clients) != 1 {
-		t.Fatalf("expected 1 remaining client, got %d", len(clients))
+	if clientCount != 1 {
+		t.Fatalf("expected 1 remaining client, got %d", clientCount)
 	}
 }
 

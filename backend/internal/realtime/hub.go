@@ -148,21 +148,25 @@ type client struct {
 }
 
 type roomState struct {
-	clients        map[string]*client
-	media          mediaState
-	picks          []youtubeRoomPick
-	room           domain.Room
-	evict          *time.Timer
-	mediaTimer     *time.Timer
-	reactionTimes  []time.Time
-	kicked         map[string]struct{}
-	temporaryBans  map[string]time.Time
-	mediaOwner     bool
-	host           domain.HostAuthority
-	hostFailedOver bool
+	ended            bool
+	clients          map[string]*client
+	mediaCommands    chan struct{}
+	pendingSelection *pendingMediaSelection
+	media            mediaState
+	picks            []youtubeRoomPick
+	room             domain.Room
+	evict            *time.Timer
+	mediaTimer       *time.Timer
+	reactionTimes    []time.Time
+	kicked           map[string]struct{}
+	temporaryBans    map[string]time.Time
+	mediaOwner       bool
+	host             domain.HostAuthority
+	hostFailedOver   bool
 }
 
 type Hub struct {
+	boardLimit            *ratelimit.Limiter
 	closing               bool
 	handlers              sync.WaitGroup
 	cancels               map[string]context.CancelFunc
@@ -226,7 +230,7 @@ func New(store domain.Store, guests *auth.GuestTokens, users *auth.SupabaseVerif
 	for _, origin := range origins {
 		allowed[origin] = struct{}{}
 	}
-	return &Hub{
+	return &Hub{boardLimit: ratelimit.New(15, time.Second, 15),
 		cancels:               make(map[string]context.CancelFunc),
 		idleTimeout:           30 * time.Second,
 		disconnectGracePeriod: 15 * time.Second,
@@ -349,11 +353,10 @@ func (h *Hub) ensureMediaAuthority(ctx context.Context, roomID string) error {
 	}
 	owner, _, err := authority.MediaOwner(ctx, roomID)
 	if err != nil {
-		// A Redis outage keeps this node usable as a single-node room. A later
-		// successful lease check fences the writer before cross-node publish.
+		// A configured coordinator must confirm ownership before any mutation.
 		h.mu.Lock()
 		if state := h.rooms[roomID]; state != nil {
-			state.mediaOwner = true
+			state.mediaOwner = false
 		}
 		h.mu.Unlock()
 		return err
@@ -371,6 +374,7 @@ func (h *Hub) ensureMediaAuthority(ctx context.Context, roomID string) error {
 			state.media = loaded
 		}
 		current = state.media.snapshot()
+		h.scheduleMediaEnd(roomID, state)
 	}
 	h.mu.Unlock()
 	if owner && !exists {
@@ -386,13 +390,16 @@ func (h *Hub) publishMediaState(ctx context.Context, roomID string, previous uin
 	h.mu.RUnlock()
 	if authority, ok := bus.(mediaAuthority); ok {
 		commitCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
-		err := authority.CommitMedia(commitCtx, roomID, previous, media, data)
-		cancel()
-		if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
-			return err
+		owner, _, err := authority.MediaOwner(commitCtx, roomID)
+		if err == nil && !owner {
+			err = ErrMediaOwnerLost
 		}
+		if err == nil {
+			err = authority.CommitMedia(commitCtx, roomID, previous, media, data)
+		}
+		cancel()
 		if err != nil {
-			h.logger.Warn("redis media commit failed; local state continues", "room_id", roomID, "error", err)
+			return err
 		}
 	} else if bus != nil {
 		publishCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
@@ -404,46 +411,206 @@ func (h *Hub) publishMediaState(ctx context.Context, roomID string, previous uin
 			h.logger.Warn("room event publish failed; local state continues", "room_id", roomID, "error", err)
 		}
 	}
+	// Expose only a committed transition to snapshots and local clients.
+	h.mu.Lock()
+	if state := h.rooms[roomID]; state != nil && state.media.Version <= media.Version {
+		state.media = media.snapshot()
+		h.scheduleMediaEnd(roomID, state)
+	}
+	h.mu.Unlock()
 	h.broadcasts.Add(1)
 	h.broadcastLocal(roomID, data, "")
 	return nil
 }
 
-// rollbackMediaState undoes an optimistic local mutation only when no later
-// command has advanced the room. This keeps a fenced or stale Redis write from
-// leaking an uncommitted snapshot to subsequent commands.
-func (h *Hub) rollbackMediaState(roomID string, expectedVersion uint64, previous mediaState) {
-	h.mu.Lock()
-	if state := h.rooms[roomID]; state != nil && state.media.Version == expectedVersion {
-		state.media = previous
-		h.scheduleMediaEnd(roomID, state)
+// Caller holds h.mu; selection belongs to the same media version transition.
+func (state *roomState) promoteAutoplay(now time.Time) *youtubeRoomPick {
+	if state.media.Current != nil || !state.media.Autoplay || len(state.picks) == 0 {
+		return nil
 	}
+	best := 0
+	for i := 1; i < len(state.picks); i++ {
+		if state.picks[i].Votes > state.picks[best].Votes || (state.picks[i].Votes == state.picks[best].Votes && state.picks[i].ID < state.picks[best].ID) {
+			best = i
+		}
+	}
+	pick := state.picks[best]
+	state.picks = append(state.picks[:best], state.picks[best+1:]...)
+	state.media.Current = &youtubeTrack{ID: uuid.NewString(), VideoID: pick.VideoID, Title: pick.Title, Channel: pick.Channel, AddedBy: "Suggested"}
+	state.media.Status = "PLAYING"
+	state.media.PositionMs = 0
+	state.media.StartedAt = now
+	return &pick
+}
+
+// Persist and announce only committed selections, outside the room mutex.
+func (h *Hub) finishMediaEffects(ctx context.Context, roomID, kind, actorID string, media mediaState, pick *youtubeRoomPick) error {
+	workCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var settings *store.YouTubeMediaSettings
+	if kind == "media.autoplay.set" {
+		settings = &store.YouTubeMediaSettings{RoomID: roomID, AutoplayEnabled: media.Autoplay, UpdatedBy: actorID}
+	}
+	pickID := ""
+	if pick != nil {
+		pickID = pick.ID
+	}
+	if settings != nil || pick != nil {
+		repo, ok := h.store.(interface {
+			CommitYouTubeSelection(context.Context, string, *store.YouTubeMediaSettings, string) error
+		})
+		if !ok {
+			return errors.New("music persistence unavailable")
+		}
+		if err := repo.CommitYouTubeSelection(workCtx, roomID, settings, pickID); err != nil {
+			return err
+		}
+	}
+	h.announceCommittedPick(roomID, pick)
+	return nil
+}
+
+func (h *Hub) announceCommittedPick(roomID string, pick *youtubeRoomPick) {
+	if pick != nil {
+		h.mu.Lock()
+		if state := h.rooms[roomID]; state != nil {
+			for i := range state.picks {
+				if state.picks[i].ID == pick.ID {
+					state.picks = append(state.picks[:i], state.picks[i+1:]...)
+					break
+				}
+			}
+		}
+		h.mu.Unlock()
+		h.broadcast(roomID, event("youtube.pick.promoted", roomID, *pick), "")
+	}
+}
+
+// Recover from the current authority without replaying a rejected command.
+func (h *Hub) recoverMediaAuthority(ctx context.Context, roomID string) {
+	recoveryCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := h.ensureMediaAuthority(recoveryCtx, roomID); err != nil {
+		h.logger.Warn("media authority recovery failed", "room_id", roomID, "error", err)
+		return
+	}
+	h.mu.RLock()
+	state := h.rooms[roomID]
+	var media mediaState
+	if state != nil {
+		media = state.media.snapshot()
+	}
+	h.mu.RUnlock()
+	if state != nil {
+		h.broadcastLocal(roomID, event("media.state", roomID, media), "")
+	}
+}
+
+// One in-flight media transition per room, including its durable side effects.
+func (h *Hub) acquireMediaCommand(ctx context.Context, roomID string) (func(), error) {
+	h.mu.Lock()
+	state := h.rooms[roomID]
+	if state == nil {
+		h.mu.Unlock()
+		return nil, errMediaDenied
+	}
+	if state.mediaCommands == nil {
+		state.mediaCommands = make(chan struct{}, 1)
+	}
+	gate := state.mediaCommands
 	h.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// A persistence failure restores the selection without rewinding the version clients saw.
+func (h *Hub) undoMediaEffects(ctx context.Context, roomID string, media, previous mediaState) error {
+	h.mu.RLock()
+	state := h.rooms[roomID]
+	current := state != nil && state.media.Version == media.Version
+	h.mu.RUnlock()
+	if !current {
+		return nil
+	}
+	restored := previous.snapshot()
+	restored.Version = media.Version + 1
+	if restored.Current != nil && restored.Current.DurationSec > 0 && restored.Status == "PLAYING" && time.Since(restored.StartedAt)+time.Duration(restored.PositionMs)*time.Millisecond >= time.Duration(restored.Current.DurationSec)*time.Second {
+		restored.Status = "PAUSED"
+		restored.PositionMs = restored.Current.DurationSec * 1000
+	}
+	if err := h.publishMediaState(ctx, roomID, media.Version, restored); err != nil {
+		h.logger.Error("media compensation failed", "room_id", roomID, "error", err)
+		h.recoverMediaAuthority(ctx, roomID)
+		return err
+	}
+	return nil
 }
 
 func (h *Hub) handleForwardedMedia(ctx context.Context, request mediaRPCRequest) mediaRPCResponse {
-	h.mu.Lock()
-	state := h.rooms[request.RoomID]
-	if state == nil {
-		h.mu.Unlock()
-		return mediaRPCResponse{RequestID: request.RequestID, Error: errMediaDenied.Error()}
-	}
-	previousState := state.media.snapshot()
-	previous := state.media.Version
-	err := state.media.applyMedia(request.Kind, request.Payload, state.room, request.Actor, time.Now().UTC())
-	media := state.media.snapshot()
-	if err == nil {
-		h.scheduleMediaEnd(request.RoomID, state)
-	}
-	h.mu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	release, err := h.acquireMediaCommand(ctx, request.RoomID)
 	if err != nil {
 		return mediaRPCResponse{RequestID: request.RequestID, Error: err.Error()}
 	}
-	if err := h.publishMediaState(ctx, request.RoomID, previous, media); err != nil {
-		if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
-			h.rollbackMediaState(request.RoomID, media.Version, previousState)
+	defer release()
+	if err := h.resolvePendingMedia(ctx, request.RoomID); err != nil {
+		return mediaRPCResponse{RequestID: request.RequestID, Error: store.ErrSelectionCommitPending.Error()}
+	}
+	h.mu.Lock()
+	state := h.rooms[request.RoomID]
+	if state == nil || state.ended {
+		h.mu.Unlock()
+		return mediaRPCResponse{RequestID: request.RequestID, Error: errMediaDenied.Error()}
+	}
+	state = &roomState{room: state.room, media: state.media.snapshot(), picks: append([]youtubeRoomPick(nil), state.picks...)}
+	previousState := state.media.snapshot()
+	previous := state.media.Version
+	var promoted *youtubeRoomPick
+	kind, payload := request.Kind, request.Payload
+	if kind == "youtube.pick.promote" {
+		var command youtubePickCommand
+		if json.Unmarshal(payload, &command) != nil || !domain.CanPromoteRoomPick(state.room, request.Actor) {
+			h.mu.Unlock()
+			return mediaRPCResponse{RequestID: request.RequestID, Error: errMediaDenied.Error()}
 		}
+		for i := range state.picks {
+			if state.picks[i].ID == command.PickID {
+				pick := state.picks[i]
+				promoted = &pick
+				break
+			}
+		}
+		if promoted == nil {
+			h.mu.Unlock()
+			return mediaRPCResponse{RequestID: request.RequestID, Error: "Pick not found"}
+		}
+		kind = "media.play_now"
+		payload, _ = json.Marshal(mediaCommand{URL: "https://www.youtube.com/watch?v=" + promoted.VideoID, Title: promoted.Title, Channel: promoted.Channel})
+	}
+	err = state.media.applyMedia(kind, payload, state.room, request.Actor, time.Now().UTC())
+	if err == nil && state.media.Version != previous && promoted == nil {
+		promoted = state.promoteAutoplay(time.Now().UTC())
+	}
+	media := state.media.snapshot()
+	h.mu.Unlock()
+	if err != nil {
+		h.logger.Warn("media command rejected", "room_id", request.RoomID, "kind", request.Kind, "error", err)
 		return mediaRPCResponse{RequestID: request.RequestID, Error: err.Error()}
+	}
+	if media.Version == previous {
+		return mediaRPCResponse{RequestID: request.RequestID}
+	}
+	if err := h.publishMediaState(ctx, request.RoomID, previous, media); err != nil {
+		h.recoverMediaAuthority(ctx, request.RoomID)
+		return mediaRPCResponse{RequestID: request.RequestID, Error: err.Error()}
+	}
+	if err := h.finishMediaEffects(ctx, request.RoomID, request.Kind, request.Actor.ID, media, promoted); err != nil {
+		return mediaRPCResponse{RequestID: request.RequestID, Error: h.failedMediaEffects(ctx, request.RoomID, media, previousState, promoted, err).Error()}
 	}
 	return mediaRPCResponse{RequestID: request.RequestID}
 }
@@ -542,6 +709,10 @@ func (h *Hub) hostAuthority(roomID string) domain.HostAuthority {
 func (h *Hub) CanIssueMediaToken(ctx context.Context, roomID string, identity domain.Identity) (bool, error) {
 	h.mu.RLock()
 	state := h.rooms[roomID]
+	if state != nil && state.ended {
+		h.mu.RUnlock()
+		return false, nil
+	}
 	if state != nil {
 		if _, banned := state.kicked[identity.LiveKitIdentity()]; banned {
 			h.mu.RUnlock()
@@ -577,6 +748,12 @@ func (h *Hub) PrometheusMetrics() string {
 // DeliverRemote is called by Redis after origin filtering. It reconciles the
 // replicated media snapshot before local fan-out, and never republishes it.
 func (h *Hub) DeliverRemote(roomID string, data []byte) {
+	var terminal Envelope
+	if json.Unmarshal(data, &terminal) == nil && terminal.Type == "room.ended" {
+		h.endRoomLocal(roomID)
+		return
+	}
+
 	var envelope Envelope
 	if json.Unmarshal(data, &envelope) == nil && envelope.Type == "participant.hand_changed" {
 		var incoming handChangedPayload
@@ -793,6 +970,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	identity, room, tabSessionID, err := h.authenticate(ctx, conn)
 	if err != nil {
+		if errors.Is(err, domain.ErrRoomEnded) {
+			writeCtx, stop := context.WithTimeout(ctx, time.Second)
+			_ = conn.Write(writeCtx, websocket.MessageText, event("room.ended", room.ID, struct{}{}))
+			stop()
+		}
 		if errors.Is(err, domain.ErrBanned) {
 			writeCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 			_ = conn.Write(writeCtx, websocket.MessageText, event("error", room.ID, errorPayload{"ROOM_KICKED", "Removed from room by host"}))
@@ -969,6 +1151,9 @@ func (h *Hub) authenticate(ctx context.Context, conn *websocket.Conn) (domain.Id
 		return domain.Identity{}, domain.Room{}, "", err
 	}
 	room, err := h.store.GetRoom(authCtx, payload.RoomID)
+	if errors.Is(err, domain.ErrRoomEnded) {
+		return identity, room, "", domain.ErrRoomEnded
+	}
 	if err != nil || !domain.CanJoin(room, identity) {
 		return domain.Identity{}, domain.Room{}, "", domain.ErrUnauthorized
 	}
@@ -1014,6 +1199,16 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			h.mu.Unlock()
 			_ = c.conn.Close(websocket.StatusNormalClosure, "left room")
 			return nil
+		case "board.cursor":
+			var cursor boardCursor
+			if json.Unmarshal(envelope.Payload, &cursor) != nil || !validBoardCursor(cursor) {
+				continue
+			}
+			if !h.boardLimit.AllowContext(ctx, c.roomID+":"+c.id) {
+				continue
+			}
+			h.broadcast(c.roomID, event("board.cursor", c.roomID, boardPresence{boardCursor: cursor, ConnectionID: c.id, Name: c.participant.DisplayName}), c.id)
+
 		case "room.lock":
 			var payload roomLockPayload
 			if json.Unmarshal(envelope.Payload, &payload) != nil || payload.ExpectedVersion < 0 {
@@ -1302,6 +1497,14 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				cancel()
 			}
 		case "connection.ping":
+			checkCtx, stop := context.WithTimeout(ctx, 750*time.Millisecond)
+			_, roomErr := h.store.GetRoom(checkCtx, c.roomID)
+			stop()
+			if errors.Is(roomErr, domain.ErrRoomEnded) {
+				h.endRoomLocal(c.roomID)
+				return nil
+			}
+
 			var ping pingPayload
 			_ = json.Unmarshal(envelope.Payload, &ping)
 			h.enqueue(c, event("connection.pong", c.roomID, pongPayload{ping.ClientTime, time.Now().UnixMilli()}))
@@ -1400,7 +1603,7 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 			h.mu.Unlock()
 			h.refreshPresence(ctx, c)
 			h.broadcast(c.roomID, changed, "")
-		case "youtube.pick.create", "youtube.pick.vote", "youtube.pick.promote":
+		case "youtube.pick.create", "youtube.pick.vote":
 			requireVideo := envelope.Type == "youtube.pick.create"
 			cmd, err := validateYouTubePickCommand(envelope.Payload, requireVideo)
 			if err != nil {
@@ -1574,88 +1777,8 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 					h.broadcast(c.roomID, event("youtube.pick.voted", c.roomID, votedPick), "")
 				}
 
-			case "youtube.pick.promote":
-				h.mu.Lock()
-				state := h.rooms[c.roomID]
-				if state == nil {
-					h.mu.Unlock()
-					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Room unavailable")
-					continue
-				}
-				if !domain.CanPromoteRoomPick(state.room, c.identity) {
-					h.mu.Unlock()
-					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Permission denied")
-					continue
-				}
-				var pickToPromote youtubeRoomPick
-				for _, p := range state.picks {
-					if p.ID == cmd.PickID {
-						pickToPromote = p
-						break
-					}
-				}
-				if pickToPromote.ID == "" {
-					h.mu.Unlock()
-					h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
-					continue
-				}
-				h.mu.Unlock()
-
-				var persistErr error
-				if repo, ok := h.store.(interface {
-					PromoteRoomPick(context.Context, string, string) error
-				}); ok {
-					dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-					persistErr = repo.PromoteRoomPick(dbCtx, c.roomID, pickToPromote.ID)
-					cancel()
-				}
-				if persistErr != nil {
-					if errors.Is(persistErr, domain.ErrNotFound) {
-						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Pick not found")
-					} else {
-						h.sendError(c, "YOUTUBE_PICK_REJECTED", "Could not promote room pick")
-					}
-					continue
-				}
-
-				h.mu.Lock()
-				state = h.rooms[c.roomID]
-				var promoted youtubeRoomPick
-				var media mediaState
-				var previous uint64
-				var previousState mediaState
-				if state != nil {
-					for i := range state.picks {
-						if state.picks[i].ID == pickToPromote.ID {
-							promoted = state.picks[i]
-							state.picks = append(state.picks[:i], state.picks[i+1:]...)
-							break
-						}
-					}
-					if promoted.ID == "" {
-						promoted = pickToPromote
-					}
-					raw, _ := json.Marshal(mediaCommand{URL: "https://www.youtube.com/watch?v=" + promoted.VideoID, Title: promoted.Title, Channel: promoted.Channel})
-					previous = state.media.Version
-					previousState = state.media.snapshot()
-					_ = state.media.applyMedia("media.play_now", raw, state.room, c.identity, time.Now().UTC())
-					media = state.media.snapshot()
-					h.scheduleMediaEnd(c.roomID, state)
-				}
-				h.mu.Unlock()
-
-				if promoted.ID != "" {
-					h.broadcast(c.roomID, event("youtube.pick.promoted", c.roomID, promoted), "")
-				}
-				if media.Version > 0 {
-					if err := h.publishMediaState(ctx, c.roomID, previous, media); err != nil {
-						if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
-							h.rollbackMediaState(c.roomID, media.Version, previousState)
-						}
-					}
-				}
 			}
-		case "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play_now", "media.play", "media.pause", "media.seek", "media.duration", "media.repeat", "media.autoplay.set", "media.unavailable", "media.ended":
+		case "youtube.pick.promote", "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play_now", "media.play", "media.restart", "media.pause", "media.seek", "media.duration", "media.repeat", "media.autoplay.set", "media.unavailable", "media.ended":
 			key := c.roomID + ":" + c.identity.LiveKitIdentity()
 			limiter := h.mediaLimit
 			if envelope.Type == "queue.add" || envelope.Type == "queue.remove" || envelope.Type == "queue.clear" || envelope.Type == "queue.shuffle" || envelope.Type == "queue.reorder" {
@@ -1672,102 +1795,20 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 					forwardErr := authority.ForwardMedia(forwardCtx, ownerID, c.roomID, envelope.Type, envelope.Payload, c.identity)
 					cancel()
 					if forwardErr != nil {
-						// The authority bus is coordination only. If forwarding is
-						// temporarily unavailable, continue through the local room
-						// state instead of making media controls unusable.
-						h.logger.Warn("media forward unavailable; applying locally", "room_id", c.roomID, "error", forwardErr)
-					} else {
-						continue
+						h.sendError(c, "MEDIA_COMMAND_REJECTED", forwardErr.Error())
 					}
+					continue
 				}
 				if ownerErr != nil {
-					h.logger.Warn("media owner lease unavailable; local state continues", "room_id", c.roomID, "error", ownerErr)
+					h.sendError(c, "MEDIA_COMMAND_REJECTED", "Music controls are temporarily unavailable")
+					continue
 				}
 			}
-			h.mu.Lock()
-			state := h.rooms[c.roomID]
-			var applyErr error
-			var media mediaState
-			var previous uint64
-			var previousState mediaState
-			var promotedAutoplayPick *youtubeRoomPick
-			if state == nil {
-				applyErr = errMediaDenied
-			} else {
-				previousState = state.media.snapshot()
-				previous = state.media.Version
-				applyErr = state.media.applyMedia(envelope.Type, envelope.Payload, state.room, c.identity, time.Now().UTC())
-				if applyErr == nil {
-					if state.media.Current == nil && state.media.Autoplay && len(state.picks) > 0 {
-						best := 0
-						for i := 1; i < len(state.picks); i++ {
-							if state.picks[i].Votes > state.picks[best].Votes || (state.picks[i].Votes == state.picks[best].Votes && state.picks[i].ID < state.picks[best].ID) {
-								best = i
-							}
-						}
-						p := state.picks[best]
-						promotedAutoplayPick = &p
-						state.picks = append(state.picks[:best], state.picks[best+1:]...)
-						state.media.Current = &youtubeTrack{ID: uuid.NewString(), VideoID: p.VideoID, Title: p.Title, Channel: p.Channel, AddedBy: "Suggested"}
-						state.media.Status = "PLAYING"
-						state.media.PositionMs = 0
-						state.media.StartedAt = time.Now().UTC()
-						state.media.Version++
-					}
-					media = state.media.snapshot()
-					h.scheduleMediaEnd(c.roomID, state)
-				}
+			response := h.handleForwardedMedia(ctx, mediaRPCRequest{RoomID: c.roomID, Kind: envelope.Type, Payload: envelope.Payload, Actor: c.identity})
+			if response.Error != "" {
+				h.sendError(c, "MEDIA_COMMAND_REJECTED", response.Error)
 			}
-			h.mu.Unlock()
-			if applyErr != nil {
-				h.sendError(c, "MEDIA_COMMAND_REJECTED", applyErr.Error())
-				continue
-			}
-			if envelope.Type == "media.autoplay.set" {
-				if repo, ok := h.store.(interface {
-					SetAutoplay(context.Context, store.YouTubeMediaSettings) error
-				}); ok {
-					go func(roomID string, enabled bool, userID string) {
-						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-						defer cancel()
-						_ = repo.SetAutoplay(ctx, store.YouTubeMediaSettings{RoomID: roomID, AutoplayEnabled: enabled, UpdatedBy: userID})
-					}(c.roomID, media.Autoplay, c.identity.ID)
-				}
-			}
-			if promotedAutoplayPick != nil {
-				h.broadcast(c.roomID, event("youtube.pick.promoted", c.roomID, *promotedAutoplayPick), "")
-				if repo, ok := h.store.(interface {
-					PromoteRoomPick(context.Context, string, string) error
-				}); ok {
-					go func(rID, id string) {
-						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-						defer cancel()
-						_ = repo.PromoteRoomPick(ctx, rID, id)
-					}(c.roomID, promotedAutoplayPick.ID)
-				}
-			}
-			if err := h.publishMediaState(ctx, c.roomID, previous, media); err != nil {
-				if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
-					h.rollbackMediaState(c.roomID, media.Version, previousState)
-					if promotedAutoplayPick != nil {
-						h.mu.Lock()
-						if s := h.rooms[c.roomID]; s != nil {
-							hasPick := false
-							for _, ep := range s.picks {
-								if ep.ID == promotedAutoplayPick.ID {
-									hasPick = true
-									break
-								}
-							}
-							if !hasPick {
-								s.picks = append([]youtubeRoomPick{*promotedAutoplayPick}, s.picks...)
-							}
-						}
-						h.mu.Unlock()
-					}
-				}
-				h.sendError(c, "MEDIA_COMMAND_REJECTED", "Media authority changed; retry")
-			}
+
 		default:
 			h.sendError(c, "UNKNOWN_EVENT", "Unsupported event type")
 		}
@@ -1992,6 +2033,11 @@ func (h *Hub) add(c *client, room domain.Room) ([]domain.Participant, mediaState
 		state.hostFailedOver = state.host.State == "failed-over"
 		h.rooms[c.roomID] = state
 	}
+	if state.ended {
+		c.joinError = "ROOM_ENDED"
+		return nil, mediaState{}, false
+	}
+
 	if room.Version > state.room.Version {
 		state.room = room
 	}
@@ -2099,6 +2145,27 @@ func (h *Hub) scheduleMediaEnd(roomID string, state *roomState) {
 		state.mediaTimer.Stop()
 		state.mediaTimer = nil
 	}
+	if state.ended {
+		return
+	}
+	if state.pendingSelection != nil {
+		state.mediaTimer = time.AfterFunc(2*time.Second, func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			release, err := h.acquireMediaCommand(ctx, roomID)
+			if err != nil {
+				return
+			}
+			defer release()
+			h.mu.RLock()
+			active := !h.closing && h.rooms[roomID] == state
+			h.mu.RUnlock()
+			if active {
+				_ = h.resolvePendingMedia(ctx, roomID)
+			}
+		})
+		return
+	}
 	m := state.media
 	if m.Current == nil || m.Status != "PLAYING" || m.Current.DurationSec <= 0 {
 		return
@@ -2109,11 +2176,21 @@ func (h *Hub) scheduleMediaEnd(roomID string, state *roomState) {
 	}
 	version := m.Version
 	state.mediaTimer = time.AfterFunc(remaining, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		release, err := h.acquireMediaCommand(ctx, roomID)
+		if err != nil {
+			return
+		}
+		defer release()
+		if err := h.resolvePendingMedia(ctx, roomID); err != nil {
+			return
+		}
 		if authority, ok := h.mediaAuthorityForRoom(roomID); ok {
 			checkCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			owner, _, err := authority.MediaOwner(checkCtx, roomID)
 			cancel()
-			if err == nil && !owner {
+			if err != nil || !owner {
 				h.mu.Lock()
 				if h.rooms[roomID] == state {
 					state.mediaOwner = false
@@ -2135,67 +2212,27 @@ func (h *Hub) scheduleMediaEnd(roomID string, state *roomState) {
 			return
 		}
 		previousState := state.media.snapshot()
-		if !state.media.finish(time.Now()) {
+		working := &roomState{media: previousState.snapshot(), picks: append([]youtubeRoomPick(nil), state.picks...)}
+		if !working.media.finish(time.Now()) {
 			h.scheduleMediaEnd(roomID, state)
 			h.mu.Unlock()
 			return
 		}
-		var promotedAutoplayPick *youtubeRoomPick
-		if state.media.Current == nil && state.media.Autoplay && len(state.picks) > 0 {
-			best := 0
-			for i := 1; i < len(state.picks); i++ {
-				if state.picks[i].Votes > state.picks[best].Votes || (state.picks[i].Votes == state.picks[best].Votes && state.picks[i].ID < state.picks[best].ID) {
-					best = i
-				}
-			}
-			pick := state.picks[best]
-			promotedAutoplayPick = &pick
-			state.picks = append(state.picks[:best], state.picks[best+1:]...)
-			state.media.Current = &youtubeTrack{ID: uuid.NewString(), VideoID: pick.VideoID, Title: pick.Title, Channel: pick.Channel, AddedBy: "Suggested"}
-			state.media.Status = "PLAYING"
-			state.media.PositionMs = 0
-			state.media.StartedAt = time.Now().UTC()
-		}
-		media := state.media.snapshot()
-		previous := media.Version - 1
-		h.scheduleMediaEnd(roomID, state)
+		promotedAutoplayPick := working.promoteAutoplay(time.Now().UTC())
+		media := working.media.snapshot()
+		previous := previousState.Version
 		h.mu.Unlock()
 
-		if promotedAutoplayPick != nil {
-			h.broadcast(roomID, event("youtube.pick.promoted", roomID, *promotedAutoplayPick), "")
-			if repo, ok := h.store.(interface {
-				PromoteRoomPick(context.Context, string, string) error
-			}); ok {
-				go func(rID, id string) {
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					defer cancel()
-					_ = repo.PromoteRoomPick(ctx, rID, id)
-				}(roomID, promotedAutoplayPick.ID)
-			}
+		if err := h.publishMediaState(context.Background(), roomID, previous, media); err != nil {
+			h.recoverMediaAuthority(ctx, roomID)
+			h.logger.Warn("media progression publish rejected", "room_id", roomID, "error", err)
+			return
+		}
+		if err := h.finishMediaEffects(ctx, roomID, "media.ended", "", media, promotedAutoplayPick); err != nil {
+			h.failedMediaEffects(ctx, roomID, media, previousState, promotedAutoplayPick, err)
+			h.logger.Error("persist media progression failed", "room_id", roomID, "error", err)
 		}
 
-		if err := h.publishMediaState(context.Background(), roomID, previous, media); err != nil {
-			if errors.Is(err, ErrMediaOwnerLost) || errors.Is(err, ErrMediaVersionChanged) {
-				h.rollbackMediaState(roomID, media.Version, previousState)
-				if promotedAutoplayPick != nil {
-					h.mu.Lock()
-					if s := h.rooms[roomID]; s != nil {
-						hasPick := false
-						for _, ep := range s.picks {
-							if ep.ID == promotedAutoplayPick.ID {
-								hasPick = true
-								break
-							}
-						}
-						if !hasPick {
-							s.picks = append([]youtubeRoomPick{*promotedAutoplayPick}, s.picks...)
-						}
-					}
-					h.mu.Unlock()
-				}
-			}
-			h.logger.Warn("media progression publish rejected", "room_id", roomID, "error", err)
-		}
 	})
 }
 

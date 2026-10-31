@@ -29,6 +29,7 @@ import { useRouter } from "next/navigation";
 import { LIVEKIT_URL } from "@/lib/config";
 import { RoomSocket } from "@/lib/realtime";
 import { useRoomStore } from "@/stores/useRoomStore";
+import { useBoardStore } from "@/stores/useBoardStore";
 import { useChatStore } from "@/stores/useChatStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useMusicStore } from "@/stores/useMusicStore";
@@ -157,7 +158,14 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         useRoomStore.getState().setConnectionState(state, error);
       },
       onEvent: (event) => {
-        if (event.type === "room.snapshot") {
+        if(event.type === "room.ended") {
+          setLiveKitToken(null);
+          clearCredential(credential.roomId);
+          router.replace(`/join/${encodeURIComponent(credential.roomId)}`);
+        }
+        else if (event.type === "board.changed") { useBoardStore.getState().changed(event.payload.version); }
+        else if (event.type === "board.cursor") { useBoardStore.getState().cursor(event.payload); }
+        else if (event.type === "room.snapshot") {
           useRoomStore.getState().applySnapshot(event.payload);
           useChatStore.getState().replace(event.payload.messages);
           useMusicStore.getState().replaceMedia(event.payload.media);
@@ -273,8 +281,9 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
       useYouTubePicksStore.getState().reset();
       useReactionStore.getState().reset();
       enteredRoom.current = false;
+      useBoardStore.getState().reset();
     };
-  }, [credential]);
+  }, [credential, router]);
 
   useEffect(() => {
     if (activeDrawer === "chat") useChatStore.getState().clearUnread();
@@ -632,23 +641,27 @@ export function MediaStage() {
     stageSize.height,
   );
   return (
-    <div ref={stageRef} className="w-full h-full min-h-0 p-3 sm:p-6">
+    <div ref={stageRef} className={`w-full h-full min-h-0 ${screen ? "p-1 sm:p-2" : "p-3 sm:p-6"}`}>
       {layout.mode === "screen-share" && screen ? (
-        <div className="grid h-full min-h-0 w-full grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-3 lg:grid-cols-[minmax(0,1fr)_11rem] lg:grid-rows-1">
-          <div className="relative min-h-0 min-w-0 overflow-hidden rounded-[6px] bg-[#101113] shadow-2xl">
+        <div data-testid="screen-share-stage" className="grid h-full min-h-0 min-w-0 w-full grid-cols-1 grid-rows-[minmax(0,1fr)_88px] gap-2 sm:grid-rows-[minmax(0,1fr)_104px] sm:gap-3">
+          <div data-testid="screen-share-viewport" className="relative min-h-0 min-w-0 overflow-hidden rounded-[10px] bg-[#101113] shadow-2xl">
             <VideoTrack
               trackRef={screen}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
+              style={{ objectFit: "contain" }}
             />
-            <div className="absolute bottom-3 left-3 rounded-[5px] bg-[#101113]/80 px-2 py-1 text-[11px] text-white">
+            <div className="absolute bottom-3 left-3 rounded-[5px] bg-[#101113]/80 px-2 py-1 text-[13px] text-white">
               {screen.participant.name || screen.participant.identity}{" "}
               {tr("is sharing")}
             </div>
           </div>
           <div
-            className="flex min-h-20 min-w-0 gap-2 overflow-x-auto pb-1 lg:min-h-0 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden"
+            className="min-h-0 min-w-0 overflow-x-auto overflow-y-hidden rounded-[10px] pb-1"
+            role="region"
+            tabIndex={0}
             aria-label={tr("Room participants")}
           >
+            <div className="mx-auto flex h-full w-max min-w-full items-center justify-center gap-2 px-1">
             {participants.map((participant) => {
               const camera = cameraFor(participant.livekit_identity);
               return (
@@ -665,6 +678,7 @@ export function MediaStage() {
                 />
               );
             })}
+            </div>
           </div>
         </div>
       ) : layout.mode === "empty" ? (
@@ -726,11 +740,11 @@ function ParticipantMediaTile({
     <motion.div
       layout
       transition={{ duration: 0.2 }}
-      className={`${compact ? "w-32 h-20 shrink-0" : "w-full h-full min-w-0 min-h-0"} rounded-[6px] overflow-hidden bg-[var(--bg-loft-card)] shadow-lg relative border-2 transition-shadow duration-200 ${speaking ? "border-[var(--border-loft)] speaking-glow" : "border-transparent"}`}
+      className={`${compact ? "w-28 h-16 shrink-0 sm:w-36 sm:h-20" : "w-full h-full min-w-0 min-h-0"} rounded-[10px] overflow-hidden bg-[var(--bg-loft-card)] shadow-lg relative border-2 transition-shadow duration-200 ${speaking ? "border-[var(--border-loft)] speaking-glow" : "border-transparent"}`}
     >
       {raisedHand && (
         <span
-          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-[#101113]/90 px-2 py-1 text-[11px] font-medium text-white shadow"
+          className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-[#101113]/90 px-2 py-1 text-[13px] font-medium text-white shadow"
           aria-label={tr("Hand raised")}
           title={tr("Hand raised")}
         >
@@ -744,7 +758,7 @@ function ParticipantMediaTile({
           className={`w-full h-full object-cover ${isFrontCameraSelfView(camera) ? "-scale-x-100" : ""}`}
         />
       ) : (
-        <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-[#101113]/10">
+        <div className={`w-full h-full flex flex-col items-center bg-[#101113]/10 ${compact ? "justify-start gap-0 pt-1 sm:pt-2" : "justify-center gap-3"}`}>
           {avatarUrl && !avatarFailed ? (
             <img
               src={avatarUrl}
@@ -767,21 +781,21 @@ function ParticipantMediaTile({
               }}
               onError={() => setAvatarFailed(true)}
               style={{
-                width: compact ? Math.min(48, avatarSize) : avatarSize,
-                height: compact ? Math.min(48, avatarSize) : avatarSize,
+                width: compact ? Math.min(32, avatarSize) : avatarSize,
+                height: compact ? Math.min(32, avatarSize) : avatarSize,
               }}
               className="max-w-[40%] max-h-[65%] rounded-full object-cover shrink-0"
             />
           ) : (
             <span
-              className={`${compact ? "w-10 h-10 text-[11px]" : solo ? "w-24 h-24 text-[11px]" : "w-16 h-16 text-[11px]"} rounded-full bg-[#101113]/20 text-[var(--text-loft-primary)] flex items-center justify-center font-medium shrink-0`}
+              className={`${compact ? "w-8 h-8 text-[13px]" : solo ? "w-24 h-24 text-[13px]" : "w-16 h-16 text-[13px]"} rounded-full bg-[#101113]/20 text-[var(--text-loft-primary)] flex items-center justify-center font-medium shrink-0`}
             >
               {name.slice(0, 1).toUpperCase()}
             </span>
           )}
           {solo && (
             <div className="text-center min-w-0 px-3">
-              <div className="font-medium text-[11px] truncate flex items-center justify-center gap-2">
+              <div className="font-medium text-[13px] truncate flex items-center justify-center gap-2">
                 <span>{name}</span>
                 {muted && (
                   <span title={tr("Muted")} className="inline-flex">
@@ -789,7 +803,7 @@ function ParticipantMediaTile({
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-[var(--text-loft-secondary)] mt-1">
+              <div className="text-[13px] text-[var(--text-loft-secondary)] mt-1">
                 {tr("Camera off")}
               </div>
             </div>
@@ -797,7 +811,7 @@ function ParticipantMediaTile({
         </div>
       )}
       {(!solo || camera) && (
-        <div className="absolute left-2 bottom-2 max-w-[calc(100%-1rem)] flex items-center gap-2 px-2 py-1 rounded-[6px] bg-[#101113]/60 backdrop-blur-xs text-white text-[11px]">
+        <div className={`absolute flex items-center rounded-[10px] bg-[#101113]/60 backdrop-blur-xs text-white ${compact ? "left-1 bottom-1 max-w-[calc(100%-0.5rem)] gap-1 px-1.5 py-0.5 text-[12px] leading-4" : "left-2 bottom-2 max-w-[calc(100%-1rem)] gap-2 px-2 py-1 text-[13px]"}`}>
           {muted && (
             <span title={tr("Muted")} className="inline-flex">
               <MicOff className="w-3 h-3 text-[var(--text-loft-primary)] shrink-0" />
@@ -818,12 +832,12 @@ export function EmptyStage() {
   const tr = useUIText();
   return (
     <div className="w-full h-full flex items-center justify-center p-6">
-      <div className="glass-card rounded-[6px] p-8 sm:p-12 text-center max-w-lg">
-        <div className="mx-auto w-16 h-16 rounded-full bg-[#101113]/15 flex items-center justify-center text-[11px] mb-4">
+      <div className="glass-card rounded-[10px] p-8 sm:p-12 text-center max-w-lg">
+        <div className="mx-auto w-16 h-16 rounded-full bg-[#101113]/15 flex items-center justify-center text-[13px] mb-4">
           ⌁
         </div>
-        <h2 className="text-[11px] font-medium mb-2">{tr("Room is ready")}</h2>
-        <p className="text-[11px] text-[var(--text-loft-secondary)]">
+        <h2 className="text-[13px] font-medium mb-2">{tr("Room is ready")}</h2>
+        <p className="text-[13px] text-[var(--text-loft-secondary)]">
           {tr(
             "Turn on camera, share screen, or settle in with voice. You’re here together.",
           )}

@@ -2,8 +2,6 @@ package config
 
 import (
 	"errors"
-	"net"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -54,35 +52,6 @@ func Load() (Config, error) {
 		return Config{}, errors.New("GUEST_TOKEN_SECRET must contain at least 32 characters")
 	}
 	return cfg, nil
-}
-
-func contains(values []string, wanted string) bool {
-	for _, value := range values {
-		if strings.TrimRight(value, "/") == wanted {
-			return true
-		}
-	}
-	return false
-}
-
-func validOrigin(value string) bool {
-	u, err := url.Parse(value)
-	return err == nil && u.User == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
-}
-
-func validSpotifyRedirectURI(value string) bool {
-	u, err := url.Parse(value)
-	if err != nil || u.User != nil || u.Host == "" || u.Path != "/api/v1/spotify/callback" || u.RawQuery != "" || u.Fragment != "" {
-		return false
-	}
-	if u.Scheme == "https" {
-		return true
-	}
-	if u.Scheme != "http" {
-		return false
-	}
-	ip := net.ParseIP(u.Hostname())
-	return ip != nil && ip.IsLoopback()
 }
 
 func env(key, fallback string) string {

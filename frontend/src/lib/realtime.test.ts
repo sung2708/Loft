@@ -94,3 +94,12 @@ describe("room socket recovery", () => {
     socket.close();
   });
 });
+
+it.each(["room.ended","error"])("stops retries and reports a terminal room end from %s",async(type)=>{
+ const onEvent=vi.fn();const socket=new RoomSocket(credential,{onEvent,onState:vi.fn()});await socket.connect();
+ TestSocket.instances[0].receive(type,{code:"ROOM_ENDED"});
+ await vi.advanceTimersByTimeAsync(60_000);
+ expect(TestSocket.instances).toHaveLength(1);
+ expect(socket.send("chat.send",{})).toBe(false);
+ expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({type:"room.ended"}));
+});

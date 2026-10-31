@@ -92,6 +92,7 @@ func TestPostgresRoomAppearancePersistenceAndConcurrency(t *testing.T) {
 		"000003_short_room_codes.up.sql",
 		"000004_room_access.up.sql",
 		"000006_room_appearance.up.sql",
+		"000014_room_endings.up.sql",
 	}
 	for _, name := range migrationFiles {
 		content, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))

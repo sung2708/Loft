@@ -1,7 +1,9 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { motion, useReducedMotion } from "framer-motion";
 import {
+  Pencil,
   Check,
   Copy,
   Crown,
@@ -40,13 +42,18 @@ import {
   ParticipantMenu,
   type ParticipantAction,
 } from "@/components/room/ParticipantMenu";
+import { LeaveRoomDialog } from "@/components/room/LeaveRoomDialog";
 import { SocialActions } from "@/components/room/SocialActions";
 import { RoomAtmosphere } from "./RoomAtmosphere";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { api, clearCredential } from "@/lib/api";
 import { useMobileDrawerFocus } from "./useMobileDrawerFocus";
 
+const Whiteboard = dynamic(() => import("./Whiteboard"), { ssr: false });
+
 export function RoomView() {
+  const [boardOpen,setBoardOpen]=useState(false);
+  const [boardOpened,setBoardOpened]=useState(false);
   const drawer = useUIStore((state) => state.activeDrawer);
   const connection = useRoomStore((state) => state.connectionState);
   const room = useRoomStore((state) => state.room);
@@ -74,9 +81,9 @@ export function RoomView() {
       >
         <section className="room-stage-column relative flex min-h-0 min-w-0 flex-col">
           <div className="flex-1 min-h-0">
-            {room && connection === "CONNECTED" ? <Stage /> : <RoomLoading />}
+            {room && connection === "CONNECTED" ? <><div className={boardOpen ? "hidden" : "h-full"}><Stage /></div>{boardOpened && <div className={boardOpen?"h-full":"hidden"}><Whiteboard key={room.id} active={boardOpen} /></div>}</> : <RoomLoading />}
           </div>
-          <CallDock />
+          <CallDock boardOpen={boardOpen} toggleBoard={() => {setBoardOpened(true);setBoardOpen(open=>!open)}} />
         </section>
         <>
           {drawer === "chat" && <ChatDrawer />}
@@ -89,7 +96,7 @@ export function RoomView() {
           />
         </>
       </div>
-      <MusicPlayback surface={musicPlayerSurface} />
+      <MusicPlayback surface={musicPlayerSurface} visible={drawer === "music"} />
     </main>
   );
 }
@@ -114,7 +121,7 @@ function Stage() {
         {media.mediaError && (
           <div
             role="alert"
-            className="absolute left-1/2 top-4 z-30 flex max-w-[min(30rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-center text-[11px] text-[var(--text-loft-primary)] shadow-lg"
+            className="absolute left-1/2 top-4 z-30 flex max-w-[min(30rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-center text-[13px] text-[var(--text-loft-primary)] shadow-lg"
           >
             <span>
               {media.mediaError.replace(/\.+$/, "")}.{" "}
@@ -123,7 +130,7 @@ function Stage() {
             <button
               type="button"
               onClick={() => media.clearMediaError?.()}
-              className="ml-1 p-1 rounded-[6px] text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] transition-colors"
+              className="ml-1 p-1 rounded-[10px] text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] transition-colors"
               aria-label={tr("Close")}
             >
               <X className="w-3.5 h-3.5" />
@@ -141,13 +148,13 @@ function Stage() {
               animate={{ opacity: 1, y: 0 }}
               exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -24 }}
               transition={{ duration: reducedMotion ? 0 : 0.2 }}
-              className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-1 text-[11px] shadow-lg"
+              className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-1 text-[13px] shadow-lg"
               title={reaction.displayName}
               aria-label={`${reaction.displayName}: ${reaction.emoji}`}
             >
               {reaction.emoji}
               {reaction.count > 1 && (
-                <span className="ml-1 text-[11px] font-medium">
+                <span className="ml-1 text-[13px] font-medium">
                   ×{reaction.count}
                 </span>
               )}
@@ -171,12 +178,12 @@ function RoomLoading() {
   );
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="w-full max-w-sm rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-7 text-center shadow-[8px_8px_0_color-mix(in_srgb,var(--border-loft)_12%,transparent)]">
+      <div className="w-full max-w-sm rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-7 text-center shadow-[8px_8px_0_color-mix(in_srgb,var(--border-loft)_12%,transparent)]">
         <div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-[var(--border-loft)]/20 border-t-[var(--accent-blue)] animate-spin" />
         <h2 className="font-medium">
           {tr(state === "FAILED" ? "Couldn’t join room" : "Joining…")}
         </h2>
-        <p className="text-[11px] text-[var(--text-loft-secondary)] mt-2">
+        <p className="text-[13px] text-[var(--text-loft-secondary)] mt-2">
           {tr(error ?? "Syncing current room state.")}
         </p>
         {state === "FAILED" && (
@@ -189,7 +196,7 @@ function RoomLoading() {
                 location.reload();
               }
             }}
-            className="btn-press mt-4 rounded-[6px] bg-[#101113] px-4 py-2 text-[11px] text-white"
+            className="btn-press mt-4 rounded-[10px] bg-[#101113] px-4 py-2 text-[13px] text-white"
           >
             {tr(terminalAdmissionFailure ? "Return home" : "Try again")}
           </button>
@@ -259,7 +266,7 @@ function RoomHeader() {
             onClick={copy}
             aria-label={tr("Invite")}
             disabled={!room}
-            className="btn-press h-8 px-3 rounded-full border border-[var(--border-loft)] text-[11px] flex items-center gap-2"
+            className="btn-press h-8 px-3 rounded-full border border-[var(--border-loft)] text-[13px] flex items-center gap-2"
           >
             {copied ? (
               <Check className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
@@ -304,7 +311,7 @@ function RoomHeader() {
               <div
                 role="menu"
                 aria-label={tr("Appearance")}
-                className="absolute right-0 top-full mt-2 z-50 min-w-52 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
+                className="absolute right-0 top-full mt-2 z-50 min-w-52 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl"
               >
                 {(["system", "light", "dark"] as const).map((option) => (
                   <button
@@ -316,7 +323,7 @@ function RoomHeader() {
                       setTheme(option);
                       setAppearanceOpen(false);
                     }}
-                    className="w-full rounded-[6px] px-3 py-2 text-left text-[11px] capitalize text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft-light)] flex items-center justify-between gap-3"
+                    className="w-full rounded-[10px] px-3 py-2 text-left text-[13px] capitalize text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft-light)] flex items-center justify-between gap-3"
                   >
                     {tr(option.charAt(0).toUpperCase() + option.slice(1))}
                     {theme === option && (
@@ -329,7 +336,7 @@ function RoomHeader() {
           </div>
           <div
             title={self?.display_name}
-            className="w-8 h-8 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center font-medium text-[11px] overflow-hidden"
+            className="w-8 h-8 rounded-full bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center font-medium text-[13px] overflow-hidden"
           >
             {self?.avatar_url ? (
               <img
@@ -356,7 +363,7 @@ function ConnectionBadge() {
   return (
     <div
       role="status"
-      className={`absolute left-1/2 top-16 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-3 py-2 text-[11px] shadow-lg ${failed ? "bg-[#101113] text-white" : "border border-[var(--border-loft)] bg-[var(--bg-loft-card)]"}`}
+      className={`absolute left-1/2 top-16 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-3 py-2 text-[13px] shadow-lg ${failed ? "bg-[#101113] text-white" : "border border-[var(--border-loft)] bg-[var(--bg-loft-card)]"}`}
     >
       {failed ? (
         <WifiOff className="w-3.5 h-3.5" />
@@ -383,7 +390,7 @@ function GovernanceNotice() {
   return (
     <div
       role="alert"
-      className="absolute left-1/2 top-24 z-50 flex max-w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-2 text-[11px] text-[var(--text-loft-primary)] shadow-lg"
+      className="absolute left-1/2 top-24 z-50 flex max-w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-2 text-[13px] text-[var(--text-loft-primary)] shadow-lg"
     >
       <span>{tr(error)}</span>
       <button
@@ -398,8 +405,13 @@ function GovernanceNotice() {
   );
 }
 
-function CallDock() {
+function CallDock({boardOpen,toggleBoard}:{boardOpen:boolean;toggleBoard:()=>void}) {
   const tr = useUIText();
+  const locale=useI18nStore(state=>state.locale);
+  const room=useRoomStore(state=>state.room);
+  const [leaving,setLeaving]=useState(false);
+  const [ending,setEnding]=useState(false);
+  const [endError,setEndError]=useState<string|null>(null);
   const media = useRoomSession();
   const drawer = useUIStore((state) => state.activeDrawer);
   const toggleDrawer = useUIStore((state) => state.toggleDrawer);
@@ -407,6 +419,14 @@ function CallDock() {
   const count = useRoomStore((state) => state.participants.length);
   const self = useRoomStore((state) => state.self);
 
+  const owner=self?.identity_type==="user"&&self.identity_id===room?.owner_id;
+  const endRoom=async()=>{
+   if(!room||!media.credential||ending)return;
+   setEnding(true);setEndError(null);
+   try {await api.endRoom(room.id,media.credential);media.leave()}
+   catch(error){setEndError(tr(error instanceof Error?error.message:"Could not end the room"))}
+   finally{setEnding(false)}
+  };
   const sendReaction = (emoji: string) =>
     media.sendCommand("reaction.send", { emoji });
   const sendWave = () => media.sendCommand("wave.send", {});
@@ -416,8 +436,9 @@ function CallDock() {
       expected_social_version: self?.social_version ?? 0,
     });
   const control =
-    "room-dock-control btn-press relative !h-10 !w-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
-  return (
+    "room-dock-control btn-press relative shrink-0 !h-10 !w-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
+  return (<>
+   {leaving&&room&&<LeaveRoomDialog locale={locale} name={room.name} pending={ending} error={endError} onClose={()=>setLeaving(false)} onLeave={media.leave} onEnd={()=>void endRoom()}/>}
     <div className="flex shrink-0 justify-center px-2 pb-[calc(.75rem+env(safe-area-inset-bottom))]">
       <div className="room-call-dock relative flex max-w-full items-center gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-dock)] p-2 shadow-2xl motion-reduce:transform-none md:[transform:perspective(1200px)_rotateX(1deg)] sm:gap-2">
         <button
@@ -456,6 +477,7 @@ function CallDock() {
           <MonitorUp className="w-4 h-4" />
         </button>
         <span className="room-dock-separator w-px h-6 bg-[var(--border-loft)]" />
+        <button onClick={toggleBoard} aria-label={tr("Whiteboard")} title={tr("Whiteboard")} aria-pressed={boardOpen} className={`${control} ${boardOpen ? "bg-[#101113] text-white" : ""}`}><Pencil className="h-4 w-4" /></button>
         <button
           onClick={() => toggleDrawer("chat")}
           className={`${control} ${drawer === "chat" ? "bg-[#101113] text-white" : ""}`}
@@ -464,7 +486,7 @@ function CallDock() {
         >
           <MessageSquare className="w-4 h-4" />
           {unread > 0 && drawer !== "chat" && (
-            <b className="absolute -top-1 -right-1 bg-[#101113] text-white rounded-full min-w-4 h-4 text-[11px] flex items-center justify-center">
+            <b className="absolute -top-1 -right-1 bg-[#101113] text-white rounded-full min-w-4 h-4 text-[13px] flex items-center justify-center">
               {unread}
             </b>
           )}
@@ -476,7 +498,7 @@ function CallDock() {
           aria-label={tr("People")}
         >
           <Users className="w-4 h-4" />
-          <b className="room-dock-count absolute -top-1 -right-1 min-w-4 h-4 rounded-full border text-[11px] flex items-center justify-center">
+          <b className="room-dock-count absolute -top-1 -right-1 min-w-4 h-4 rounded-full border text-[13px] flex items-center justify-center">
             {count}
           </b>
         </button>
@@ -505,7 +527,7 @@ function CallDock() {
         </div>
         <span className="room-dock-optional room-dock-separator w-px h-6 bg-[var(--border-loft)]" />
         <button
-          onClick={media.leave}
+          onClick={()=>{if(owner){setEndError(null);setLeaving(true)}else{media.leave()}}}
           className={`${control} bg-[#101113]/15 text-[var(--text-loft-primary)] hover:bg-[#101113] hover:text-white`}
           title={tr("Leave")}
           aria-label={tr("Leave")}
@@ -514,7 +536,7 @@ function CallDock() {
         </button>
       </div>
     </div>
-  );
+  </>);
 }
 
 function DrawerFrame({
@@ -545,7 +567,7 @@ function DrawerFrame({
       className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-0 top-14 z-40 flex w-full min-h-0 flex-col border-l border-[var(--border-loft)] bg-[var(--bg-loft-card)] shadow-2xl md:relative md:bottom-auto md:right-auto md:top-auto md:z-auto md:h-full md:w-96 md:shrink-0"
     >
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border-loft)] px-5">
-        <h3 className="font-medium text-[11px]">{title}</h3>
+        <h3 className="font-medium text-[13px]">{title}</h3>
         <button
           ref={closeButtonRef}
           onClick={close}
@@ -612,7 +634,7 @@ function ChatDrawer() {
     <DrawerFrame title={tr("Room chat")}>
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 && (
-          <p className="text-[11px] text-center text-[var(--text-loft-muted)] mt-10">
+          <p className="text-[13px] text-center text-[var(--text-loft-muted)] mt-10">
             {tr("No messages yet. Say hello.")}
           </p>
         )}
@@ -622,7 +644,7 @@ function ChatDrawer() {
           if (isSystem) {
             return (
               <div key={message.id} className="flex justify-center my-2">
-                <span className="text-[11px] px-3 py-1 rounded-full bg-[var(--border-loft-light)] text-[var(--text-loft-muted)] border border-[var(--border-loft)] text-center max-w-[90%] break-words">
+                <span className="text-[13px] px-3 py-1 rounded-full bg-[var(--border-loft-light)] text-[var(--text-loft-muted)] border border-[var(--border-loft)] text-center max-w-[90%] break-words">
                   {renderMessageContent(message.content)}
                 </span>
               </div>
@@ -636,7 +658,7 @@ function ChatDrawer() {
               className={`flex flex-col ${mine ? "items-end" : "items-start"}`}
             >
               <div
-                className={`flex items-center gap-2 mb-1 px-1 text-[11px] text-[var(--text-loft-muted)] ${
+                className={`flex items-center gap-2 mb-1 px-1 text-[13px] text-[var(--text-loft-muted)] ${
                   mine ? "flex-row-reverse" : ""
                 }`}
               >
@@ -652,7 +674,7 @@ function ChatDrawer() {
                 </span>
               </div>
               <div
-                className={`max-w-[85%] px-4 py-2 rounded-[6px] text-[11px] break-words whitespace-pre-wrap leading-relaxed ${
+                className={`max-w-[85%] px-4 py-2 rounded-[10px] text-[13px] break-words whitespace-pre-wrap leading-relaxed ${
                   mine
                     ? "bg-[#101113] text-white rounded-br-[6px] shadow-sm"
                     : "border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] rounded-bl-[6px] shadow-sm"
@@ -666,7 +688,7 @@ function ChatDrawer() {
         <div ref={end} />
       </div>
       {error && (
-        <p className="px-4 pb-1 text-[11px] text-[var(--text-loft-primary)]">
+        <p className="px-4 pb-1 text-[13px] text-[var(--text-loft-primary)]">
           {tr(error)}
         </p>
       )}
@@ -680,11 +702,11 @@ function ChatDrawer() {
           onChange={(event) => setInput(event.target.value)}
           aria-label={tr("Message")}
           placeholder={tr("Send a message…")}
-          className="min-w-0 flex-1 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-3 text-[11px] outline-none focus:border-[var(--accent-blue)]"
+          className="min-w-0 flex-1 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-3 text-[13px] outline-none focus:border-[var(--accent-blue)]"
         />
         <button
           disabled={!input.trim()}
-          className="px-4 rounded-[6px] border border-transparent bg-[#101113] text-white text-[11px] transition-colors disabled:cursor-not-allowed disabled:border-[var(--border-loft)] disabled:bg-[var(--bg-loft-card)] disabled:text-[var(--text-loft-primary)] disabled:opacity-100"
+          className="px-4 rounded-[10px] border border-transparent bg-[#101113] text-white text-[13px] transition-colors disabled:cursor-not-allowed disabled:border-[var(--border-loft)] disabled:bg-[var(--bg-loft-card)] disabled:text-[var(--text-loft-primary)] disabled:opacity-100"
         >
           {tr("Send")}
         </button>
@@ -800,7 +822,7 @@ function PeopleDrawer() {
               <button
                 type="button"
                 onClick={() => setNewJoinRequest(false)}
-                className="mb-3 w-full rounded-[6px] border border-[var(--accent-blue)] bg-[var(--bg-loft-card)] px-3 py-2 text-left text-[11px] font-medium text-[var(--text-loft-primary)] shadow-sm"
+                className="mb-3 w-full rounded-[10px] border border-[var(--accent-blue)] bg-[var(--bg-loft-card)] px-3 py-2 text-left text-[13px] font-medium text-[var(--text-loft-primary)] shadow-sm"
               >
                 {locale === "vi"
                   ? "Có yêu cầu tham gia mới"
@@ -812,7 +834,7 @@ function PeopleDrawer() {
               onClick={lockRoom}
               disabled={connection !== "CONNECTED"}
               aria-pressed={room.is_locked}
-              className="btn-press flex w-full items-center justify-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-[11px] font-medium hover-invert disabled:opacity-50"
+              className="btn-press flex w-full items-center justify-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-[13px] font-medium hover-invert disabled:opacity-50"
             >
               {room.is_locked ? (
                 <Unlock className="w-4 h-4" />
@@ -823,7 +845,7 @@ function PeopleDrawer() {
             </button>
             {!room.allow_guests && joinRequests.length > 0 && (
               <div className="mt-3 space-y-2">
-                <p className="text-[11px] font-medium text-[var(--text-loft-secondary)]">
+                <p className="text-[13px] font-medium text-[var(--text-loft-secondary)]">
                   {locale === "vi"
                     ? `Yêu cầu tham gia · ${joinRequests.length}`
                     : `Join requests · ${joinRequests.length}`}
@@ -831,7 +853,7 @@ function PeopleDrawer() {
                 {joinRequests.map((request) => (
                   <div
                     key={request.user_id}
-                    className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 text-[11px] shadow-sm"
+                    className="flex items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 text-[13px] shadow-sm"
                   >
                     <span className="min-w-0 flex-1 truncate">
                       {request.display_name}
@@ -862,7 +884,7 @@ function PeopleDrawer() {
           {people.map((person) => (
             <div
               key={person.connection_id}
-              className="flex items-center gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-sm transition-colors hover:bg-[var(--bg-loft-card)]"
+              className="flex items-center gap-3 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-sm transition-colors hover:bg-[var(--bg-loft-card)]"
             >
               <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[var(--border-loft)] bg-[var(--border-loft-light)] font-medium text-[var(--text-loft-primary)]">
                 {person.avatar_url ? (
@@ -876,17 +898,17 @@ function PeopleDrawer() {
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-medium truncate">
+                <div className="text-[13px] font-medium truncate">
                   {person.display_name}
                 </div>
-                <div className="text-[11px] text-[var(--text-loft-muted)] capitalize">
+                <div className="text-[13px] text-[var(--text-loft-muted)] capitalize">
                   {tr(person.identity_type === "guest" ? "Guest" : "User")}
                 </div>
               </div>
               {person.role === "host" && (
                 <span
                   title={tr("Host")}
-                  className="flex items-center gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-2 py-1 text-[11px] text-[var(--text-loft-secondary)]"
+                  className="flex items-center gap-1 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-2 py-1 text-[13px] text-[var(--text-loft-secondary)]"
                 >
                   <Crown className="w-3.5 h-3.5" /> {tr("Host")}
                 </span>
@@ -908,7 +930,7 @@ function PeopleDrawer() {
             </div>
           ))}
         </div>
-        <div className="flex items-center gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-4 text-[11px] text-[var(--text-loft-secondary)]">
+        <div className="flex items-center gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-4 text-[13px] text-[var(--text-loft-secondary)]">
           <Settings2 className="w-4 h-4" />{" "}
           {tr("Presence follows active browser connections.")}
         </div>

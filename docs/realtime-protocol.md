@@ -141,10 +141,12 @@ SFX is not part of the protocol. Clients choose local playback from domain facts
 
 ### Media & Queue Events
 
-- **Events**: `media.play`, `media.pause`, `media.seek`, `media.duration`, `media.repeat`, `queue.add`, `queue.next`, `queue.select`, `queue.remove`, `queue.clear`, `queue.shuffle`, `queue.reorder`.
+- **Events**: `media.play`, `media.pause`, `media.seek`, `media.restart`, `media.duration`, `media.repeat`, `queue.add`, `queue.next`, `queue.select`, `queue.remove`, `queue.clear`, `queue.shuffle`, `queue.reorder`.
 - **Direction**: Client → Server → Server broadcasts resulting `media.state`.
 - **Validation**: Mutations require `expected_version == media.Version`, except `queue.add`, which appends without a version precondition.
-- **Authorization**: `CanControlMedia` for playback, duration, repeat, select, and next; `CanManageQueue` for add, remove, clear, shuffle, and reorder.
+- **Authorization**: `CanControlMedia` for playback, duration, repeat, select, and next; `CanAddToQueue` for add; `CanManageQueue` (room owner only) for remove, clear, shuffle, and reorder.
+- **Replay**: `media.restart` atomically resets the current track to zero and sets `PLAYING`, including when paused. It requires the current `expected_version` and media-control permission.
+- **Autoplay**: after the queue ends, `media.autoplay.set` enables promotion of the highest-voted room pick (ties use pick ID). Direct commands, forwarded commands and server timers use the same selection rule; persistence and promotion events follow a successful media commit.
 - **Broadcast (`media.state`)**: Full snapshot of `mediaState` with incremented monotonic `version`.
 
 ---
@@ -246,3 +248,7 @@ Domain Hierarchy:
 1. **No Vague Events**: Events named `update`, `sync`, `change`, or `refresh` are strictly forbidden. All events must follow explicit `noun.verb` notation (e.g. `media.pause`, `queue.reorder`).
 2. **No Raw Media Data**: Audio/video binary packets in WebSocket messages are prohibited and rejected with immediate socket closure.
 3. **No Unbounded Arrays in Payloads**: Payloads with arrays (e.g. `queue.reorder`) must enforce hard item length caps ($\le 50$).
+
+### Room ending
+
+Only the durable owner can call `POST /api/v1/rooms/{roomID}/end`. PostgreSQL records the ending without deleting room/history/board rows. `room.ended` has an empty typed payload and is terminal: clients close signaling and unmount media, then show the ended-room page. Redis distributes the terminal event; a PostgreSQL check on heartbeat repairs a missed notification. `room.leave` remains local to the caller and never ends the room. Ended invite lookups and token/session issuance return `410 ROOM_ENDED`.

@@ -52,3 +52,40 @@ func TestRemoveParticipantCallsRoomServiceWithAdminGrant(t *testing.T) {
 		t.Fatal("RoomService was not called")
 	}
 }
+
+func TestEndRoomDeletesSFUSessionWithServerOnlyGrant(t *testing.T) {
+	called := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		if r.URL.Path != "/twirp/livekit.RoomService/DeleteRoom" || r.Method != http.MethodPost {
+			t.Error("wrong room service operation")
+		}
+		raw := r.Header.Get("Authorization")
+		if len(raw) < 8 {
+			t.Fatal("no grant")
+		}
+		grant := new(claims)
+		if _, err := jwt.ParseWithClaims(raw[7:], grant, func(*jwt.Token) (any, error) { return []byte("secret"), nil }); err != nil {
+			t.Error(err)
+		}
+		if !grant.Video.RoomCreate || grant.Video.RoomJoin {
+			t.Error("wrong end permission")
+		}
+		var body struct {
+			Room string `json:"room"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Room != "room-a" {
+			t.Error("wrong room")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	service := New("key", "secret")
+	if err := service.SetURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EndRoom(context.Background(), "room-a"); err != nil || called != 1 {
+		t.Fatal(err)
+	}
+}

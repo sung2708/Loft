@@ -80,12 +80,12 @@ export function SocialActions({
               key={emoji}
               onClick={() => act(() => onReaction(emoji))}
               aria-label={`${tr("React")} ${emoji}`}
-              className="h-8 w-8 shrink-0 rounded-full text-[11px] hover-invert active:scale-110 motion-reduce:transition-none"
+              className="h-8 w-8 shrink-0 rounded-full text-[13px] hover-invert active:scale-110 motion-reduce:transition-none"
             >
               <span aria-hidden="true">{emoji}</span>
             </button>
           ))}
-          <button type="button" role="menuitem" onClick={() => act(onWave)} aria-label={tr("Wave to the room")} className="h-8 w-8 shrink-0 rounded-full text-[11px] hover-invert">
+          <button type="button" role="menuitem" onClick={() => act(onWave)} aria-label={tr("Wave to the room")} className="h-8 w-8 shrink-0 rounded-full text-[13px] hover-invert">
             <span aria-hidden="true">👋</span>
           </button>
           <button type="button" role="menuitemcheckbox" aria-checked={raised} onClick={() => act(onToggleHand)} aria-label={tr(raised ? "Lower hand" : "Raise hand")} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover-invert ${raised ? "bg-[var(--border-loft-light)]" : ""}`}>

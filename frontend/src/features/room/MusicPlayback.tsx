@@ -19,6 +19,7 @@ interface YouTubePlayer {
   getCurrentTime(): number;
   getDuration(): number;
   getPlayerState(): number;
+  getVideoUrl(): string;
   getPlaybackRate?(): number;
   getAvailablePlaybackRates?(): number[];
   setPlaybackRate?(rate: number): void;
@@ -27,12 +28,17 @@ interface YouTubePlayer {
   destroy(): void;
 }
 
+function playerVideoId(player: YouTubePlayer): string | null {
+  return new URL(player.getVideoUrl(), window.location.origin).searchParams.get("v");
+}
+
 interface YouTubeAPI {
   Player: new (
     element: HTMLElement,
     options: {
       width: string;
       height: string;
+      videoId: string;
       playerVars: {
         playsinline: number;
         origin: string;
@@ -62,7 +68,7 @@ declare global {
  * by MusicDrawer, but playback deliberately is not: closing or replacing a
  * drawer must never destroy the room's local music player.
  */
-export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
+export function MusicPlayback({ surface, visible }: { surface: HTMLDivElement | null; visible: boolean }) {
   const media = useMusicStore((state) => state.media ?? emptyMedia);
   const error = useMusicStore((state) => state.error);
   const clockOffset = useMusicStore((state) => state.clockOffsetMs);
@@ -72,6 +78,10 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
   const volume = useMusicPlayerStore((state) => state.volume);
   const activated = useMusicPlayerStore((state) => state.activated);
 
+  const hasTrack = Boolean(media.current);
+  const [playerEnabled, setPlayerEnabled] = useState(false);
+  // Initialize in a visible drawer, then retain the player when it closes.
+  if (visible && hasTrack && !playerEnabled) setPlayerEnabled(true);
   const [apiReady, setApiReady] = useState(
     () => typeof window !== "undefined" && Boolean(window.YT?.Player),
   );
@@ -109,6 +119,10 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
     useMusicPlayerStore.getState().hydrate();
   }, []);
 
+  useEffect(() => {
+    useMusicPlayerStore.getState().setPlaybackProgress(0, 0);
+  }, [media.current?.id]);
+
   const enableAudio = () => {
     const player = playerRef.current;
     if (!player) return false;
@@ -138,8 +152,6 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
   // evaluating. Register it before Next's Script callback runs so a fast load
   // cannot miss the one-shot signal.
   useEffect(() => {
-    if (window.YT?.Player) return;
-
     const previousCallback = window.onYouTubeIframeAPIReady;
     const markReady = () => setApiReady(true);
     const callback = () => {
@@ -182,7 +194,7 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
   }, [error]);
 
   useEffect(() => {
-    if (!apiReady || !surface || !playerHostRef.current || !window.YT?.Player) {
+    if (!playerEnabled || !apiReady || !surface || !playerHostRef.current || !window.YT?.Player || !latest.current.media.current) {
       return;
     }
 
@@ -195,6 +207,7 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
     const instance = new window.YT.Player(container, {
       width: "100%",
       height: "100%",
+      videoId: latest.current.media.current.video_id,
       playerVars: {
         playsinline: 1,
         origin: location.origin,
@@ -223,11 +236,8 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
           }
 
           if (useMusicPlayerStore.getState().activationRequested) {
-            // The click that opened the drawer happened before the iframe
-            // existed, so it is no longer a reliable browser user gesture.
-            // Keep the explicit fallback visible instead of reporting audio
-            // as enabled and then immediately being blocked by the browser.
-            useMusicPlayerStore.getState().setActivated(false);
+            // Honor Play once ready; onAutoplayBlocked restores the explicit audio button.
+            useMusicPlayerStore.getState().requestAudioActivation();
           } else if (latest.current.activated && state.status === "PLAYING") {
             instance.playVideo();
           }
@@ -235,6 +245,7 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
         onStateChange: ({ data }) => {
           if (disposed) return;
           const state = latest.current.media;
+          if (!state.current || playerVideoId(instance) !== state.current.video_id) return;
           const duration = instance.getDuration();
           if (duration > 0) {
             useMusicPlayerStore
@@ -243,7 +254,8 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
           }
 
           // Track naturally ended (YT.PlayerState.ENDED === 0)
-          if (data === 0 && latest.current.canControl && state.current) {
+          const roomPosition = canonicalPositionMs(state.position_ms, state.started_at, state.status, Date.now() + latest.current.clockOffset);
+          if (data === 0 && instance.getPlayerState() === 0 && duration > 0 && roomPosition >= duration * 1000 - 1000 && latest.current.canControl && state.current && playerVideoId(instance) === state.current.video_id) {
             latest.current.sendCommand("media.ended", {
               expected_version: state.version,
               video_id: state.current.video_id,
@@ -260,6 +272,7 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
           }
         },
         onError: (event: { data?: number } | undefined) => {
+          if (disposed || !latest.current.media.current || playerVideoId(instance) !== latest.current.media.current.video_id) return;
           const code = event?.data;
           let message = "This YouTube video cannot play here.";
           if (code === 2) {
@@ -305,7 +318,7 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
       }
       loadedVideo.current = null;
     };
-  }, [apiReady, surface]);
+  }, [apiReady, surface, playerEnabled, hasTrack]);
 
   // Keep the local player aligned to the room authority. The authoritative
   // media state remains in the room store; this only controls local playback.
@@ -358,7 +371,7 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
     const interval = window.setInterval(() => {
       const instance = playerRef.current;
       const state = latest.current;
-      if (!instance || !state.media.current) return;
+      if (!instance || !state.media.current || playerVideoId(instance) !== state.media.current.video_id) return;
 
       const currentTime =
         state.media.status === "PLAYING"
@@ -374,7 +387,8 @@ export function MusicPlayback({ surface }: { surface: HTMLDivElement | null }) {
         .getState()
         .setPlaybackProgress(currentTime, duration > 0 ? duration : 0);
 
-      if (duration <= 0 || !state.canControl || !state.media.current) return;
+      const playerState = instance.getPlayerState();
+      if (duration <= 0 || !state.canControl || !state.media.current || ![1, 2, 5].includes(playerState)) return;
       const seconds = Math.ceil(duration);
       const reportKey = `${state.media.current.id}:${state.media.version}:${seconds}`;
       if (

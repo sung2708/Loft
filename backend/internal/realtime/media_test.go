@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -11,20 +12,25 @@ import (
 )
 
 type mediaAuthorityStub struct {
-	commitErr error
+	commitErr   error
+	ownerErr    error
+	commitCalls int
+	loaded      mediaState
+	exists      bool
 }
 
 func (s *mediaAuthorityStub) Publish(context.Context, string, []byte) error { return nil }
 func (s *mediaAuthorityStub) MediaOwner(context.Context, string) (bool, string, error) {
-	return true, "stub", nil
+	return true, "stub", s.ownerErr
 }
 func (s *mediaAuthorityStub) LoadMedia(context.Context, string) (mediaState, bool, error) {
-	return mediaState{}, false, nil
+	return s.loaded, s.exists, nil
 }
 func (s *mediaAuthorityStub) InitializeMedia(context.Context, string, mediaState) (bool, error) {
 	return true, nil
 }
 func (s *mediaAuthorityStub) CommitMedia(context.Context, string, uint64, mediaState, []byte) error {
+	s.commitCalls++
 	return s.commitErr
 }
 func (s *mediaAuthorityStub) ForwardMedia(context.Context, string, string, string, json.RawMessage, domain.Identity) error {
@@ -50,8 +56,47 @@ func TestMediaMutationRollsBackWhenOwnerFenceFails(t *testing.T) {
 	hub.mu.RLock()
 	state := hub.rooms[room.ID].media
 	hub.mu.RUnlock()
-	if state.Version != 0 || state.Current != nil || len(client.send) != 0 {
+	if state.Version != 0 || state.Current != nil || len(client.send) != 1 {
 		t.Fatalf("uncommitted media leaked: state=%+v queued=%d", state, len(client.send))
+	}
+}
+
+func TestRejectedMediaCommandRecoversAuthoritySnapshot(t *testing.T) {
+	room := domain.Room{ID: "room", OwnerID: "host"}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, nil)
+	authoritative := mediaState{Status: "PAUSED", Version: 9, Queue: []youtubeTrack{}}
+	hub.SetBus(&mediaAuthorityStub{commitErr: ErrMediaVersionChanged, loaded: authoritative, exists: true})
+	client := &client{id: "client", roomID: room.ID, send: make(chan []byte, 2)}
+	if _, _, ok := hub.add(client, room); !ok {
+		t.Fatal("could not join")
+	}
+	payload, _ := json.Marshal(mediaCommand{URL: "https://youtu.be/dQw4w9WgXcQ"})
+	response := hub.handleForwardedMedia(context.Background(), mediaRPCRequest{
+		RequestID: "request", RoomID: room.ID, Kind: "queue.add", Payload: payload,
+		Actor: domain.Identity{ID: "host", Type: domain.IdentityUser},
+	})
+	if response.Error == "" {
+		t.Fatal("stale command accepted")
+	}
+	hub.mu.RLock()
+	version := hub.rooms[room.ID].media.Version
+	hub.mu.RUnlock()
+	if version != 9 {
+		t.Fatalf("authority version not recovered: %d", version)
+	}
+	select {
+	case data := <-client.send:
+		var snapshot struct {
+			Payload mediaState `json:"payload"`
+		}
+		if err := json.Unmarshal(data, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Payload.Version != 9 || snapshot.Payload.Current != nil {
+			t.Fatalf("incorrect recovery: %+v", snapshot.Payload)
+		}
+	default:
+		t.Fatal("client did not receive recovery snapshot")
 	}
 }
 
@@ -298,7 +343,7 @@ func TestMediaControlCommandsRequireHost(t *testing.T) {
 	member := domain.Identity{ID: "member", Type: domain.IdentityUser}
 	m := mediaState{Current: &youtubeTrack{ID: "a", VideoID: "dQw4w9WgXcQ"}, Queue: []youtubeTrack{{ID: "b"}}, Status: "PLAYING", StartedAt: time.Now()}
 	for _, actor := range []domain.Identity{guest, member} {
-		for _, kind := range []string{"media.seek", "media.play", "media.duration", "media.repeat", "queue.next", "queue.select"} {
+		for _, kind := range []string{"media.seek", "media.play", "media.play_now", "media.restart", "media.duration", "media.repeat", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.autoplay.set"} {
 			command, _ := json.Marshal(mediaCommand{ExpectedVersion: m.Version, TrackID: "b", VideoID: m.Current.VideoID, DurationSec: 30})
 			if err := m.applyMedia(kind, command, room, actor, time.Now()); err != errMediaDenied {
 				t.Fatalf("%s allowed for %s: %v", kind, actor.Type, err)
@@ -307,5 +352,107 @@ func TestMediaControlCommandsRequireHost(t *testing.T) {
 	}
 	if m.Version != 0 || m.Current.ID != "a" {
 		t.Fatalf("denied command changed media: %+v", m)
+	}
+}
+
+func TestMediaRejectsCommandsDuringCoordinatorOutage(t *testing.T) {
+	for _, commitFailure := range []bool{false, true} {
+		room := domain.Room{ID: "room", OwnerID: "host"}
+		hub := New(&realtimeStore{room: room}, nil, nil, nil, nil)
+		authority := &mediaAuthorityStub{}
+		if commitFailure {
+			authority.commitErr = errors.New("commit unavailable")
+		} else {
+			authority.ownerErr = errors.New("coordinator unavailable")
+		}
+		hub.SetBus(authority)
+		hub.rooms[room.ID] = &roomState{room: room, clients: map[string]*client{}, media: mediaState{Status: "IDLE"}}
+		response := hub.handleForwardedMedia(context.Background(), mediaRPCRequest{RoomID: room.ID, Kind: "media.play_now", Payload: json.RawMessage(`{"url":"https://youtu.be/dQw4w9WgXcQ"}`), Actor: domain.Identity{ID: "host", Type: domain.IdentityUser}})
+		if response.Error == "" || hub.rooms[room.ID].media.Current != nil || hub.rooms[room.ID].media.Version != 0 {
+			t.Fatal("uncommitted playback accepted during outage")
+		}
+	}
+}
+
+func TestReplayStartsPausedTrackWithoutChangingQueue(t *testing.T) {
+	now := time.Now().UTC()
+	room := domain.Room{ID: "room", OwnerID: "owner"}
+	media := mediaState{Current: &youtubeTrack{ID: "current", VideoID: "dQw4w9WgXcQ"}, Queue: []youtubeTrack{{ID: "next"}}, Status: "PAUSED", PositionMs: 42000, Version: 3}
+	payload, _ := json.Marshal(mediaCommand{ExpectedVersion: 3})
+	if err := media.applyMedia("media.restart", payload, room, domain.Identity{ID: "owner", Type: domain.IdentityUser}, now); err != nil {
+		t.Fatal(err)
+	}
+	if media.Status != "PLAYING" || media.PositionMs != 0 || !media.StartedAt.Equal(now) || media.Current.ID != "current" || len(media.Queue) != 1 || media.Version != 4 {
+		t.Fatalf("incorrect replay: %+v", media)
+	}
+	if err := media.applyMedia("media.restart", payload, room, domain.Identity{ID: "owner", Type: domain.IdentityUser}, now); err != errMediaStale {
+		t.Fatalf("stale replay accepted: %v", err)
+	}
+}
+
+func TestLateDurationReportDoesNotRejectOrMutateNewTrack(t *testing.T) {
+	room := domain.Room{ID: "room", OwnerID: "owner"}
+	actor := domain.Identity{ID: "owner", Type: domain.IdentityUser}
+	media := mediaState{Current: &youtubeTrack{ID: "new", VideoID: "M7lc1UVf-VE", DurationSec: 60}, Status: "PLAYING", Version: 3}
+	for _, command := range []mediaCommand{
+		{VideoID: "dQw4w9WgXcQ", DurationSec: 300, ExpectedVersion: 3},
+		{VideoID: "M7lc1UVf-VE", DurationSec: 300, ExpectedVersion: 2},
+		{VideoID: "M7lc1UVf-VE", DurationSec: 60, ExpectedVersion: 3},
+	} {
+		payload, _ := json.Marshal(command)
+		if err := media.applyMedia("media.duration", payload, room, actor, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if media.Version != 3 || media.Current.DurationSec != 60 {
+		t.Fatalf("late report mutated track: %+v", media)
+	}
+}
+
+type blockedMediaAuthority struct {
+	mediaAuthorityStub
+	entered chan struct{}
+	resume  chan struct{}
+}
+
+func (b *blockedMediaAuthority) CommitMedia(ctx context.Context, _ string, _ uint64, _ mediaState, _ []byte) error {
+	close(b.entered)
+	select {
+	case <-b.resume:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func TestSnapshotsDoNotExposeMediaBeforeCoordinatorCommit(t *testing.T) {
+	room := domain.Room{ID: "pending", OwnerID: "owner"}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, nil)
+	bus := &blockedMediaAuthority{entered: make(chan struct{}), resume: make(chan struct{})}
+	hub.SetBus(bus)
+	hub.rooms[room.ID] = &roomState{room: room, clients: map[string]*client{}, media: mediaState{Status: "IDLE"}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan mediaRPCResponse, 1)
+	go func() {
+		done <- hub.handleForwardedMedia(ctx, mediaRPCRequest{RoomID: room.ID, Kind: "queue.add", Payload: json.RawMessage(`{"url":"https://youtu.be/dQw4w9WgXcQ"}`), Actor: domain.Identity{ID: "owner", Type: domain.IdentityUser}})
+	}()
+	select {
+	case <-bus.entered:
+	case <-ctx.Done():
+		t.Fatal("commit did not start")
+	}
+	hub.mu.RLock()
+	pending := hub.rooms[room.ID].media.snapshot()
+	hub.mu.RUnlock()
+	close(bus.resume)
+	result := <-done
+	if pending.Version != 0 || pending.Current != nil || result.Error != "" {
+		t.Fatalf("pending commit leaked into snapshots: %+v %+v", pending, result)
+	}
+	hub.mu.RLock()
+	committed := hub.rooms[room.ID].media.snapshot()
+	hub.mu.RUnlock()
+	if committed.Version != 1 || committed.Current == nil {
+		t.Fatal("committed state not installed")
 	}
 }

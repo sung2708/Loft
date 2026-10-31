@@ -23,7 +23,7 @@ input[role="switch"],
   --kott-on-primary: #ffffff;
   --kott-background: #f4f5f7;
   --kott-surface: #ffffff;
-  --kott-border: #101113;
+  --kott-border: #d9dce1;
   --kott-text: #101113;
   --kott-text-muted: #26282c;
   --kott-accent: #101113;
@@ -34,12 +34,12 @@ input[role="switch"],
   --bg-loft-surface: #ffffff;
   --bg-loft-card: #ffffff;
   --bg-loft-dock: #ffffff;
-  --border-loft: #101113;
+  --border-loft: #d9dce1;
   /* A readable raised surface; never use the strong border token as a fill. */
   --border-loft-light: #ffffff;
   --text-loft-primary: #101113;
-  --text-loft-secondary: #26282c;
-  --text-loft-muted: #26282c;
+  --text-loft-secondary: #525866;
+  --text-loft-muted: #626977;
   /* Kept under the historic name because the app already consumes it as the
      shared interactive token. It deliberately resolves to the product ink. */
   --accent-blue: #101113;
@@ -54,7 +54,7 @@ input[role="switch"],
   --surface-canvas: var(--bg-loft-base);
   --surface-raised: var(--bg-loft-surface);
   --surface-inset: color-mix(in srgb, var(--bg-loft-base) 88%, var(--text-loft-primary));
-  --stroke-subtle: color-mix(in srgb, var(--border-loft) 18%, transparent);
+  --stroke-subtle: var(--border-loft);
   --stroke-strong: var(--border-loft);
   --shadow-float: 0 16px 40px color-mix(in srgb, #101113 12%, transparent);
   --shadow-contact: inset 0 1px 0 color-mix(in srgb, #ffffff 72%, transparent);
@@ -79,10 +79,10 @@ html.dark,
 .dark {
   color-scheme: dark;
   --bg-loft-base: #101113;
-  --bg-loft-surface: #26282c;
-  --bg-loft-card: #26282c;
-  --bg-loft-dock: #26282c;
-  --border-loft: #f4f5f7;
+  --bg-loft-surface: #1b1d21;
+  --bg-loft-card: #202329;
+  --bg-loft-dock: #202329;
+  --border-loft: #3c4048;
   --border-loft-light: #26282c;
   --text-loft-primary: #f4f5f7;
   --text-loft-secondary: color-mix(in srgb, #f4f5f7 82%, #101113);
@@ -102,7 +102,7 @@ body {
   background-color: var(--bg-loft-base);
   color: var(--text-loft-primary);
   font-family: var(--kott-font-body);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
   font-feature-settings: "kern" 1;
@@ -127,9 +127,7 @@ body {
   position: relative;
   isolation: isolate;
   background-color: var(--bg-loft-base);
-  background-image:
-    linear-gradient(color-mix(in srgb, var(--border-loft) 4%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--border-loft) 4%, transparent) 1px, transparent 1px);
+  background-image: none;
   background-size: 48px 48px;
 }
 .app-canvas::before {
@@ -607,7 +605,7 @@ textarea:focus-visible,
   border-color: var(--border-loft) !important;
   color: var(--text-loft-primary) !important;
   font-family: var(--kott-font-body);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
 }
@@ -618,7 +616,6 @@ textarea:focus-visible,
 .kott-settings *,
 .kott-settings *::before,
 .kott-settings *::after {
-  border-radius: 6px !important;
   transition-duration: 200ms !important;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
@@ -634,7 +631,7 @@ textarea:focus-visible,
 .kott-settings button,
 .kott-settings input {
   font-family: inherit;
-  font-size: 11px !important;
+  font-size: 13px !important;
   font-weight: 500;
   line-height: 1.5;
 }
@@ -698,4 +695,71 @@ textarea:focus-visible,
 }
 .dark .kott-settings button[role="switch"][aria-checked="true"] > span {
   background: #101113 !important;
+}
+
+/* Lobby: the invitation is the primary task, with quieter supporting chrome. */
+.lobby-canvas {
+  background-image: none;
+}
+.lobby-workflow {
+  border-color: var(--stroke-subtle);
+  box-shadow: 0 20px 64px color-mix(in srgb, var(--text-loft-primary) 7%, transparent);
+}
+.lobby-workflow::before { display: none; }
+.lobby-identity {
+  background: var(--bg-loft-base);
+  border-color: var(--stroke-subtle);
+}
+.lobby-workflow input,
+.lobby-workflow button:not(.control-primary),
+.lobby-workflow [id="roomPreviewCard"] {
+  border-color: var(--stroke-subtle);
+}
+.lobby-workflow input { font-size: 16px; }
+.lobby-workflow button { min-height: 44px; font-size: 14px; }
+.lobby-workflow :is(button, a, input):focus-visible {
+  outline: 2px solid var(--text-loft-primary);
+  outline-offset: 4px;
+}
+.lobby-workflow button:not(:disabled):hover {
+  filter: brightness(.95);
+}
+.lobby-workflow .control-primary:hover:not(:disabled) {
+  filter: none;
+}
+@media (max-width: 767px) {
+  .lobby-workflow { max-width: 480px; }
+  .lobby-identity { min-height: 180px; }
+}
+
+/* Shared interaction rhythm across account, room and media surfaces. */
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 3px;
+}
+:where(input, textarea, select) { font: inherit; }
+.app-canvas :is(input:not([type="checkbox"]):not([type="range"]), textarea) {
+  font-size: 16px;
+  min-height: 44px;
+}
+.app-canvas .btn-press { min-height: 40px; }
+.workflow-panel, .utility-panel { border-radius: 16px; }
+.workflow-panel { box-shadow: 0 12px 36px rgb(0 0 0 / .06); }
+.room-call-dock { border-radius: 18px; }
+.room-stage-column { padding: 12px; gap: 12px; }
+@media (max-width: 640px) {
+  .room-stage-column { padding: 6px; gap: 6px; }
+  .app-canvas .btn-press { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
+  .interactive-card, .btn-press { transition: none; }
+}
+
+.workflow-panel::before { border-radius: inherit; }
+.app-canvas button.btn-press[class*="w-8"] { min-width: 40px; }
+@media (max-width: 640px) { .app-canvas button.btn-press[class*="w-8"] { min-width: 44px; } }
+
+@container (max-width: 420px) {
+  .room-stage-column .room-dock-control { width: 32px !important; height: 36px !important; }
 }

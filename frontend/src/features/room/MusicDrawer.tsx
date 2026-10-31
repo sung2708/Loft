@@ -74,9 +74,13 @@ export function MusicDrawer({
   const [searchResults, setSearchResults] = useState<Array<{ video_id: string; title: string; channel: string; thumbnail?: string }>>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const searchMessage = searchQuery.trim() && !authSession?.access_token ? t.common.signIn : searchError;
 
   const handleSearchChange = (val: string) => {
     setSearchQuery(val);
+    setSearchError(null);
     if (!val.trim()) {
       setSearchResults([]);
       setSearching(false);
@@ -91,14 +95,13 @@ export function MusicDrawer({
   const volumeRef = useRef<HTMLDivElement>(null);
   const playerSurfaceRef = useRef<HTMLDivElement>(null);
   const pendingVersion = useRef<number | null>(null);
+  const pendingSearchVersion = useRef<number | null>(null);
   const metadataFetching = useRef(new Set<string>());
   const { closeButtonRef, isModal, panelRef } = useMobileDrawerFocus(open);
 
   useEffect(() => {
     const query = searchQuery.trim();
-    if (!query || !authSession?.access_token) {
-      return;
-    }
+    if (!query || !authSession?.access_token) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setSearching(true);
@@ -106,7 +109,11 @@ export function MusicDrawer({
         headers: { Authorization: `Bearer ${authSession.access_token}` },
         signal: controller.signal,
       })
-        .then((response) => (response.ok ? response.json() : null))
+        .then(async (response) => {
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error?.message || "YouTube search is temporarily unavailable");
+          return payload;
+        })
         .then((payload) => {
           if (!controller.signal.aborted) {
             setSearchResults(payload?.items ?? []);
@@ -117,7 +124,8 @@ export function MusicDrawer({
           if (err instanceof Error && err.name === "AbortError") return;
           if (!controller.signal.aborted) {
             setSearchResults([]);
-            setSearched(true);
+            setSearchError(err instanceof Error ? err.message : "YouTube search is temporarily unavailable");
+            setSearched(false);
           }
         })
         .finally(() => {
@@ -158,10 +166,10 @@ export function MusicDrawer({
 
   // Fetch title / channel metadata for active and queued videos if missing
   useEffect(() => {
-    const idsToFetch = [
-      media.current?.video_id,
-      ...media.queue.map((item) => item.video_id),
-    ].filter(Boolean) as string[];
+    const tracks = media.current ? [media.current, ...media.queue] : media.queue;
+    const idsToFetch = tracks
+      .filter((track) => !track.title || !track.channel)
+      .map((track) => track.video_id);
 
     idsToFetch.forEach((vid) => {
       if (!metaMap[vid] && !metadataFetching.current.has(vid)) {
@@ -189,43 +197,37 @@ export function MusicDrawer({
     rawUrl: string,
     playNow = false,
     clearSearch = false,
+    metadata?: { title: string; channel: string },
   ) => {
     if (!available || !rawUrl.trim() || isAdding) return;
+    if (playNow) requestAudioActivation();
     setIsAdding(true);
     const trimmed = rawUrl.trim();
 
-    // Fetch video metadata first if possible
-    let metaTitle = "";
-    let metaChannel = "";
-    try {
-      const match = trimmed.match(/(?:v=|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-      if (match && match[1]) {
-        const vid = match[1];
-        const res = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${vid}`);
-        if (res.ok) {
-          const data = await res.json();
-          metaTitle = data.title || "";
-          metaChannel = data.author_name || "";
-        }
-      }
-    } catch {}
-
     const sent = session.sendCommand(playNow ? "media.play_now" : "queue.add", {
       url: trimmed,
-      title: metaTitle,
-      channel: metaChannel,
+      title: metadata?.title ?? "",
+      channel: metadata?.channel ?? "",
     });
 
     if (sent) {
       setUrl("");
       if (clearSearch) {
-        setSearchQuery("");
-        setSearchResults([]);
-        setSearched(false);
+        pendingSearchVersion.current = media.version;
       }
     }
     setIsAdding(false);
   };
+
+  useEffect(() => {
+    if (pendingSearchVersion.current !== null && media.version > pendingSearchVersion.current) {
+      pendingSearchVersion.current = null;
+      setSearchQuery("");
+      setSearchResults([]);
+      setSearched(false);
+    }
+    if (error) pendingSearchVersion.current = null;
+  }, [media.version, error]);
 
   const handleAddTrack = async (event: FormEvent) => {
     event.preventDefault();
@@ -238,17 +240,19 @@ export function MusicDrawer({
       | "media.pause"
       | "queue.next"
       | "media.seek"
+      | "media.restart"
       | "queue.select"
       | "queue.remove"
       | "queue.clear"
       | "queue.shuffle"
       | "queue.reorder"
-      | "media.repeat",
+      | "media.repeat"
+      | "media.autoplay.set",
     payload?: Record<string, unknown>,
   ) => {
-    if ((type.startsWith("media.") || type === "queue.next" || type === "queue.select") && !canControl) return;
+    if (!canControl) return;
     if (pendingVersion.current === media.version) return;
-    if (type === "media.play" || type === "queue.next" || type === "queue.select") {
+    if (type === "media.play" || type === "media.restart" || type === "queue.next" || type === "queue.select") {
       requestAudioActivation();
     }
 
@@ -349,11 +353,11 @@ export function MusicDrawer({
     ? metaMap[media.current.video_id]
     : null;
   const activeTitle =
-    currentMeta?.title ||
     media.current?.title ||
+    currentMeta?.title ||
     (media.current ? `YouTube Video (${media.current.video_id})` : "");
   const activeChannel =
-    currentMeta?.channel || media.current?.channel || "YouTube";
+    media.current?.channel || currentMeta?.channel || "YouTube";
 
   const effectiveDuration = duration > 0 ? duration : media.current?.duration_sec || 0;
   const displayCurrentTime = currentTime;
@@ -374,17 +378,17 @@ export function MusicDrawer({
       inert={!open}
       className={`fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-0 top-14 z-40 flex w-full flex-col border-l border-[var(--border-loft)] bg-[var(--bg-loft-card)] shadow-2xl transition-opacity duration-150 md:bottom-auto md:right-auto md:top-auto md:z-auto md:col-start-2 md:h-full md:w-96 md:shrink-0 ${
         open
-          ? "opacity-100"
+          ? "opacity-100 md:relative"
           : "invisible pointer-events-none opacity-0 md:absolute md:inset-y-0 md:right-0 md:w-96"
       }`}
     >
       {/* Header Bar */}
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4">
         <div className="flex items-center gap-2">
-          <h3 className="font-medium text-[11px] text-[var(--text-loft-primary)]">
+          <h3 className="font-medium text-[13px] text-[var(--text-loft-primary)]">
             {mq.sharedQueue}
           </h3>
-          <span className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-2 py-1 text-[11px] font-medium text-[var(--text-loft-primary)]">
+          <span className="rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-2 py-1 text-[13px] font-medium text-[var(--text-loft-primary)]">
             {totalTracksCount}
           </span>
         </div>
@@ -400,7 +404,7 @@ export function MusicDrawer({
       {/* Drawer Body */}
       <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 text-left">
         {/* Quick Add Input Bar */}
-        <form onSubmit={handleAddTrack} className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-2 shadow-sm">
+        <form onSubmit={handleAddTrack} className="flex items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-2 shadow-sm">
           <div className="relative flex-1 min-w-0">
             <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-loft-muted)]" />
             <input
@@ -408,13 +412,13 @@ export function MusicDrawer({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={mq.pasteUrl}
-              className="h-9 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] pl-10 pr-3 text-[11px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] outline-none focus:border-[var(--accent-blue)]"
+              className="h-9 w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] pl-10 pr-3 text-[13px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] outline-none focus:border-[var(--accent-blue)]"
             />
           </div>
           <button
             type="submit"
             disabled={!available || !url.trim() || isAdding}
-            className="btn-press flex h-9 items-center gap-2 rounded-[6px] bg-[#101113] px-4 text-[11px] font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            className="btn-press flex h-9 items-center gap-2 rounded-[10px] bg-[#101113] px-4 text-[13px] font-medium text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{isAdding ? mq.adding : mq.add}</span>
@@ -422,18 +426,18 @@ export function MusicDrawer({
         </form>
 
         {canControl && (
-          <label className="flex items-center justify-between gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 py-2 text-[11px] shadow-sm">
-            <span><span className="block font-medium">Autoplay</span><span className="text-[10px] text-[var(--text-loft-secondary)]">Continue with room suggestions when the queue ends</span></span>
-            <input type="checkbox" checked={media.autoplay ?? false} onChange={(event) => session.sendCommand("media.autoplay.set", { autoplay: event.target.checked, expected_version: media.version })} className="h-4 w-4 accent-[var(--accent-blue)]" />
+          <label className="flex items-center justify-between gap-3 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 py-2 text-[13px] shadow-sm">
+            <span><span className="block font-medium">{mq.autoplay}</span><span className="text-[13px] text-[var(--text-loft-secondary)]">{mq.autoplayDescription}</span></span>
+            <input type="checkbox" checked={media.autoplay ?? false} onChange={(event) => control("media.autoplay.set", { autoplay: event.target.checked })} className="h-4 w-4 accent-[var(--accent-blue)]" />
           </label>
         )}
 
-        <div className="rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-sm">
+        <div className="rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-sm">
           <input
             value={searchQuery}
             onChange={(event) => handleSearchChange(event.target.value)}
             placeholder="Search YouTube"
-            className="h-9 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 text-[11px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] outline-none focus:border-[var(--accent-blue)]"
+            className="h-9 w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 text-[13px] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] outline-none focus:border-[var(--accent-blue)]"
             aria-label="Search YouTube"
           />
           {searching && (
@@ -460,7 +464,7 @@ export function MusicDrawer({
                       className="h-9 w-12 shrink-0 rounded object-cover"
                     />
                   )}
-                  <span className="min-w-0 flex-1 truncate text-[11px]">
+                  <span className="min-w-0 flex-1 truncate text-[13px]">
                     {result.title}
                     <span className="block truncate text-[10px] text-[var(--text-loft-secondary)]">
                       {result.channel}
@@ -488,6 +492,7 @@ export function MusicDrawer({
                           `https://www.youtube.com/watch?v=${result.video_id}`,
                           false,
                           true,
+                          result,
                         )
                       }
                       className="rounded border border-[var(--border-loft)] px-2 py-1 text-[10px] hover-invert disabled:opacity-40"
@@ -496,15 +501,16 @@ export function MusicDrawer({
                     </button>
                     <button
                       type="button"
-                      disabled={isAdding || !available}
+                      disabled={isAdding || !available || !canControl}
                       onClick={() =>
                         void addTrackUrl(
                           `https://www.youtube.com/watch?v=${result.video_id}`,
                           true,
                           true,
+                          result,
                         )
                       }
-                      className="rounded bg-[var(--accent-blue)] px-2 py-1 text-[10px] text-white disabled:opacity-40"
+                      className="control-primary rounded px-2 py-1 text-[13px] disabled:opacity-40"
                     >
                       Play
                     </button>
@@ -515,8 +521,9 @@ export function MusicDrawer({
           )}
         </div>
 
+        {searchMessage && <p role="alert" className="text-[13px] text-[var(--text-loft-secondary)]">{searchMessage}</p>}
         {error && (
-          <div className="px-3 py-2 rounded-[6px] bg-[#101113]/10 border border-[var(--border-loft)]/20 text-[var(--text-loft-primary)] text-[11px]">
+          <div className="px-3 py-2 rounded-[10px] bg-[#101113]/10 border border-[var(--border-loft)]/20 text-[var(--text-loft-primary)] text-[13px]">
             {error}
           </div>
         )}
@@ -525,7 +532,7 @@ export function MusicDrawer({
         {/* ---------------- 1. NOW PLAYING COMPACT CARD ---------------- */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between px-1">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)] flex items-center gap-2">
+            <span className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)] flex items-center gap-2">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   media.status === "PLAYING"
@@ -536,20 +543,20 @@ export function MusicDrawer({
               {mq.nowPlaying}
             </span>
             {media.current && (
-              <span className="text-[11px] font-medium text-[var(--text-loft-muted)]">
+              <span className="text-[13px] font-medium text-[var(--text-loft-muted)]">
                 {media.status === "PLAYING" ? "LIVE" : "PAUSED"}
               </span>
             )}
           </div>
 
-          <div className="flex flex-col gap-3 overflow-hidden rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-[6px_6px_0_color-mix(in_srgb,var(--border-loft)_12%,transparent)]">
+          <div className="flex flex-col gap-3 overflow-hidden rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 shadow-[6px_6px_0_color-mix(in_srgb,var(--border-loft)_12%,transparent)]">
             {/* 16:9 Video Canvas Viewport */}
-            <div className="relative aspect-video w-full max-h-[190px] overflow-hidden rounded-[6px] border border-white/10 bg-[#101113] shadow-inner">
+            <div className="relative aspect-video w-full min-h-[200px] overflow-hidden rounded-[10px] border border-white/10 bg-[#101113] shadow-inner">
               <div ref={setPlayerSurface} className="w-full h-full" />
               {!media.current && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#101113] text-white/65">
                   <Music className="w-8 h-8 opacity-40" />
-                  <span className="text-[11px]">{mq.noMedia}</span>
+                  <span className="text-[13px]">{mq.noMedia}</span>
                 </div>
               )}
             </div>
@@ -558,17 +565,17 @@ export function MusicDrawer({
             {media.current ? (
               <div className="flex flex-col min-w-0">
                 <span
-                  className="font-medium text-[11px] text-[var(--text-loft-primary)] truncate"
+                  className="font-medium text-[13px] text-[var(--text-loft-primary)] truncate"
                   title={activeTitle}
                 >
                   {activeTitle}
                 </span>
-                <span className="text-[11px] text-[var(--text-loft-secondary)] truncate">
+                <span className="text-[13px] text-[var(--text-loft-secondary)] truncate">
                   {activeChannel} · YouTube
                 </span>
               </div>
             ) : (
-              <span className="text-[11px] text-[var(--text-loft-muted)]">
+              <span className="text-[13px] text-[var(--text-loft-muted)]">
                 {mq.noMedia}
               </span>
             )}
@@ -578,7 +585,7 @@ export function MusicDrawer({
               <button
                 onClick={requestAudioActivation}
                 disabled={!playerReady}
-                className="btn-press w-full rounded-[6px] bg-[#101113] py-2 text-[11px] font-medium text-white shadow-sm disabled:opacity-50"
+                className="btn-press w-full rounded-[10px] bg-[#101113] py-2 text-[13px] font-medium text-white shadow-sm disabled:opacity-50"
               >
                 {mq.enableAudio}
               </button>
@@ -589,6 +596,26 @@ export function MusicDrawer({
               <div className="flex flex-col gap-1 pt-1">
                 <div
                   className={`relative w-full h-2 flex items-center group ${canControl ? "cursor-pointer" : "cursor-default"}`}
+                  role="slider"
+                  aria-label={mq.progress}
+                  aria-valuemin={0}
+                  aria-valuemax={effectiveDuration}
+                  aria-valuenow={Math.min(displayCurrentTime, effectiveDuration)}
+                  aria-valuetext={`${formatTime(displayCurrentTime)} / ${formatTime(effectiveDuration)}`}
+                  aria-disabled={!canControl || effectiveDuration <= 0}
+                  tabIndex={canControl && effectiveDuration > 0 ? 0 : -1}
+                  onKeyDown={(event) => {
+                    if (!canControl || effectiveDuration <= 0) return;
+                    const positions: Record<string, number> = {
+                      ArrowLeft: Math.max(0, displayCurrentTime - 5),
+                      ArrowRight: Math.min(effectiveDuration, displayCurrentTime + 5),
+                      Home: 0,
+                      End: effectiveDuration,
+                    };
+                    if (positions[event.key] === undefined) return;
+                    event.preventDefault();
+                    handleSeekCommit(positions[event.key]);
+                  }}
                   onClick={(e) => {
                     if (!canControl) return;
                     const rect = e.currentTarget.getBoundingClientRect();
@@ -614,7 +641,7 @@ export function MusicDrawer({
                   />
                 </div>
 
-                <div className="flex items-center justify-between px-1 text-[11px] font-mono text-[var(--text-loft-muted)]">
+                <div className="flex items-center justify-between px-1 text-[13px] font-mono text-[var(--text-loft-muted)]">
                   <span>{formatTime(displayCurrentTime)}</span>
                   <span>{formatTime(effectiveDuration)}</span>
                 </div>
@@ -627,9 +654,9 @@ export function MusicDrawer({
                 <div className="flex items-center gap-2">
                   {/* Previous / Restart */}
                   <button
-                    onClick={() => control("media.seek", { position_ms: 0 })}
+                    onClick={() => control("media.restart")}
                     disabled={!canControl}
-                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
+                    className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                     title={mq.previous}
                   >
                     <SkipBack className="w-4 h-4" />
@@ -645,7 +672,7 @@ export function MusicDrawer({
                       )
                     }
                     disabled={!canControl}
-                    className="btn-press flex h-9 w-9 items-center justify-center rounded-[6px] bg-[#101113] text-white shadow-sm disabled:opacity-40"
+                    className="btn-press flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#101113] text-white shadow-sm disabled:opacity-40"
                     title={
                       media.status === "PLAYING" ? mq.pause : mq.play
                     }
@@ -661,7 +688,7 @@ export function MusicDrawer({
                   <button
                     onClick={() => control("queue.next")}
                     disabled={!canControl}
-                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
+                    className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                     title={mq.next}
                   >
                     <SkipForward className="w-4 h-4" />
@@ -682,7 +709,7 @@ export function MusicDrawer({
                         setShowVolumeSlider(true);
                       }}
                       onMouseEnter={() => setShowVolumeSlider(true)}
-                      className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
+                      className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                       title={mq.volume}
                       aria-label={mq.volume}
                       aria-expanded={showVolumeSlider}
@@ -696,7 +723,7 @@ export function MusicDrawer({
 
                     {/* Inline mini slider when hovered */}
                     {showVolumeSlider && (
-                      <div role="dialog" aria-label={mq.volume} className="absolute bottom-full right-0 z-50 mb-1 flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl">
+                      <div role="dialog" aria-label={mq.volume} className="absolute bottom-full right-0 z-50 mb-1 flex items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-2 shadow-xl">
                         <input
                           type="range"
                           min="0"
@@ -707,7 +734,7 @@ export function MusicDrawer({
                           }
                           className="w-20 accent-[#101113] cursor-pointer"
                         />
-                        <span className="text-[11px] font-mono w-6 text-right">
+                        <span className="text-[13px] font-mono w-6 text-right">
                           {volume}%
                         </span>
                       </div>
@@ -717,7 +744,7 @@ export function MusicDrawer({
                   {/* Fullscreen Video */}
                   <button
                     onClick={toggleFullscreen}
-                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
+                    className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
                     title={mq.fullscreen}
                   >
                     <Maximize2 className="w-3.5 h-3.5" />
@@ -728,7 +755,7 @@ export function MusicDrawer({
                     href={`https://www.youtube.com/watch?v=${media.current.video_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all"
+                    className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all"
                     title={mq.openInYouTube}
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -742,25 +769,25 @@ export function MusicDrawer({
         {/* ---------------- 2. NEXT UP QUEUE SECTION ---------------- */}
         <div className="flex-1 flex flex-col gap-2 min-h-0">
           <div className="flex items-center justify-between px-1">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
+            <span className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
               {mq.nextUp} ({media.queue.length})
             </span>
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             {media.queue.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-1 rounded-[6px] border border-dashed border-[var(--border-loft)] py-8 text-center text-[11px] text-[var(--text-loft-muted)]">
+              <div className="flex flex-col items-center justify-center gap-1 rounded-[10px] border border-dashed border-[var(--border-loft)] py-8 text-center text-[13px] text-[var(--text-loft-muted)]">
                 <span>{mq.emptyQueue}</span>
               </div>
             ) : (
               media.queue.map((track, idx) => {
                 const itemMeta = metaMap[track.video_id];
                 const trackTitle =
-                  itemMeta?.title ||
                   track.title ||
+                  itemMeta?.title ||
                   `YouTube Video (${track.video_id})`;
                 const trackChannel =
-                  itemMeta?.channel || track.channel || "YouTube";
+                  track.channel || itemMeta?.channel || "YouTube";
 
                 const isDragging = draggedIndex === idx;
                 const isOver = dragOverIndex === idx && draggedIndex !== idx;
@@ -768,12 +795,12 @@ export function MusicDrawer({
                 return (
                   <div
                     key={track.id}
-                    draggable
+                    draggable={canControl}
                     onDragStart={(e) => handleDragStart(e, idx)}
                     onDragOver={(e) => handleDragOver(e, idx)}
                     onDrop={(e) => handleDrop(e, idx)}
                     onDragEnd={handleDragEnd}
-                    className={`group flex items-center gap-3 p-2 rounded-[6px] border transition-all cursor-grab active:cursor-grabbing select-none ${
+                    className={`group flex items-center gap-3 p-2 rounded-[10px] border transition-all select-none ${canControl ? "cursor-grab active:cursor-grabbing" : ""} ${
                       isDragging
                         ? "opacity-30 bg-[var(--border-loft)]/40 border-dashed border-[var(--border-loft)] scale-[0.98]"
                         : isOver
@@ -790,13 +817,13 @@ export function MusicDrawer({
                     </div>
 
                     {/* 16:9 Mini Thumbnail */}
-                    <div className="relative h-9 w-14 shrink-0 overflow-hidden rounded-[6px] border border-white/10 bg-[#101113]">
+                    <div className="relative h-9 w-14 shrink-0 overflow-hidden rounded-[10px] border border-white/10 bg-[#101113]">
                       <img
                         src={`https://img.youtube.com/vi/${track.video_id}/mqdefault.jpg`}
                         alt=""
                         className="w-full h-full object-cover"
                       />
-                      <span className="absolute bottom-1 right-1 text-[11px] font-mono text-white/80 bg-[#101113]/60 px-1 rounded-[6px]">
+                      <span className="absolute bottom-1 right-1 text-[13px] font-mono text-white/80 bg-[#101113]/60 px-1 rounded-[10px]">
                         #{idx + 1}
                       </span>
                     </div>
@@ -804,12 +831,12 @@ export function MusicDrawer({
                     {/* Track Info */}
                     <div className="flex flex-col min-w-0 flex-1">
                       <span
-                        className="text-[11px] font-medium text-[var(--text-loft-primary)] truncate"
+                        className="text-[13px] font-medium text-[var(--text-loft-primary)] truncate"
                         title={trackTitle}
                       >
                         {trackTitle}
                       </span>
-                      <span className="text-[11px] text-[var(--text-loft-secondary)] truncate">
+                      <span className="text-[13px] text-[var(--text-loft-secondary)] truncate">
                         {trackChannel} · {mq.addedBy} {track.added_by}
                       </span>
                     </div>
@@ -822,7 +849,7 @@ export function MusicDrawer({
                           control("queue.select", { track_id: track.id })
                         }
                         disabled={!canControl}
-                        className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
+                        className="w-7 h-7 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
                         title={mq.play}
                       >
                         <Play className="w-3 h-3 fill-current ml-1" />
@@ -830,10 +857,11 @@ export function MusicDrawer({
 
                       {/* Remove from Queue */}
                       <button
+                        disabled={!canControl}
                         onClick={() =>
                           control("queue.remove", { track_id: track.id })
                         }
-                        className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
+                        className="w-7 h-7 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] hover:bg-[var(--bg-loft-card)] transition-colors cursor-pointer"
                         title={mq.remove}
                       >
                         <Trash2 className="w-3 h-3" />
@@ -847,13 +875,13 @@ export function MusicDrawer({
         </div>
 
         {/* ---------------- 3. BOTTOM TOOLBAR ---------------- */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-loft)] pt-2 text-[11px] text-[var(--text-loft-secondary)]">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-loft)] pt-2 text-[13px] text-[var(--text-loft-secondary)]">
           <div className="flex items-center gap-2">
             {/* Shuffle */}
             <button
               onClick={() => control("queue.shuffle")}
-              disabled={media.queue.length <= 1}
-              className="px-3 py-1 rounded-[6px] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] disabled:opacity-40 flex items-center gap-2 transition-colors cursor-pointer"
+              disabled={!canControl || media.queue.length <= 1}
+              className="px-3 py-1 rounded-[10px] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] disabled:opacity-40 flex items-center gap-2 transition-colors cursor-pointer"
               title={mq.shuffle}
             >
               <Shuffle className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
@@ -863,8 +891,9 @@ export function MusicDrawer({
             {/* Repeat */}
           <button
               onClick={() => control("media.repeat", { repeat: !media.repeat })}
+              aria-pressed={media.repeat}
               disabled={!canControl}
-              className={`px-3 py-1 rounded-[6px] flex items-center gap-2 transition-colors cursor-pointer ${
+              className={`px-3 py-1 rounded-[10px] flex items-center gap-2 transition-colors cursor-pointer ${
                 media.repeat
                   ? "bg-[#101113]/15 text-[var(--text-loft-primary)] font-medium"
                   : "hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)]"
@@ -879,8 +908,8 @@ export function MusicDrawer({
           {/* Clear List */}
           <button
             onClick={() => control("queue.clear")}
-            disabled={media.queue.length === 0}
-            className="px-3 py-1 rounded-[6px] hover:bg-[#101113]/10 hover:text-[var(--text-loft-primary)] disabled:opacity-40 flex items-center gap-2 transition-colors cursor-pointer"
+            disabled={!canControl || media.queue.length === 0}
+            className="px-3 py-1 rounded-[10px] hover:bg-[#101113]/10 hover:text-[var(--text-loft-primary)] disabled:opacity-40 flex items-center gap-2 transition-colors cursor-pointer"
             title={mq.clearList}
           >
             <Trash2 className="w-3.5 h-3.5" />

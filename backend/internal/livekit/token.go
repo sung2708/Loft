@@ -22,6 +22,7 @@ type TokenService struct {
 }
 
 type videoGrant struct {
+	RoomCreate        bool     `json:"roomCreate,omitempty"`
 	RoomJoin          bool     `json:"roomJoin"`
 	RoomAdmin         bool     `json:"roomAdmin,omitempty"`
 	Room              string   `json:"room"`
@@ -131,4 +132,46 @@ func (s *TokenService) Create(room domain.Room, identity domain.Identity) (strin
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, grant).SignedString([]byte(s.apiSecret))
+}
+
+// EndRoom only deletes the SFU session; application history stays in PostgreSQL.
+func (s *TokenService) EndRoom(ctx context.Context, room string) error {
+	if s.apiKey == "" && s.apiSecret == "" {
+		return nil
+	} // No SFU is configured in chat-only development.
+	if s.serverURL == "" || s.apiKey == "" || s.apiSecret == "" {
+		return errors.New("LiveKit management unavailable")
+	}
+	now := time.Now().UTC()
+	grant := claims{Video: videoGrant{RoomCreate: true}, RegisteredClaims: jwt.RegisteredClaims{Issuer: s.apiKey, IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute))}}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, grant).SignedString([]byte(s.apiSecret))
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(struct {
+		Room string `json:"room"`
+	}{room})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.serverURL+"/twirp/livekit.RoomService/DeleteRoom", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.NewDecoder(io.LimitReader(response.Body, 4<<10)).Decode(&body) == nil && body.Code == "not_found" {
+			return nil
+		}
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("LiveKit end room returned %d", response.StatusCode)
+	}
+	return nil
 }

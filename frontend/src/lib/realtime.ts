@@ -103,6 +103,11 @@ export class RoomSocket {
           if (this.deadline) clearTimeout(this.deadline);
           this.deadline = null;
         }
+        if(event.type === "room.ended" || (event.type === "error" && event.payload.code === "ROOM_ENDED")) {
+          this.close();
+          this.callbacks.onEvent({type:"room.ended",version:1,event_id:event.event_id,room_id:event.room_id,payload:{}});
+          return;
+        }
         if (event.type === "error" && event.payload.code === "ROOM_FULL") {
           this.close();
           this.callbacks.onState("FAILED", "Room is full. Try again after someone leaves.");

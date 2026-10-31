@@ -11,6 +11,8 @@ import (
 
 const MaxMessageLength = 2000
 
+var ErrRoomEnded = errors.New("room has ended")
+
 var (
 	ErrNotFound              = errors.New("not found")
 	ErrUnauthorized          = errors.New("unauthorized")
@@ -287,13 +289,15 @@ func CanControlMedia(room Room, identity Identity) bool {
 	return identity.Type == IdentityUser && room.OwnerID != "" && identity.ID == room.OwnerID
 }
 
+func CanEndRoom(room Room, identity Identity) bool { return CanManageRoomAccess(room, identity) }
+
 func CanDeleteRoom(room Room, identity Identity) bool {
 	return identity.Type == IdentityUser && identity.ID == room.OwnerID
 }
 
-func CanManageQueue(room Room, identity Identity) bool {
-	return CanJoin(room, identity)
-}
+func CanAddToQueue(room Room, identity Identity) bool { return CanJoin(room, identity) }
+
+func CanManageQueue(room Room, identity Identity) bool { return CanControlMedia(room, identity) }
 
 func CanChangeSettings(room Room, identity Identity) bool { return CanControlMedia(room, identity) }
 

@@ -1,6 +1,12 @@
 import { useI18nStore } from "./useTranslation";
 
 const vietnamese: Record<string, string> = {
+ "This room has ended":"Phòng đã kết thúc",
+ "Could not end the room":"Không thể kết thúc phòng",
+ "Only the room owner can end this room":"Chỉ chủ phòng có thể kết thúc phòng",
+ "Room ended; call cleanup needs retrying":"Phòng đã kết thúc. Hãy thử lại để ngắt cuộc gọi.",
+  "music change is awaiting confirmation": "Đang xác nhận thay đổi nhạc",
+  "Could not save music change; retry": "Không thể lưu thay đổi nhạc. Hãy thử lại.",
   "Enter the room password to join.": "Nhập mật khẩu phòng để tham gia.",
   "That password doesn't look right. Try again.": "Mật khẩu chưa đúng. Hãy thử lại.",
   "Please wait a moment before trying again": "Vui lòng chờ một chút rồi thử lại.",
@@ -47,6 +53,7 @@ const vietnamese: Record<string, string> = {
   "Chat": "Trò chuyện",
   "People": "Thành viên",
   "YouTube Lounge": "Danh sách chờ YouTube",
+  "Whiteboard": "Bảng vẽ",
   "Shared Queue": "Danh sách chờ",
   "Reactions": "Biểu cảm",
   "Social actions": "Tương tác trong phòng",
@@ -107,11 +114,6 @@ const vietnamese: Record<string, string> = {
   "Connected": "Đã kết nối",
   "This window will close automatically.": "Cửa sổ này sẽ tự đóng.",
   "Connection failed": "Kết nối thất bại",
-  "Spotify connection was cancelled": "Việc kết nối Spotify đã bị hủy",
-  "This Spotify connection link has expired. Try again.": "Liên kết kết nối Spotify đã hết hạn. Hãy thử lại.",
-  "Spotify could not verify this connection. Try again.": "Spotify không thể xác minh kết nối này. Hãy thử lại.",
-  "Spotify is temporarily unavailable. Try again.": "Spotify tạm thời không khả dụng. Hãy thử lại.",
-  "Could not save the Spotify connection. Try again.": "Không thể lưu kết nối Spotify. Hãy thử lại.",
   "YouTube music lounge": "Phòng nhạc YouTube",
   "Close music": "Đóng phòng nhạc",
   "Now playing:": "Đang phát:",

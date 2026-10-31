@@ -112,6 +112,9 @@ export interface RoomMediaState {
 }
 
 export type ServerEvent =
+ | { type:"board.changed"; version:1; event_id:string; room_id:string; payload:{version:number} }
+ | { type:"board.cursor"; version:1; event_id:string; room_id:string; payload:{connection_id:string;name:string;x:number;y:number;drawing:boolean;visible:boolean} }
+  | {type:"room.ended";version:1;event_id:string;room_id:string;payload:Record<string,never>}
   | {
       type: "room.snapshot";
       version: 1;

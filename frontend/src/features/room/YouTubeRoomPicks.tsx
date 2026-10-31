@@ -26,12 +26,12 @@ export function YouTubeRoomPicks() {
     }
   };
 
-  const isHost = self?.identity_id === room?.owner_id;
+  const isHost = self?.identity_type === "user" && self.identity_id === room?.owner_id;
 
   return (
-    <section className="rounded-[6px] border border-[var(--border-loft)] p-3">
+    <section className="rounded-[10px] border border-[var(--border-loft)] p-3">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] font-medium">Room Picks</p>
+        <p className="text-[13px] font-medium">Room Picks</p>
         <span className="text-[10px] text-[var(--text-loft-secondary)]">
           {picks.length}
         </span>
@@ -47,7 +47,7 @@ export function YouTubeRoomPicks() {
 
       {picks.map((pick) => (
         <div key={pick.id} className="mt-2 flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-[11px]">
+          <span className="min-w-0 flex-1 truncate text-[13px]">
             {pick.title || pick.video_id}
             <span className="block truncate text-[10px] text-[var(--text-loft-secondary)]">
               {pick.channel || "YouTube"} · {pick.votes} {pick.votes === 1 ? "vote" : "votes"}
@@ -64,7 +64,7 @@ export function YouTubeRoomPicks() {
             <button
               type="button"
               onClick={() => promote(pick.id)}
-              className="rounded bg-[var(--accent-blue)] px-2 py-1 text-[10px] text-white"
+              className="control-primary rounded px-2 py-1 text-[13px]"
             >
               Play
             </button>

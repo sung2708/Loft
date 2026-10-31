@@ -129,7 +129,7 @@ export const LobbyHeader: React.FC = () => {
               key={item.label}
               href={item.href}
               aria-current={item.active ? "page" : undefined}
-              className={`text-[11px] font-medium transition-colors duration-200 ${
+              className={`text-[13px] font-medium transition-colors duration-200 ${
                 item.active
                   ? "text-[var(--text-loft-primary)] font-medium border-b-2 border-[var(--border-loft)] pb-1"
                   : "text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)]"
@@ -163,7 +163,7 @@ export const LobbyHeader: React.FC = () => {
                   : "Switch to dark theme"
             }
             aria-pressed={theme === "dark"}
-            className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--text-loft-secondary)]"
+            className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[10px] text-[var(--text-loft-secondary)]"
           >
             {theme === "dark" ? (
               <Sun className="w-4 h-4" />
@@ -201,7 +201,7 @@ export const LobbyHeader: React.FC = () => {
                     className="w-full h-full object-cover"
                   />
                 ) : initials ? (
-                  <span className="text-[11px] font-medium leading-none">
+                  <span className="text-[13px] font-medium leading-none">
                     {initials}
                   </span>
                 ) : (
@@ -215,7 +215,7 @@ export const LobbyHeader: React.FC = () => {
                   ref={menuRef}
                   role="menu"
                   aria-orientation="vertical"
-                  className="workflow-panel absolute right-0 top-full z-50 mt-2 w-64 rounded-[6px] p-2 text-left"
+                  className="workflow-panel absolute right-0 top-full z-50 mt-2 w-64 rounded-[10px] p-2 text-left"
                 >
                   {/* User Identity Header */}
                   <div className="p-3 flex items-center gap-3 border-b border-[var(--border-loft)]">
@@ -227,7 +227,7 @@ export const LobbyHeader: React.FC = () => {
                           className="w-full h-full object-cover"
                         />
                       ) : initials ? (
-                        <span className="text-[11px] font-medium">
+                        <span className="text-[13px] font-medium">
                           {initials}
                         </span>
                       ) : (
@@ -235,11 +235,11 @@ export const LobbyHeader: React.FC = () => {
                       )}
                     </div>
                     <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-[11px] font-medium text-[var(--text-loft-primary)] truncate">
+                      <span className="text-[13px] font-medium text-[var(--text-loft-primary)] truncate">
                         {displayName}
                       </span>
                       {email && (
-                        <span className="text-[11px] text-[var(--text-loft-muted)] truncate">
+                        <span className="text-[13px] text-[var(--text-loft-muted)] truncate">
                           {email}
                         </span>
                       )}
@@ -252,7 +252,7 @@ export const LobbyHeader: React.FC = () => {
                       href="/home"
                       onClick={() => setIsMenuOpen(false)}
                       role="menuitem"
-                      className="flex items-center gap-3 px-3 py-2 rounded-[6px] text-[11px] font-medium text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-colors"
+                      className="flex items-center gap-3 px-3 py-2 rounded-[10px] text-[13px] font-medium text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-colors"
                     >
                       <LayoutGrid className="w-4 h-4 text-[var(--text-loft-primary)]" />
                       <span>{t.account.yourRooms}</span>
@@ -262,7 +262,7 @@ export const LobbyHeader: React.FC = () => {
                       href="/settings"
                       onClick={() => setIsMenuOpen(false)}
                       role="menuitem"
-                      className="hover-invert flex items-center gap-3 rounded-[6px] px-3 py-2 text-[11px] font-medium text-[var(--text-loft-primary)] transition-colors duration-200"
+                      className="hover-invert flex items-center gap-3 rounded-[10px] px-3 py-2 text-[13px] font-medium text-[var(--text-loft-primary)] transition-colors duration-200"
                     >
                       <Settings2 aria-hidden="true" className="h-4 w-4" />
                       <span>{locale === "vi" ? "Cài đặt" : "Settings"}</span>
@@ -272,7 +272,7 @@ export const LobbyHeader: React.FC = () => {
                       href="/home?create=1"
                       onClick={() => setIsMenuOpen(false)}
                       role="menuitem"
-                      className="flex items-center gap-3 px-3 py-2 rounded-[6px] text-[11px] font-medium text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-colors"
+                      className="flex items-center gap-3 px-3 py-2 rounded-[10px] text-[13px] font-medium text-[var(--text-loft-primary)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-colors"
                     >
                       <Plus className="w-4 h-4 text-[var(--text-loft-primary)]" />
                       <span>{t.account.createRoom}</span>
@@ -289,7 +289,7 @@ export const LobbyHeader: React.FC = () => {
                         window.location.replace("/");
                       }}
                       role="menuitem"
-                      className="btn-press hover-invert flex w-full items-center gap-3 rounded-[6px] px-3 py-2 text-[11px] font-medium text-[var(--text-loft-primary)]"
+                      className="btn-press hover-invert flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-[13px] font-medium text-[var(--text-loft-primary)]"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>{t.account.signOut}</span>
@@ -303,7 +303,7 @@ export const LobbyHeader: React.FC = () => {
             <button
               type="button"
               onClick={() => void signInWithGoogle(authNext)}
-              className="btn-press hover-invert flex h-8 items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 text-[11px] font-medium text-[var(--text-loft-primary)]"
+              className="btn-press hover-invert flex h-8 items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 text-[13px] font-medium text-[var(--text-loft-primary)]"
             >
               <LogIn className="w-3.5 h-3.5 text-[var(--text-loft-primary)]" />
               <span>{t.common.signIn}</span>

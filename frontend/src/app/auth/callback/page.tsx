@@ -45,7 +45,7 @@ export default function AuthCallbackPage() {
         return;
       }
       const storedNext = sessionStorage.getItem("loft.auth.next");
-      const destination = safeAuthDestination(storedNext, "/home");
+      const destination = safeAuthDestination(params.get("next") ?? storedNext, "/home");
       sessionStorage.removeItem("loft.auth.next");
       router.replace(destination === "/" ? "/home" : destination);
     })();
@@ -55,7 +55,7 @@ export default function AuthCallbackPage() {
       <LobbyHeader />
       <section
         aria-live="polite"
-        className="utility-panel w-full max-w-sm rounded-[6px] p-6 text-center sm:p-8"
+        className="utility-panel w-full max-w-sm rounded-[10px] p-6 text-center sm:p-8"
       >
         <div className="app-loader mx-auto" aria-hidden="true" />
         <h1 className="mt-5 font-medium">
@@ -67,12 +67,12 @@ export default function AuthCallbackPage() {
         </h1>
         {error && (
           <>
-            <p className="mt-2 text-[11px] text-[var(--text-loft-primary)]">
+            <p className="mt-2 text-[13px] text-[var(--text-loft-primary)]">
               {tr(error)}
             </p>
             <Link
               href="/"
-              className="control-secondary mt-5 inline-flex h-9 items-center rounded-[6px] px-3 text-[11px] font-medium"
+              className="control-secondary mt-5 inline-flex h-9 items-center rounded-[10px] px-3 text-[13px] font-medium"
             >
               {tr("Return home")}
             </Link>

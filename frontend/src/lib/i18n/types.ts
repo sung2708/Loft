@@ -63,11 +63,14 @@ export interface TranslationDictionary {
     addedBy: string;
     shuffle: string;
     repeat: string;
+    autoplay: string;
+    autoplayDescription: string;
     clearList: string;
     enableAudio: string;
     play: string;
     pause: string;
     previous: string;
+    progress: string;
     next: string;
     volume: string;
     fullscreen: string;

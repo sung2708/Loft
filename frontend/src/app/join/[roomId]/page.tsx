@@ -61,6 +61,7 @@ export default function RoomJoinPage() {
         ROOM_ACCESS_DENIED: "This room does not allow guests",
         ROOM_LOCKED: "This room is locked",
         ROOM_NOT_FOUND: "Room not found",
+ ROOM_ENDED: "This room has ended",
       };
       return messages[caught.code] ?? fallback;
     }
@@ -102,9 +103,9 @@ export default function RoomJoinPage() {
     };
   }, []);
 
-  // Auto-admit authenticated users if access is already granted and no password/lock is required
+  // Passwords apply to guest admission; authenticated users follow membership approval.
   useEffect(() => {
-    if (!room || !hasSession || room.password_required || room.is_locked) return;
+    if (!room || !hasSession || room.is_locked) return;
     let active = true;
     void (async () => {
       const session = (await getSupabase()?.auth.getSession())?.data.session;
@@ -127,6 +128,8 @@ export default function RoomJoinPage() {
             displayName: me.display_name,
           });
           router.replace(`/room/${encodeURIComponent(room.slug)}`);
+        } else if (active && result.status === "pending") {
+          setAccessRequested(true);
         }
       } catch {
         /* User can still interact manually if auto-admission fails */
@@ -194,6 +197,7 @@ export default function RoomJoinPage() {
         );
         if (result.status === "approved" || result.status === "not_required") {
           const me = await api.me(session.access_token);
+          if (!active) return;
           saveCredential(room.id, {
             token: session.access_token,
             type: "user",
@@ -321,21 +325,18 @@ export default function RoomJoinPage() {
       <div className="app-canvas page-scroll min-h-dvh w-full text-[var(--text-loft-primary)]">
         <LobbyHeader />
         <main className="flex min-h-[calc(100dvh-3.5rem)] items-center justify-center px-4 py-10 pt-20">
-          <section className="workflow-panel w-full max-w-sm rounded-[6px] p-6 text-center">
+          <section className="workflow-panel w-full max-w-sm rounded-[10px] p-6 text-center">
             <CircleAlert aria-hidden="true" className="mx-auto h-5 w-5" />
             <h1 className="mt-4 text-base font-medium">
-              {l("This room is unavailable", "Phòng này không khả dụng")}
+              {error==="This room has ended"?l("Room ended","Phòng đã kết thúc"):l("This room is unavailable", "Phòng này không khả dụng")}
             </h1>
-            <p className="mt-2 text-[11px] text-[var(--text-loft-secondary)]">
-              {l(
-                "It may not exist or may have ended.",
-                "Phòng có thể không tồn tại hoặc đã kết thúc.",
-              )}
+            <p className="mt-2 text-[13px] text-[var(--text-loft-secondary)]">
+              {error==="This room has ended"?l("This invite link no longer works.","Link phòng này không còn dùng được."):l("It may not exist or may have ended.","Phòng có thể không tồn tại hoặc đã kết thúc.")}
             </p>
             <button
               type="button"
               onClick={() => router.push("/")}
-              className="btn-press mt-5 inline-flex h-10 items-center gap-2 rounded-[6px] bg-[#101113] px-4 text-[11px] font-medium text-white"
+              className="btn-press mt-5 inline-flex h-10 items-center gap-2 rounded-[10px] bg-[#101113] px-4 text-[13px] font-medium text-white"
             >
               <ArrowLeft aria-hidden="true" className="h-4 w-4" />
               {l("Back home", "Về trang chủ")}
@@ -356,7 +357,7 @@ export default function RoomJoinPage() {
               <Globe2 aria-hidden="true" className="h-4 w-4" />
               <span className="eyebrow">{l("Room", "Phòng")}</span>
             </div>
-            <div className="flex items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-2 py-1 text-[11px] font-medium">
+            <div className="flex items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-2 py-1 text-[13px] font-medium">
               {room?.is_locked ? (
                 <Lock aria-hidden="true" className="h-3.5 w-3.5" />
               ) : (
@@ -377,10 +378,10 @@ export default function RoomJoinPage() {
               duration: shouldReduceMotion ? 0 : 0.5,
               ease: EASE_ENTRANCE,
             }}
-            className="workflow-panel overflow-hidden rounded-[6px]"
+            className="workflow-panel overflow-hidden rounded-[10px]"
           >
             <div className="flex items-center justify-between border-b border-[var(--border-loft)] px-4 py-3 sm:px-5">
-              <div className="flex items-center gap-2 text-[11px] text-[var(--text-loft-secondary)]">
+              <div className="flex items-center gap-2 text-[13px] text-[var(--text-loft-secondary)]">
                 <UserRound aria-hidden="true" className="h-4 w-4" />
                 <span>
                   {room?.allow_guests
@@ -399,7 +400,7 @@ export default function RoomJoinPage() {
                   <h1 className="break-words text-base font-medium tracking-tight">
                     {room?.name ?? l("Loading room…", "Đang tải phòng…")}
                   </h1>
-                  <p className="mt-1 text-[11px] text-[var(--text-loft-secondary)]">
+                  <p className="mt-1 text-[13px] text-[var(--text-loft-secondary)]">
                     {room?.allow_guests
                       ? l(
                           "Guests can join with a display name.",
@@ -411,14 +412,14 @@ export default function RoomJoinPage() {
                         )}
                   </p>
                 </div>
-                <span className="shrink-0 rounded-[6px] border border-[var(--border-loft)] px-2 py-1 text-[11px] font-medium">
+                <span className="shrink-0 rounded-[10px] border border-[var(--border-loft)] px-2 py-1 text-[13px] font-medium">
                   {room?.allow_guests
                     ? l("Guests", "Khách")
                     : l("Members", "Thành viên")}
                 </span>
               </div>
               {room?.is_locked ? (
-                <div className="flex items-start gap-2 border-t border-[var(--border-loft)] pt-3 text-[11px] text-[var(--text-loft-secondary)]">
+                <div className="flex items-start gap-2 border-t border-[var(--border-loft)] pt-3 text-[13px] text-[var(--text-loft-secondary)]">
                   <Lock
                     aria-hidden="true"
                     className="mt-0.5 h-3.5 w-3.5 shrink-0"
@@ -444,7 +445,7 @@ export default function RoomJoinPage() {
                 <div className="flex flex-col gap-2">
                   <label
                     htmlFor="guest-display-name"
-                    className="text-[11px] font-medium"
+                    className="text-[13px] font-medium"
                   >
                     {l("Guest name", "Tên khách")}
                     <span className="ml-1 text-[var(--text-loft-muted)]">
@@ -457,7 +458,7 @@ export default function RoomJoinPage() {
                     maxLength={48}
                     onChange={(event) => setDisplayName(event.target.value)}
                     placeholder={l("Display name", "Tên hiển thị")}
-                    className="h-11 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] outline-none placeholder:text-[var(--text-loft-muted)] focus:ring-2 focus:ring-[var(--accent-blue)]"
+                    className="h-11 w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[13px] outline-none placeholder:text-[var(--text-loft-muted)] focus:ring-2 focus:ring-[var(--accent-blue)]"
                   />
                 </div>
               ) : null}
@@ -465,7 +466,7 @@ export default function RoomJoinPage() {
                 <div className="flex flex-col gap-2">
                   <label
                     htmlFor="room-password"
-                    className="text-[11px] font-medium"
+                    className="text-[13px] font-medium"
                   >
                     {l("Room password", "Mật khẩu phòng")}
                   </label>
@@ -476,14 +477,14 @@ export default function RoomJoinPage() {
                     maxLength={256}
                     autoComplete="current-password"
                     onChange={(event) => setPassword(event.target.value)}
-                    className="h-11 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] outline-none focus:ring-2 focus:ring-[var(--accent-blue)]"
+                    className="h-11 w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[13px] outline-none focus:ring-2 focus:ring-[var(--accent-blue)]"
                   />
                 </div>
               ) : null}
               {error ? (
                 <div
                   role="alert"
-                  className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px]"
+                  className="flex items-start gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[13px]"
                 >
                   <CircleAlert
                     aria-hidden="true"
@@ -496,7 +497,7 @@ export default function RoomJoinPage() {
                 <div
                   role="status"
                   aria-live="polite"
-                  className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px] text-[var(--text-loft-secondary)]"
+                  className="flex items-start gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[13px] text-[var(--text-loft-secondary)]"
                 >
                   <ShieldCheck
                     aria-hidden="true"
@@ -515,7 +516,7 @@ export default function RoomJoinPage() {
                   id="guest-join-btn"
                   type="submit"
                   disabled={isJoiningGuest}
-                  className={`btn-press inline-flex h-11 w-full items-center justify-center gap-2 rounded-[6px] px-4 text-[11px] font-medium disabled:cursor-wait disabled:opacity-50 ${
+                  className={`btn-press inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] px-4 text-[13px] font-medium disabled:cursor-wait disabled:opacity-50 ${
                     hasSession
                       ? "hover-invert border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)]"
                       : "bg-[#101113] text-white"
@@ -550,7 +551,7 @@ export default function RoomJoinPage() {
                 type="button"
                 disabled={!room || isRequestingAccess}
                 onClick={() => void handleGoogleSignIn()}
-                className={`btn-press inline-flex h-11 w-full items-center justify-center gap-2 rounded-[6px] px-4 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`btn-press inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] px-4 text-[13px] font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
                   hasSession || !room?.allow_guests
                     ? "bg-[#101113] text-white"
                     : "hover-invert border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)]"

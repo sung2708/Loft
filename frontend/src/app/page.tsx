@@ -132,25 +132,19 @@ export default function LobbyPage() {
   };
 
   return (
-    <div className="app-canvas min-h-screen w-full flex flex-col text-[var(--text-loft-primary)] overflow-x-hidden selection:bg-[#101113]/30">
+    <div className="app-canvas lobby-canvas min-h-screen w-full flex flex-col text-[var(--text-loft-primary)] overflow-x-hidden selection:bg-[#101113]/30">
       {/* Top Shared Lobby Header */}
       <LobbyHeader />
 
       {/* Main Spatial Stage Body */}
       <main className="flex-1 w-full min-h-[calc(100vh-3.5rem)] pt-14 flex items-center px-4 py-8 sm:px-6 sm:py-12">
-        <section className="workflow-panel relative mx-auto grid w-full max-w-[920px] overflow-hidden rounded-[6px] md:grid-cols-[minmax(0,.82fr)_minmax(0,1.18fr)]">
-          <div className="flex min-h-48 flex-col items-center justify-center border-b border-[var(--border-loft)] px-5 py-8 text-center sm:min-h-56 sm:px-8 md:min-h-[440px] md:border-b-0 md:border-r md:px-10">
-          <div aria-hidden="true" className="spatial-scene mb-1 hidden md:block">
-            <span className="spatial-scene__plane spatial-scene__plane--back" />
-            <span className="spatial-scene__plane spatial-scene__plane--mid" />
-            <span className="spatial-scene__plane spatial-scene__plane--front" />
-            <span className="spatial-scene__node" />
-          </div>
+        <section className="workflow-panel lobby-workflow relative mx-auto grid w-full max-w-[960px] overflow-hidden rounded-[20px] md:grid-cols-[minmax(0,.82fr)_minmax(0,1.18fr)]">
+          <div className="lobby-identity flex min-h-48 flex-col items-center justify-center border-b border-[var(--border-loft)] px-5 py-8 text-center sm:min-h-56 sm:px-8 md:min-h-[440px] md:border-b-0 md:border-r md:px-10">
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
-            className="relative mb-5 grid h-14 w-14 place-items-center rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-base)]"
+            className="relative mb-5 grid h-14 w-14 place-items-center rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-base)]"
           >
             <LoftMark className="h-8 w-8 text-[var(--brand-mark)]" />
           </motion.div>
@@ -166,7 +160,7 @@ export default function LobbyPage() {
           </div>
 
           <div className="flex min-w-0 items-center px-5 py-8 sm:px-8 sm:py-10">
-          <div className="w-full flex flex-col gap-4 text-left">
+          <div className="w-full flex flex-col gap-5 text-left">
             {/* Input Enclosure */}
             <div className="relative w-full group">
               <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-loft-muted)] group-focus-within:text-[var(--text-loft-primary)] transition-colors flex items-center pointer-events-none">
@@ -175,6 +169,7 @@ export default function LobbyPage() {
 
               <input
                 id="roomInput"
+                aria-label={locale === "vi" ? "Liên kết hoặc mã phòng" : "Room link or code"}
                 type="text"
                 autoComplete="off"
                 spellCheck={false}
@@ -187,7 +182,7 @@ export default function LobbyPage() {
                   }
                 }}
                 placeholder={t.lobby.inputPlaceholder}
-                className="room-code-input w-full h-12 pl-10 pr-12 rounded-[6px] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] font-medium text-[11px] outline-none border border-[var(--border-loft)] focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20 transition-colors duration-200 shadow-xs"
+                className="room-code-input w-full h-12 pl-10 pr-12 rounded-[10px] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] placeholder:text-[var(--text-loft-muted)] font-medium text-[14px] outline-none border border-[var(--border-loft)] focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20 transition-colors duration-200 shadow-xs"
               />
             </div>
 
@@ -200,27 +195,27 @@ export default function LobbyPage() {
                   animate={{ opacity: 1, height: "auto", scale: 1 }}
                   exit={{ opacity: 0, height: 0, scale: 0.96 }}
                   transition={{ duration: 0.2, ease: EASE_SPATIAL }}
-                  className="flex flex-col gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-4 transition-colors"
+                  className="flex flex-col gap-3 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] p-4 transition-colors"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="relative flex items-center justify-center w-8 h-8 rounded-[6px] bg-[#101113]/15 text-[var(--text-loft-primary)] shrink-0">
+                      <div className="relative flex items-center justify-center w-8 h-8 rounded-[10px] bg-[#101113]/15 text-[var(--text-loft-primary)] shrink-0">
                         <Terminal className="w-4 h-4" />
                         <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-[#101113] animate-ping" />
                         <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-[#101113]" />
                       </div>
                       <div className="flex flex-col text-left min-w-0">
-                        <span className="text-[11px] font-medium text-[var(--text-loft-primary)] truncate">
+                        <span className="text-[14px] font-medium text-[var(--text-loft-primary)] truncate">
                           {resolvedRoom.name}
                         </span>
-                        <span className="text-[11px] text-[var(--text-loft-secondary)] truncate">
+                        <span className="text-[14px] text-[var(--text-loft-secondary)] truncate">
                           {resolvedRoom.allow_guests
                             ? t.lobby.guestAccessEnabled
                             : t.lobby.signInRequired}
                         </span>
                       </div>
                     </div>
-                    <span className="rounded-[6px] border border-[var(--border-loft)] px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-primary)] shrink-0">
+                    <span className="rounded-[10px] border border-[var(--border-loft)] px-2 py-1 text-[14px] font-medium uppercase tracking-wider text-[var(--text-loft-primary)] shrink-0">
                       {t.common.active}
                     </span>
                   </div>
@@ -233,7 +228,7 @@ export default function LobbyPage() {
                         )
                       }
                       type="button"
-                      className="btn-press px-3 py-1 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white text-[11px] font-medium shadow-xs transition-all cursor-pointer"
+                      className="btn-press px-3 py-1 rounded-[10px] bg-[#101113] hover:bg-[#101113] text-white text-[14px] font-medium shadow-xs transition-all cursor-pointer"
                     >
                       {t.common.join}
                     </button>
@@ -245,7 +240,7 @@ export default function LobbyPage() {
             {error && (
               <div
                 role="alert"
-                className="px-3 py-2 rounded-[6px] bg-[#101113]/10 border border-[var(--border-loft)]/20 text-[var(--text-loft-primary)] text-[11px]"
+                className="px-3 py-2 rounded-[10px] bg-[#101113]/10 border border-[var(--border-loft)]/20 text-[var(--text-loft-primary)] text-[14px]"
               >
                 {tr(error)}
               </div>
@@ -255,7 +250,7 @@ export default function LobbyPage() {
             {isAuthLoading ? (
               /* Anti-Flicker Neutral Loading Placeholder */
               <div className="w-full flex flex-col gap-3 py-1">
-                <div className="w-full h-12 rounded-[6px] bg-[var(--border-loft)] animate-pulse" />
+                <div className="w-full h-12 rounded-[10px] bg-[var(--border-loft)] animate-pulse" />
               </div>
             ) : isAuthenticated ? (
               /* AUTHENTICATED STATE: Join Room + Create Room (No Google button, No empty gap) */
@@ -266,7 +261,7 @@ export default function LobbyPage() {
                     type="button"
                     disabled={isConnecting}
                     onClick={() => void handleJoin()}
-                    className="btn-press flex h-12 w-full flex-1 items-center justify-center gap-2 rounded-[6px] bg-[#101113] text-[11px] font-medium tracking-tight text-white transition-colors disabled:cursor-not-allowed disabled:opacity-75"
+                    className="btn-press flex h-12 w-full flex-1 items-center justify-center gap-2 rounded-[10px] control-primary text-[14px] font-medium tracking-tight transition-colors disabled:cursor-not-allowed disabled:opacity-75"
                   >
                     {isConnecting ? (
                       <>
@@ -284,7 +279,7 @@ export default function LobbyPage() {
                   <button
                     type="button"
                     onClick={() => router.push("/home?create=1")}
-                    className="btn-press flex h-12 w-full items-center justify-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-5 text-[11px] font-medium text-[var(--text-loft-primary)] transition-colors sm:w-auto"
+                    className="btn-press flex h-12 w-full items-center justify-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-5 text-[14px] font-medium text-[var(--text-loft-primary)] transition-colors sm:w-auto"
                   >
                     <Plus className="w-4 h-4 text-[var(--text-loft-primary)]" />
                     <span>{t.lobby.createRoom}</span>
@@ -294,19 +289,19 @@ export default function LobbyPage() {
                 {/* Optional Recent Rooms Section (Only if real backend data exists) */}
                 {isAuthenticated && recentRooms.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-[var(--border-loft)] w-full text-left">
-                    <span className="text-[11px] font-medium text-[var(--text-loft-muted)] uppercase tracking-wider block mb-2 px-1">
+                    <span className="text-[14px] font-medium text-[var(--text-loft-muted)] uppercase tracking-wider block mb-2 px-1">
                       {t.lobby.recentRooms}
                     </span>
                     <div className="flex flex-col gap-1">
                       {recentRooms.slice(0, 4).map((room) => (
-                        <div key={room.id} className="group flex items-center gap-1 rounded-[6px] text-[11px]">
+                        <div key={room.id} className="group flex items-center gap-1 rounded-[10px] text-[14px]">
                           <Link href={`/room/${room.slug}`} className="flex-1 min-w-0 flex items-center justify-between px-3 py-2">
                             <div className="flex items-center gap-2 min-w-0">
                             <span className="w-2 h-2 rounded-full bg-[var(--text-loft-primary)]" />
                             <span className="font-medium text-[var(--text-loft-primary)] truncate">
                               {room.name}
                             </span>
-                            <span className="text-[11px] text-[var(--text-loft-muted)] font-medium truncate">
+                            <span className="text-[14px] text-[var(--text-loft-muted)] font-medium truncate">
                               {room.allow_guests
                                 ? t.lobby.guestAccessEnabled
                                 : t.lobby.signInRequired}
@@ -314,7 +309,7 @@ export default function LobbyPage() {
                             </div>
                             <ArrowRight className="w-4 h-4 text-[var(--text-loft-muted)] group-hover:translate-x-1 transition-transform shrink-0" />
                           </Link>
-                          <button type="button" onClick={() => { setDeleteError(null); setDeletingRoom(room); }} title={locale === "vi" ? "Xóa phòng" : "Delete room"} aria-label={`${locale === "vi" ? "Xóa phòng" : "Delete room"} ${room.name}`} className="w-8 h-8 mr-1 shrink-0 rounded-[6px] flex items-center justify-center text-[var(--text-loft-muted)] hover:text-[var(--text-loft-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent-blue)] transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          <button type="button" onClick={() => { setDeleteError(null); setDeletingRoom(room); }} title={locale === "vi" ? "Xóa phòng" : "Delete room"} aria-label={`${locale === "vi" ? "Xóa phòng" : "Delete room"} ${room.name}`} className="w-8 h-8 mr-1 shrink-0 rounded-[10px] flex items-center justify-center text-[var(--text-loft-muted)] hover:text-[var(--text-loft-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent-blue)] transition-colors"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       ))}
                     </div>
@@ -330,7 +325,7 @@ export default function LobbyPage() {
                   type="button"
                   disabled={isConnecting}
                   onClick={() => void handleJoin()}
-                  className="btn-press flex h-12 w-full items-center justify-center gap-2 rounded-[6px] bg-[#101113] text-[11px] font-medium tracking-tight text-white transition-colors disabled:cursor-not-allowed disabled:opacity-75"
+                  className="btn-press flex h-12 w-full items-center justify-center gap-2 rounded-[10px] control-primary text-[14px] font-medium tracking-tight transition-colors disabled:cursor-not-allowed disabled:opacity-75"
                 >
                   {isConnecting ? (
                     <>
@@ -348,7 +343,7 @@ export default function LobbyPage() {
                 {/* Divider with Ambient Line */}
                 <div className="relative my-1 flex items-center justify-center">
                   <div className="w-full h-px bg-[var(--border-loft)]" />
-                  <span className="absolute px-3 bg-[var(--bg-loft-base)] text-[var(--text-loft-muted)] text-[11px] font-medium uppercase tracking-wider">
+                  <span className="absolute px-3 bg-[var(--bg-loft-base)] text-[var(--text-loft-muted)] text-[14px] font-medium uppercase tracking-wider">
                     {t.common.or}
                   </span>
                 </div>
@@ -357,7 +352,7 @@ export default function LobbyPage() {
                 <button
                   onClick={handleSignIn}
                   type="button"
-                  className="btn-press group flex h-11 w-full items-center justify-center gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] font-medium text-[var(--text-loft-primary)] transition-colors"
+                  className="btn-press group flex h-11 w-full items-center justify-center gap-3 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[14px] font-medium text-[var(--text-loft-primary)] transition-colors"
                 >
                   <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                     <path
@@ -386,7 +381,7 @@ export default function LobbyPage() {
                   <button
                     onClick={handleCreateRoomAction}
                     type="button"
-                    className="btn-press text-[11px] text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] transition-colors inline-flex items-center gap-2 cursor-pointer"
+                    className="btn-press text-[14px] text-[var(--text-loft-secondary)] hover:text-[var(--text-loft-primary)] transition-colors inline-flex items-center gap-2 cursor-pointer"
                   >
                     <span className="text-[var(--text-loft-primary)] font-medium hover:underline underline-offset-4">
                       {t.lobby.createRoom}
@@ -401,8 +396,8 @@ export default function LobbyPage() {
 
       </main>
 
-      <footer className="border-t border-[var(--border-loft)] px-4 py-4 sm:px-6">
-        <nav aria-label="Thông tin pháp lý" className="mx-auto flex w-full max-w-[920px] items-center justify-center gap-4 text-[11px] text-[var(--text-loft-muted)]">
+      <footer className="border-t border-[var(--stroke-subtle)] px-4 py-5 sm:px-6">
+        <nav aria-label="Thông tin pháp lý" className="mx-auto flex w-full max-w-[920px] items-center justify-center gap-4 text-[14px] text-[var(--text-loft-muted)]">
           <Link href="/privacy" className="transition-colors hover:text-[var(--text-loft-primary)]">
             {locale === "vi" ? "Quyền riêng tư" : "Privacy"}
           </Link>

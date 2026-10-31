@@ -29,10 +29,6 @@ Preview deployments must keep their generated Vercel origin. Do not hard-code `m
 | `LIVEKIT_URL`            |  For calls  | LiveKit WebSocket endpoint                                             |
 | `LIVEKIT_API_KEY`        |  For calls  | Server-side key                                                        |
 | `LIVEKIT_API_SECRET`     |  For calls  | Server-side secret                                                     |
-| `SPOTIFY_ENABLED`        |  Optional   | Set `true` only after Spotify is fully configured                      |
-| `SPOTIFY_CLIENT_ID`      |   Spotify   | Spotify application client ID                                          |
-| `SPOTIFY_REDIRECT_URI`   |   Spotify   | Exact HTTPS backend callback URL ending in `/api/v1/spotify/callback` |
-| `SPOTIFY_CREDENTIAL_KEY` |   Spotify   | Server-only encryption key for stored provider tokens                  |
 
 Render production CORS:
 
@@ -71,25 +67,10 @@ Apply in order:
 10. `000010_youtube_room_picks.up.sql`
 11. `000011_youtube_media_settings.up.sql`
 12. `000012_remove_spotify.up.sql`
+13. `000013_room_whiteboards.up.sql`
+14. `000014_room_endings.up.sql`
 
 Do not edit applied migration files. Use a new numbered migration for schema changes.
-
-## Spotify OAuth callback
-
-Spotify must redirect directly to the backend, not to the Next.js application.
-Register this exact URL in the Spotify developer dashboard and use the same value
-for Render's `SPOTIFY_REDIRECT_URI`:
-
-```text
-https://<your-render-backend>.onrender.com/api/v1/spotify/callback
-```
-
-The backend stores OAuth PKCE state in Redis for ten minutes, consumes it once,
-exchanges the authorization code server-side, persists encrypted credentials in
-PostgreSQL, and then redirects the browser to `FRONTEND_URL`. Spotify requires
-Redis when enabled; a Redis outage fails OAuth safely instead of using memory
-state on only one Render instance. Apply migration `000008` before enabling the
-integration.
 
 ## Release verification
 
@@ -154,3 +135,5 @@ The workflow can also be rerun manually for an existing stable tag. Database mig
 run by GitHub Actions; apply and verify new forward-only migrations before publishing the tag.
 
 There is currently no committed Dockerfile or Docker Compose stack. Do not advertise a one-command container setup until those artifacts exist.
+
+Room ending requires migration 000014 before the backend rollout. The new table is additive and does not delete room data. RoomService DeleteRoom closes the SFU session; cached SFU join tokens remain subject to LiveKit token revocation limits. PostgreSQL rejects all new application admissions and token requests after ending.

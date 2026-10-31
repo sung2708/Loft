@@ -46,7 +46,7 @@ Requirements: Node 24+, pnpm 11+, Go 1.26+, Supabase project, and LiveKit Cloud 
 
 1. Copy `frontend/.env.example` to `frontend/.env.local` and set public values.
 2. Copy `backend/.env.example` to `backend/.env` and set server values. `go run ./cmd/server` loads this file when run from `backend`; exported shell variables take precedence.
-3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000012`) through Supabase SQL Editor or your migration runner.
+3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000014`) through Supabase SQL Editor or your migration runner.
 4. Start backend:
 
    ```powershell
@@ -135,7 +135,7 @@ Cloud credentials, Redis/LiveKit services, and browser device permissions are re
 
 ## Known MVP limits
 
-- Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage falls back to bounded local behavior.
+- Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage preserves bounded local chat/presence behavior; shared media mutations stop until the coordinator can confirm ownership.
 - A room admits one active connection per verified identity. A same-tab reload replaces the previous socket; a different tab receives `DUPLICATE_SESSION`. Idle application connections expire after roughly 30 seconds without traffic, and room capacity is enforced locally and through Redis leases.
 - Authenticated invite holders may join; durable non-owner membership is reserved for later product rules.
 - Advanced moderation dashboards, external music OAuth, recording, and discovery remain deferred. The current host can transfer realtime authority, lock admission, remove a participant, or apply a room-scoped one-hour temporary ban.
@@ -159,3 +159,5 @@ make run
 `make run` keeps both services in the current terminal with prefixed logs: the Go backend with Air hot reload and the Next.js frontend. Press `Ctrl+C` once to stop both processes. Individual services remain available through `make air`, `make backend`, and `make frontend`.
 
 The frontend dev server binds to `0.0.0.0`, so both `http://localhost:3000` and `http://127.0.0.1:3000` work with Next.js HMR.
+
+Room owners can leave alone or end the room for everyone. Ending is permanent for the invite link, closes the active call and preserves PostgreSQL history/whiteboard data. Apply migration `000014_room_endings.up.sql` before deploying this change.

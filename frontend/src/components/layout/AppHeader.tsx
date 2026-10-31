@@ -27,7 +27,7 @@ export function AppHeader({
           <span className="hidden min-w-0 flex-col select-none min-[360px]:flex">
             <span className="loft-wordmark text-base">{title}</span>
             {subtitle ? (
-              <span className="hidden truncate text-[11px] leading-tight text-[var(--text-loft-muted)] sm:block">
+              <span className="hidden truncate text-[13px] leading-tight text-[var(--text-loft-muted)] sm:block">
                 {subtitle}
               </span>
             ) : null}

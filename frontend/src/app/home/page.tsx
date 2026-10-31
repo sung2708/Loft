@@ -271,7 +271,7 @@ export default function HomePage() {
             type="button"
             ref={createButtonRef}
             onClick={openCreateDialog}
-            className="btn-press inline-flex h-10 items-center justify-center gap-2 rounded-[6px] bg-[#101113] px-4 text-[11px] font-medium text-white"
+            className="btn-press inline-flex h-10 items-center justify-center gap-2 rounded-[10px] bg-[#101113] px-4 text-[13px] font-medium text-white"
           >
             <Plus aria-hidden="true" className="h-4 w-4" />
             <span>{t.lobby.createRoom}</span>
@@ -281,7 +281,7 @@ export default function HomePage() {
         {error && !creating && !deletingRoom ? (
           <div
             role="alert"
-            className="mt-8 flex items-start gap-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 py-3 text-[11px]"
+            className="mt-8 flex items-start gap-3 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 py-3 text-[13px]"
           >
             <CircleAlert
               aria-hidden="true"
@@ -293,11 +293,11 @@ export default function HomePage() {
 
         <section aria-labelledby="hosted-rooms-heading" className="mt-10">
           <div className="flex items-center justify-between border-b border-[var(--border-loft)] pb-3">
-            <h2 id="hosted-rooms-heading" className="text-[11px] font-medium">
+            <h2 id="hosted-rooms-heading" className="text-[13px] font-medium">
               {isVietnamese ? "Phòng bạn làm chủ" : "Rooms you host"}
             </h2>
             {!isLoadingRooms ? (
-              <span className="text-[11px] text-[var(--text-loft-muted)]">
+              <span className="text-[13px] text-[var(--text-loft-muted)]">
                 {rooms.length}
               </span>
             ) : null}
@@ -309,9 +309,9 @@ export default function HomePage() {
                   <div
                     key={index}
                     aria-hidden="true"
-                    className="workflow-panel min-h-48 rounded-[6px] p-5 motion-safe:animate-pulse"
+                    className="workflow-panel min-h-48 rounded-[10px] p-5 motion-safe:animate-pulse"
                   >
-                    <div className="h-10 w-10 rounded-[6px] bg-[#101113]/10" />
+                    <div className="h-10 w-10 rounded-[10px] bg-[#101113]/10" />
                     <div className="mt-6 h-4 w-2/3 rounded bg-[#101113]/10" />
                     <div className="mt-3 h-3 w-full rounded bg-[#101113]/10" />
                   </div>
@@ -319,10 +319,10 @@ export default function HomePage() {
               : rooms.map((room) => (
                   <article
                     key={room.id}
-                    className="workflow-panel interactive-card group flex min-h-48 flex-col rounded-[6px] p-5"
+                    className="workflow-panel interactive-card group flex min-h-48 flex-col rounded-[10px] p-5"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-[6px] bg-[#101113]/10 text-[var(--text-loft-primary)]">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#101113]/10 text-[var(--text-loft-primary)]">
                         <Users aria-hidden="true" className="h-5 w-5" />
                       </div>
                       <div className="flex items-center gap-1">
@@ -331,7 +331,7 @@ export default function HomePage() {
                           onClick={() => setSettingsRoom(room)}
                           aria-label={`${isVietnamese ? "Cài đặt" : "Settings"} ${room.name}`}
                           title={isVietnamese ? "Cài đặt" : "Settings"}
-                          className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--text-loft-muted)]"
+                          className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[10px] text-[var(--text-loft-muted)]"
                         >
                           <Settings2 aria-hidden="true" className="h-4 w-4" />
                         </button>
@@ -343,7 +343,7 @@ export default function HomePage() {
                           }}
                           aria-label={`${isVietnamese ? "Xóa phòng" : "Delete room"} ${room.name}`}
                           title={isVietnamese ? "Xóa phòng" : "Delete room"}
-                          className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--text-loft-muted)]"
+                          className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[10px] text-[var(--text-loft-muted)]"
                         >
                           <Trash2 aria-hidden="true" className="h-4 w-4" />
                         </button>
@@ -353,12 +353,12 @@ export default function HomePage() {
                     <Link
                       href={`/room/${encodeURIComponent(room.slug)}`}
                       aria-label={`${isVietnamese ? "Mở phòng" : "Open room"} ${room.name}`}
-                      className="mt-5 flex min-h-0 flex-1 flex-col rounded-[6px] focus-visible:outline-2 focus-visible:outline-[var(--accent-blue)]"
+                      className="mt-5 flex min-h-0 flex-1 flex-col rounded-[10px] focus-visible:outline-2 focus-visible:outline-[var(--accent-blue)]"
                     >
                       <h3 className="break-words text-base font-medium tracking-tight">
                         {room.name}
                       </h3>
-                      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--text-loft-muted)]">
+                      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-[var(--text-loft-muted)]">
                         <span className="inline-flex items-center gap-1.5">
                           <Users aria-hidden="true" className="h-3.5 w-3.5" />
                           {room.allow_guests
@@ -385,7 +385,7 @@ export default function HomePage() {
                           </span>
                         ) : null}
                       </div>
-                      <span className="mt-auto inline-flex items-center gap-1.5 pt-5 text-[11px] font-medium text-[var(--text-loft-primary)]">
+                      <span className="mt-auto inline-flex items-center gap-1.5 pt-5 text-[13px] font-medium text-[var(--text-loft-primary)]">
                         {isVietnamese ? "Mở" : "Open"}
                         <ArrowUpRight
                           aria-hidden="true"
@@ -397,14 +397,14 @@ export default function HomePage() {
                 ))}
 
             {!isLoadingRooms && rooms.length === 0 && !creating ? (
-              <div className="workflow-panel rounded-[6px] px-6 py-14 text-center sm:col-span-2 lg:col-span-3">
+              <div className="workflow-panel rounded-[10px] px-6 py-14 text-center sm:col-span-2 lg:col-span-3">
                 <Users aria-hidden="true" className="mx-auto h-5 w-5" />
-                <p className="mt-4 text-[11px] font-medium">
+                <p className="mt-4 text-[13px] font-medium">
                   {isVietnamese
                     ? "Bạn chưa có phòng."
                     : "You have no rooms yet."}
                 </p>
-                <p className="mt-1 text-[11px] text-[var(--text-loft-muted)]">
+                <p className="mt-1 text-[13px] text-[var(--text-loft-muted)]">
                   {isVietnamese
                     ? "Tạo phòng để chia sẻ liên kết mời."
                     : "Create a room to share an invite link."}
@@ -412,7 +412,7 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={openCreateDialog}
-                  className="btn-press hover-invert mt-5 inline-flex h-9 items-center gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] font-medium text-[var(--text-loft-primary)]"
+                  className="btn-press hover-invert mt-5 inline-flex h-9 items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[13px] font-medium text-[var(--text-loft-primary)]"
                 >
                   <Plus aria-hidden="true" className="h-3.5 w-3.5" />
                   {t.lobby.createRoom}
@@ -464,16 +464,16 @@ export default function HomePage() {
             aria-modal="true"
             aria-labelledby="create-room-title"
             aria-busy={isSubmitting}
-            className="create-room-modal flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col gap-5 overflow-y-auto rounded-[6px] border border-[var(--border-loft)] p-5 shadow-2xl sm:p-6"
+            className="create-room-modal flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col gap-5 overflow-y-auto rounded-[10px] border border-[var(--border-loft)] p-5 shadow-2xl sm:p-6"
           >
             <div className="flex items-center justify-between gap-4">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[#101113]/10">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-[#101113]/10">
                   <Plus aria-hidden="true" className="h-4 w-4" />
                 </div>
                 <h2
                   id="create-room-title"
-                  className="create-room-modal__text text-[11px] font-medium"
+                  className="create-room-modal__text text-[13px] font-medium"
                 >
                   {t.createModal.title}
                 </h2>
@@ -483,7 +483,7 @@ export default function HomePage() {
                 onClick={closeCreateDialog}
                 disabled={isSubmitting}
                 aria-label={isVietnamese ? "Đóng" : "Close"}
-                className="btn-press hover-invert flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[var(--text-loft-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-press hover-invert flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-[var(--text-loft-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <X aria-hidden="true" className="h-4 w-4" />
               </button>
@@ -492,7 +492,7 @@ export default function HomePage() {
             <div className="flex flex-col gap-2">
               <label
                 htmlFor="room-name"
-                className="create-room-modal__text text-[11px] font-medium"
+                className="create-room-modal__text text-[13px] font-medium"
               >
                 {t.createModal.nameLabel}
                 <span className="create-room-modal__muted">
@@ -511,17 +511,17 @@ export default function HomePage() {
                 required
                 disabled={isSubmitting}
                 autoFocus
-                className="h-11 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] text-[var(--text-loft-primary)] outline-none placeholder:text-[var(--text-loft-muted)] focus:ring-2 focus:ring-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-11 w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[13px] text-[var(--text-loft-primary)] outline-none placeholder:text-[var(--text-loft-muted)] focus:ring-2 focus:ring-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
 
-            <div className="space-y-3 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-4">
+            <div className="space-y-3 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-4">
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
-                  <p className="create-room-modal__text text-[11px] font-medium">
+                  <p className="create-room-modal__text text-[13px] font-medium">
                     {t.createModal.allowGuests}
                   </p>
-                  <p className="create-room-modal__muted mt-1 text-[11px]">
+                  <p className="create-room-modal__muted mt-1 text-[13px]">
                     {t.createModal.allowGuestsDesc}
                   </p>
                 </div>
@@ -535,10 +535,10 @@ export default function HomePage() {
               <div className="border-t border-[var(--border-loft)] pt-3">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="create-room-modal__text text-[11px] font-medium">
+                    <p className="create-room-modal__text text-[13px] font-medium">
                       {isVietnamese ? "Yêu cầu mật khẩu" : "Require password"}
                     </p>
-                    <p className="create-room-modal__muted mt-1 text-[11px]">
+                    <p className="create-room-modal__muted mt-1 text-[13px]">
                       {isVietnamese
                         ? "Người tham gia cần mật khẩu để vào."
                         : "People need a password to join."}
@@ -572,7 +572,7 @@ export default function HomePage() {
                       maxLength={256}
                       required
                       disabled={isSubmitting}
-                      className="h-11 w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 text-[11px] text-[var(--text-loft-primary)] outline-none placeholder:text-[var(--text-loft-muted)] focus:ring-2 focus:ring-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-11 w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 text-[13px] text-[var(--text-loft-primary)] outline-none placeholder:text-[var(--text-loft-muted)] focus:ring-2 focus:ring-[var(--accent-blue)] disabled:cursor-not-allowed disabled:opacity-50"
                     />
                   </div>
                 ) : null}
@@ -582,7 +582,7 @@ export default function HomePage() {
             {error ? (
               <div
                 role="alert"
-                className="flex items-start gap-2 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[11px]"
+                className="flex items-start gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[13px]"
               >
                 <CircleAlert
                   aria-hidden="true"
@@ -597,14 +597,14 @@ export default function HomePage() {
                 type="button"
                 onClick={closeCreateDialog}
                 disabled={isSubmitting}
-                className="btn-press hover-invert h-10 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[11px] font-medium text-[var(--text-loft-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-press hover-invert h-10 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 text-[13px] font-medium text-[var(--text-loft-primary)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {t.createModal.cancel}
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="btn-press inline-flex h-10 items-center justify-center gap-2 rounded-[6px] bg-[#101113] px-5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-press inline-flex h-10 items-center justify-center gap-2 rounded-[10px] bg-[#101113] px-5 text-[13px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <Loader2

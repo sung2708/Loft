@@ -207,7 +207,7 @@ export function SettingsDrawer() {
       {/* Header */}
       <div className="kott-settings__header flex h-14 shrink-0 items-center justify-between border-b bg-[var(--bg-loft-surface)] px-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] text-[var(--text-loft-primary)] shadow-sm">
+          <div className="flex h-7 w-7 items-center justify-center rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] text-[var(--text-loft-primary)] shadow-sm">
             <Sliders className="w-4 h-4" />
           </div>
           <h3 className="font-medium uppercase tracking-wide">{vi ? "Cài đặt phòng" : "Room settings"}</h3>
@@ -231,18 +231,18 @@ export function SettingsDrawer() {
           {/* Room Name & Access Section */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">
-              <h4 className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
+              <h4 className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
                 {vi ? "Thông tin chung" : "General"}
               </h4>
             </div>
 
             {/* Room Name Card */}
-            <div className="rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 p-4 space-y-2">
+            <div className="rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 p-4 space-y-2">
               <div className="flex items-center justify-between">
-                <label className="block text-[11px] font-medium text-[var(--text-loft-secondary)]">
+                <label className="block text-[13px] font-medium text-[var(--text-loft-secondary)]">
                   {vi ? "Tên phòng" : "Room name"}
                 </label>
-                <span className="text-[11px] font-mono text-[var(--text-loft-muted)]">
+                <span className="text-[13px] font-mono text-[var(--text-loft-muted)]">
                   {name.length}/80
                 </span>
               </div>
@@ -254,14 +254,14 @@ export function SettingsDrawer() {
                 required
                 disabled={pending}
                 placeholder={vi ? "Nhập tên phòng..." : "Enter room name..."}
-                className="w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-2 text-[11px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20 disabled:opacity-50"
+                className="w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-2 text-[13px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20 disabled:opacity-50"
               />
             </div>
 
             {/* Allow Guests Switch Card */}
-            <div className="flex items-center justify-between gap-3 p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
+            <div className="flex items-center justify-between gap-3 p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
               <div className="min-w-0 pr-2">
-                <div className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+                <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                   {vi ? "Cho phép khách vào" : "Allow guests"}
                 </div>
               </div>
@@ -276,19 +276,19 @@ export function SettingsDrawer() {
 
           {/* Security & Access Section */}
           <section className="space-y-3">
-            <h4 className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
+            <h4 className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
               {vi ? "Bảo mật & Quyền vào" : "Security & Access"}
             </h4>
 
             {/* Password protection card */}
-            <div className="p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-3">
+            <div className="p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-7 h-7 rounded-[6px] bg-[#26282c]/10 flex items-center justify-center text-[var(--text-loft-secondary)]">
+                  <div className="w-7 h-7 rounded-[10px] bg-[#26282c]/10 flex items-center justify-center text-[var(--text-loft-secondary)]">
                     <Lock className="w-3.5 h-3.5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+                    <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                       {vi ? "Yêu cầu mật khẩu" : "Require password"}
                     </div>
                   </div>
@@ -303,7 +303,7 @@ export function SettingsDrawer() {
 
               {passwordEnabled && (
                 <div className="relative pt-1 border-t border-[var(--border-loft)]">
-                  <label className="block text-[11px] font-medium text-[var(--text-loft-secondary)] mb-1">
+                  <label className="block text-[13px] font-medium text-[var(--text-loft-secondary)] mb-1">
                     {room.password_required
                       ? vi
                         ? "Thay đổi mật khẩu (để trống nếu giữ nguyên)"
@@ -330,7 +330,7 @@ export function SettingsDrawer() {
                             ? "Nhập mật khẩu (tối thiểu 4 ký tự)..."
                             : "Enter password (min 4 chars)..."
                       }
-                      className="w-full rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 pr-10 text-[11px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20"
+                      className="w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 pr-10 text-[13px] text-[var(--text-loft-primary)] outline-none transition-all focus:border-[var(--border-loft)] focus:ring-2 focus:ring-[var(--accent-blue)]/20"
                     />
                     <button
                       type="button"
@@ -346,16 +346,16 @@ export function SettingsDrawer() {
             </div>
 
             {/* Lock room toggle card */}
-            <div className="flex items-center justify-between gap-3 p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
+            <div className="flex items-center justify-between gap-3 p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
               <div className="flex items-center gap-3 min-w-0 pr-2">
-                <div className="w-7 h-7 rounded-[6px] bg-[#26282c]/10 text-[var(--text-loft-secondary)] flex items-center justify-center shrink-0">
+                <div className="w-7 h-7 rounded-[10px] bg-[#26282c]/10 text-[var(--text-loft-secondary)] flex items-center justify-center shrink-0">
                   <Shield className="w-3.5 h-3.5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-medium text-[var(--text-loft-primary)] flex items-center gap-2">
+                  <div className="text-[13px] font-medium text-[var(--text-loft-primary)] flex items-center gap-2">
                     <span>{vi ? "Khóa phòng với người mới" : "Lock room"}</span>
                     {locked && (
-                      <span className="px-2 py-1 rounded-[6px] bg-[#26282c]/15 text-[var(--text-loft-secondary)] dark:text-[var(--text-loft-secondary)] text-[11px] font-medium">
+                      <span className="px-2 py-1 rounded-[10px] bg-[#26282c]/15 text-[var(--text-loft-secondary)] dark:text-[var(--text-loft-secondary)] text-[13px] font-medium">
                         {vi ? "Đã khóa" : "Locked"}
                       </span>
                     )}
@@ -373,8 +373,8 @@ export function SettingsDrawer() {
 
             </>
           ) : (
-            <section className="rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 p-4">
-              <p className="text-[11px] text-[var(--text-loft-secondary)]">
+            <section className="rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 p-4">
+              <p className="text-[13px] text-[var(--text-loft-secondary)]">
                 {vi ? "Chỉ chủ phòng có thể thay đổi cài đặt phòng." : "Only the room host can change room settings."}
               </p>
             </section>
@@ -385,7 +385,7 @@ export function SettingsDrawer() {
             <section className="space-y-3">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-[var(--text-loft-primary)]" />
-                <h4 className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
+                <h4 className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
                   {vi ? "Không khí phòng" : "Room atmosphere"}
                 </h4>
               </div>
@@ -445,7 +445,7 @@ export function SettingsDrawer() {
                         setAtmosphere(id);
                         setAppearancePreview({ atmosphere: id, accent, adaptiveMediaBackground: adaptiveMedia });
                       }}
-                      className={`relative rounded-[6px] border p-3 text-left transition-all duration-200 cursor-pointer ${
+                      className={`relative rounded-[10px] border p-3 text-left transition-all duration-200 cursor-pointer ${
                         isSelected
                           ? "border-[var(--border-loft)] bg-[#101113]/10 text-[var(--text-loft-primary)] shadow-sm ring-1 ring-[var(--accent-blue)]/40"
                           : "border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 hover-invert hover:bg-[var(--border-loft-light)] text-[var(--text-loft-secondary)]"
@@ -453,7 +453,7 @@ export function SettingsDrawer() {
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div
-                          className={`w-6 h-6 rounded-[6px] flex items-center justify-center ${
+                          className={`w-6 h-6 rounded-[10px] flex items-center justify-center ${
                             isSelected
                               ? "bg-[#101113] text-white"
                               : "bg-[var(--border-loft)] text-[var(--bg-loft-base)]"
@@ -489,7 +489,7 @@ export function SettingsDrawer() {
                   <div className="font-medium text-[var(--text-loft-primary)]">
                     {vi ? "Xem trước trên màn hình này" : "Preview on this screen"}
                   </div>
-                  <p className="mt-1 text-[11px] text-[var(--text-loft-secondary)]">
+                  <p className="mt-1 text-[13px] text-[var(--text-loft-secondary)]">
                     {hasAppearancePreview
                       ? vi ? "Lưu để áp dụng cho mọi người trong phòng." : "Save to apply it for everyone in the room."
                       : vi ? "Chọn một kiểu để xem thay đổi trước khi lưu." : "Choose a style to preview it before saving."}
@@ -498,12 +498,12 @@ export function SettingsDrawer() {
               </div>
 
               {/* Accent Color Picker */}
-              <div className="p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-3">
+              <div className="p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-medium text-[var(--text-loft-secondary)]">
+                  <div className="text-[13px] font-medium text-[var(--text-loft-secondary)]">
                     {vi ? "Màu chủ đạo" : "Accent color"}
                   </div>
-                  <span className="text-[11px] font-medium capitalize text-[var(--text-loft-primary)]">
+                  <span className="text-[13px] font-medium capitalize text-[var(--text-loft-primary)]">
                     {accent}
                   </span>
                 </div>
@@ -537,13 +537,13 @@ export function SettingsDrawer() {
               </div>
 
               {/* Adaptive media background */}
-              <div className="flex items-center justify-between gap-3 p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
+              <div className="flex items-center justify-between gap-3 p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60">
                 <div className="flex items-center gap-3 min-w-0 pr-2">
-                  <div className="w-7 h-7 rounded-[6px] bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center shrink-0">
+                  <div className="w-7 h-7 rounded-[10px] bg-[#101113]/15 text-[var(--text-loft-primary)] flex items-center justify-center shrink-0">
                     <Music className="w-3.5 h-3.5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+                    <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                       {vi ? "Tự điều chỉnh theo media đang phát" : "Adapt to shared media"}
                     </div>
                   </div>
@@ -565,16 +565,16 @@ export function SettingsDrawer() {
           <section className="space-y-3">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-[var(--text-loft-muted)]" />
-              <h4 className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
+              <h4 className="text-[13px] font-medium uppercase tracking-wider text-[var(--text-loft-muted)]">
                 {vi ? "Âm thanh" : "Audio & SFX"}
               </h4>
             </div>
 
-            <div className="p-4 rounded-[6px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-4">
+            <div className="p-4 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)]/60 space-y-4">
               {/* Sound effects toggle */}
               <div className="flex items-center justify-between">
                 <div className="min-w-0 pr-2">
-                  <div className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+                  <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                     {vi ? "Hiệu ứng âm thanh" : "Sound effects"}
                   </div>
                 </div>
@@ -588,7 +588,7 @@ export function SettingsDrawer() {
               {/* Room sounds toggle */}
               <div className="flex items-center justify-between pt-3 border-t border-[var(--border-loft)]">
                 <div className="min-w-0 pr-2">
-                  <div className="text-[11px] font-medium text-[var(--text-loft-primary)]">
+                  <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
                     {vi ? "Âm thanh trong phòng" : "Room sounds"}
                   </div>
                 </div>
@@ -601,11 +601,11 @@ export function SettingsDrawer() {
 
               {/* Effects volume slider */}
               <div className="pt-3 border-t border-[var(--border-loft)] space-y-2">
-                <div className="flex items-center justify-between text-[11px]">
+                <div className="flex items-center justify-between text-[13px]">
                   <span className="text-[var(--text-loft-secondary)] font-medium">
                     {vi ? "Âm lượng hiệu ứng" : "Effects volume"}
                   </span>
-                  <span className="font-medium text-[var(--text-loft-primary)] px-2 py-1 rounded-[6px] bg-[var(--border-loft-light)] text-[11px]">
+                  <span className="font-medium text-[var(--text-loft-primary)] px-2 py-1 rounded-[10px] bg-[var(--border-loft-light)] text-[13px]">
                     {sfxVolume}%
                   </span>
                 </div>
@@ -625,14 +625,14 @@ export function SettingsDrawer() {
           {error && (
             <div
               role="alert"
-              className="p-4 rounded-[6px] bg-[#101113]/10 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[11px] leading-relaxed"
+              className="p-4 rounded-[10px] bg-[#101113]/10 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[13px] leading-relaxed"
             >
               {error}
             </div>
           )}
 
           {savedSuccess && (
-            <div className="p-4 rounded-[6px] bg-[#101113]/10 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[11px] flex items-center gap-3">
+            <div className="p-4 rounded-[10px] bg-[#101113]/10 border border-[var(--border-loft)]/30 text-[var(--text-loft-primary)] text-[13px] flex items-center gap-3">
               <div className="w-5 h-5 rounded-full bg-[#101113] text-white flex items-center justify-center shrink-0">
                 <Check className="w-3 h-3" />
               </div>
@@ -649,7 +649,7 @@ export function SettingsDrawer() {
             type="button"
             onClick={close}
             disabled={pending}
-            className="px-4 py-2 rounded-[6px] border border-[var(--border-loft)] text-[11px] font-medium hover-invert hover:bg-[var(--border-loft-light)] transition-colors disabled:opacity-50 cursor-pointer text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)]"
+            className="px-4 py-2 rounded-[10px] border border-[var(--border-loft)] text-[13px] font-medium hover-invert hover:bg-[var(--border-loft-light)] transition-colors disabled:opacity-50 cursor-pointer text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)]"
           >
             {vi ? "Đóng" : "Close"}
           </button>
@@ -657,7 +657,7 @@ export function SettingsDrawer() {
             <button
               type="submit"
               disabled={pending}
-              className="px-5 py-2 rounded-[6px] bg-[#101113] hover:bg-[#101113] text-white text-[11px] font-medium flex items-center gap-2 transition-all disabled:opacity-50 shadow-md shadow-[#101113]/20 active:scale-97 cursor-pointer"
+              className="px-5 py-2 rounded-[10px] bg-[#101113] hover:bg-[#101113] text-white text-[13px] font-medium flex items-center gap-2 transition-all disabled:opacity-50 shadow-md shadow-[#101113]/20 active:scale-97 cursor-pointer"
             >
               {pending ? (
                 <>

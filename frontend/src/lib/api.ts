@@ -1,3 +1,4 @@
+import { getSupabase } from "./supabase/client";
 import { API_URL } from "./config";
 import { translateUI } from "./i18n/uiText";
 import { useI18nStore } from "./i18n/useTranslation";
@@ -28,6 +29,15 @@ async function request<T>(
   init: RequestInit = {},
   credential?: RoomCredential | string,
 ): Promise<T> {
+  // Room credentials may outlive a Supabase access token; read its refreshed session.
+  if (typeof credential === "object" && credential?.type === "user") {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error || !session) throw new ApiError("UNAUTHORIZED", "Sign in again to continue", 401);
+      credential = { ...credential, token: session.access_token };
+    }
+  }
   const headers = new Headers(init.headers);
   if (init.body != null) headers.set("Content-Type", "application/json");
   if (typeof credential === "string")
@@ -41,6 +51,7 @@ async function request<T>(
     headers,
     cache: "no-store",
   });
+  if (response.status === 304) return undefined as T;
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     throw new ApiError(
@@ -57,6 +68,9 @@ async function request<T>(
 }
 
 export const api = {
+ endRoom: (id:string,credential:RoomCredential)=>request<void>(`/api/v1/rooms/${encodeURIComponent(id)}/end`,{method:"POST"},credential),
+ board: (id:string,credential:RoomCredential,signal?:AbortSignal,version?:number) => request<import("./whiteboard").BoardSnapshot | undefined>(`/api/v1/rooms/${encodeURIComponent(id)}/whiteboard`,{signal,headers:version === undefined ? undefined : {"If-None-Match": `"board-${version}"`}},credential),
+ saveBoard: (id:string,credential:RoomCredential,patch:import("./whiteboard").BoardPatch,signal?:AbortSignal) => request<import("./whiteboard").BoardSnapshot>(`/api/v1/rooms/${encodeURIComponent(id)}/whiteboard`,{method:"PATCH",body:JSON.stringify(patch),signal},credential),
   resolveRoom: (value: string, signal?: AbortSignal) =>
     request<{ room: ApiRoomPreview }>(
       `/api/v1/rooms/resolve?value=${encodeURIComponent(value)}`,

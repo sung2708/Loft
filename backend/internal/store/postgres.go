@@ -15,7 +15,16 @@ import (
 type Postgres struct{ pool *pgxpool.Pool }
 
 func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) error {
-	tag, err := p.pool.Exec(ctx, `
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var lockedID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, pick.RoomID).Scan(&lockedID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO youtube_room_picks (id, room_id, video_id, title, channel, suggested_by, active)
 		SELECT $1, $2, $3, $4, $5, $6, $7
 		WHERE (SELECT COUNT(*) FROM youtube_room_picks WHERE room_id = $2 AND active) < $8`,
@@ -29,7 +38,7 @@ func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) err
 	if tag.RowsAffected() == 0 {
 		return ErrPickCapacityReached
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (p *Postgres) ListRoomPicks(ctx context.Context, roomID string) ([]YouTubeRoomPick, error) {
@@ -98,8 +107,45 @@ func (p *Postgres) VoteRoomPick(ctx context.Context, roomID, pickID, userID stri
 	return nil
 }
 
+const promoteRoomPickSQL = `UPDATE youtube_room_picks SET active=FALSE WHERE id=$1 AND room_id=$2 AND active`
+const setAutoplaySQL = `INSERT INTO youtube_room_media_settings (room_id, autoplay_enabled, updated_by) VALUES ($1,$2,$3) ON CONFLICT (room_id) DO UPDATE SET autoplay_enabled=EXCLUDED.autoplay_enabled, updated_by=EXCLUDED.updated_by, updated_at=NOW()`
+
+// The setting and selected pick describe one transition and must commit together.
+func (p *Postgres) CommitYouTubeSelection(ctx context.Context, roomID string, settings *YouTubeMediaSettings, pickID string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if settings != nil {
+		if _, err = tx.Exec(ctx, setAutoplaySQL, roomID, settings.AutoplayEnabled, settings.UpdatedBy); err != nil {
+			return err
+		}
+	}
+	if pickID != "" {
+		tag, err := tx.Exec(ctx, promoteRoomPickSQL, pickID, roomID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+	}
+	var transactionID string
+	if err := tx.QueryRow(ctx, `SELECT pg_current_xact_id()::text`).Scan(&transactionID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		if errors.Is(err, pgx.ErrTxCommitRollback) {
+			return err
+		}
+		return &SelectionCommitPendingError{TransactionID: transactionID, Cause: err}
+	}
+	return nil
+}
+
 func (p *Postgres) PromoteRoomPick(ctx context.Context, roomID, pickID string) error {
-	tag, err := p.pool.Exec(ctx, `UPDATE youtube_room_picks SET active=FALSE WHERE id=$1 AND room_id=$2 AND active`, pickID, roomID)
+	tag, err := p.pool.Exec(ctx, promoteRoomPickSQL, pickID, roomID)
 	if err != nil {
 		return err
 	}
@@ -109,7 +155,7 @@ func (p *Postgres) PromoteRoomPick(ctx context.Context, roomID, pickID string) e
 	return nil
 }
 func (p *Postgres) SetAutoplay(ctx context.Context, settings YouTubeMediaSettings) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO youtube_room_media_settings (room_id, autoplay_enabled, updated_by) VALUES ($1,$2,$3) ON CONFLICT (room_id) DO UPDATE SET autoplay_enabled=EXCLUDED.autoplay_enabled, updated_by=EXCLUDED.updated_by, updated_at=NOW()`, settings.RoomID, settings.AutoplayEnabled, settings.UpdatedBy)
+	_, err := p.pool.Exec(ctx, setAutoplaySQL, settings.RoomID, settings.AutoplayEnabled, settings.UpdatedBy)
 	return err
 }
 func (p *Postgres) GetMediaSettings(ctx context.Context, roomID string) (YouTubeMediaSettings, error) {
@@ -182,18 +228,22 @@ func isUniqueViolation(err error) bool {
 
 func (p *Postgres) GetRoom(ctx context.Context, identifier string) (domain.Room, error) {
 	var room domain.Room
-	err := p.pool.QueryRow(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, COALESCE(password_verifier, ''), COALESCE(atmosphere, 'ambient'), COALESCE(accent, 'blue'), COALESCE(adaptive_media_background, true), created_at
+	var ended bool
+	err := p.pool.QueryRow(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, COALESCE(password_verifier, ''), COALESCE(atmosphere, 'ambient'), COALESCE(accent, 'blue'), COALESCE(adaptive_media_background, true), created_at, EXISTS(SELECT 1 FROM room_endings e WHERE e.room_id=rooms.id)
 		FROM rooms WHERE id::text = $1 OR short_code = $1 OR invite_code = $1`, identifier).Scan(
-		&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.PasswordVerifier, &room.Atmosphere, &room.Accent, &room.AdaptiveMediaBackground, &room.CreatedAt)
+		&room.ID, &room.Slug, &room.Name, &room.OwnerID, &room.AllowGuests, &room.MaxParticipants, &room.IsLocked, &room.Version, &room.PasswordRequired, &room.PasswordVerifier, &room.Atmosphere, &room.Accent, &room.AdaptiveMediaBackground, &room.CreatedAt, &ended)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Room{}, domain.ErrNotFound
+	}
+	if err == nil && ended {
+		return room, domain.ErrRoomEnded
 	}
 	return domain.NormalizeRoomAppearance(room), err
 }
 
 func (p *Postgres) ListOwnedRooms(ctx context.Context, userID string) ([]domain.Room, error) {
 	rows, err := p.pool.Query(ctx, `SELECT id, COALESCE(short_code, invite_code), name, owner_id, allow_guests, max_participants, is_locked, version, password_required, COALESCE(atmosphere, 'ambient'), COALESCE(accent, 'blue'), COALESCE(adaptive_media_background, true), created_at
-		FROM rooms WHERE owner_id = $1 ORDER BY updated_at DESC LIMIT 50`, userID)
+		FROM rooms WHERE owner_id = $1 AND NOT EXISTS(SELECT 1 FROM room_endings e WHERE e.room_id=rooms.id) ORDER BY updated_at DESC LIMIT 50`, userID)
 	if err != nil {
 		return nil, err
 	}

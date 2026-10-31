@@ -23,7 +23,7 @@ describe("safeAuthDestination", () => {
   it("rejects auth callback routes to prevent redirect loops", () => {
     expect(safeAuthDestination("/auth/callback")).toBe("/");
     expect(safeAuthDestination("/auth/callback?code=123")).toBe("/");
-    expect(safeAuthDestination("/auth/spotify/callback?status=connected")).toBe(
+    expect(safeAuthDestination("/auth/provider/callback?status=connected")).toBe(
       "/",
     );
   });
