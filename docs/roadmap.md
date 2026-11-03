@@ -83,7 +83,7 @@ flowchart TD
   - Loop prevention using unique `origin_instance_id` in inter-node payloads.
   - Ephemeral presence tracking in Redis using key TTLs (15s) refreshed by client heartbeats.
   - Distributed rate limiting counters for join, chat, and media actions.
-  - Graceful fallback to single-node in-memory operation if `REDIS_URL` is empty or Redis drops.
+  - Single-node in-memory operation if `REDIS_URL` is empty; existing same-node connections continue when Redis drops, while new joins pause.
 - **Dependencies:** Requires **MVP 2.4** (typed protocol and bounded channels).
 - **Gate Criteria:** Client A on Instance 1 and Client B on Instance 2 in the same room exchange chat and media state seamlessly; Redis restart drops presence temporarily without data corruption.
 

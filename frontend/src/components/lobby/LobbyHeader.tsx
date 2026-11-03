@@ -33,6 +33,7 @@ export const LobbyHeader: React.FC = () => {
   const { locale, t } = useTranslation();
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const avatarButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -284,9 +285,13 @@ export const LobbyHeader: React.FC = () => {
                     <button
                       type="button"
                       onClick={async () => {
-                        setIsMenuOpen(false);
-                        await signOut();
-                        window.location.replace("/");
+                        setSignOutError(false);
+                        try {
+                          await signOut();
+                          window.location.replace("/");
+                        } catch {
+                          setSignOutError(true);
+                        }
                       }}
                       role="menuitem"
                       className="btn-press hover-invert flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-[13px] font-medium text-[var(--text-loft-primary)]"
@@ -294,6 +299,7 @@ export const LobbyHeader: React.FC = () => {
                       <LogOut className="w-4 h-4" />
                       <span>{t.account.signOut}</span>
                     </button>
+                    {signOutError && <p role="alert" className="px-3 py-2 text-[13px] text-[var(--text-loft-primary)]">{locale === "vi" ? "Không thể đăng xuất. Vui lòng thử lại." : "Could not sign out. Please try again."}</p>}
                   </div>
                 </div>
               )}

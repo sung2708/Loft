@@ -6,18 +6,30 @@ export interface BoardCursor {
   y: number;
   drawing: boolean;
   visible: boolean;
+  draft?: unknown;
+}
+export interface BoardInlinePatch {
+  version: number;
+  put?: unknown[];
+  remove?: string[];
 }
 export const useBoardStore = create<{
   version: number;
+  lastPatch: BoardInlinePatch | null;
   cursors: Record<string, BoardCursor & { at: number }>;
-  changed: (version: number) => void;
+  changed: (version: number, put?: unknown[], remove?: string[]) => void;
   cursor: (cursor: BoardCursor) => void;
   reset: () => void;
 }>((set) => ({
   version: 0,
+  lastPatch: null,
   cursors: {},
-  changed: (version) =>
-    set((state) => ({ version: Math.max(version, state.version) })),
+  changed: (version, put, remove) =>
+    set((state) => ({
+      version: Math.max(version, state.version),
+      lastPatch:
+        version >= state.version ? { version, put, remove } : state.lastPatch,
+    })),
   cursor: (cursor) =>
     set((state) => ({
       cursors: {
@@ -29,5 +41,5 @@ export const useBoardStore = create<{
         [cursor.connection_id]: { ...cursor, at: Date.now() },
       },
     })),
-  reset: () => set({ version: 0, cursors: {} }),
+  reset: () => set({ version: 0, lastPatch: null, cursors: {} }),
 }));

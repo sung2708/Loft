@@ -388,6 +388,57 @@ func TestDeleteGuardBlocksJoinsAndActiveRooms(t *testing.T) {
 	}
 }
 
+type deleteGuardBus struct {
+	allowed bool
+	begun   bool
+	ended   bool
+}
+
+type unavailableAdmissionBus struct{ admissionBus }
+
+func (*unavailableAdmissionBus) Publish(context.Context, string, []byte) error { return nil }
+func (*unavailableAdmissionBus) AdmitPresence(context.Context, string, string, string, string, domain.Participant, int, bool) (domain.Participant, error) {
+	return domain.Participant{}, context.DeadlineExceeded
+}
+
+func TestRedisAdmissionFailureDeniesJoin(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), MaxParticipants: 12}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hub.SetBus(&unavailableAdmissionBus{})
+	c := &client{id: uuid.NewString(), roomID: room.ID}
+	if err := hub.admitPresence(context.Background(), c, room); err == nil {
+		t.Fatal("Redis outage admitted a room participant without a shared lease")
+	}
+}
+
+func (*deleteGuardBus) Publish(context.Context, string, []byte) error { return nil }
+func (b *deleteGuardBus) TryBeginDelete(context.Context, string, string) (bool, error) {
+	b.begun = true
+	return b.allowed, nil
+}
+func (b *deleteGuardBus) FinishDelete(context.Context, string, string) error {
+	b.ended = true
+	return nil
+}
+
+func TestDeleteGuardChecksDistributedPresence(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString()}
+	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	bus := &deleteGuardBus{}
+	hub.SetBus(bus)
+	if hub.BeginDelete(room.ID) || !bus.begun {
+		t.Fatal("room with remote presence was deletable")
+	}
+	bus.allowed = true
+	if !hub.BeginDelete(room.ID) {
+		t.Fatal("failed attempt left local deletion gate stuck")
+	}
+	hub.FinishDelete(room.ID, false)
+	if !bus.ended {
+		t.Fatal("distributed deletion gate was not released")
+	}
+}
+
 func TestLockedRoomAllowsSameTabGuestReconnect(t *testing.T) {
 	room := domain.Room{ID: uuid.NewString(), AllowGuests: true}
 	hub := New(&realtimeStore{room: room}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))

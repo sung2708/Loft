@@ -33,6 +33,20 @@ func TestMetricsIncludeHTTPAndRealtime(t *testing.T) {
 	}
 }
 
+func TestMetricsCollapseUnknownMethods(t *testing.T) {
+	server := &Server{origins: map[string]struct{}{}}
+	routes := server.Routes(metricsWS{})
+	for _, method := range []string{"CUSTOM-A", "CUSTOM-B"} {
+		routes.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, "/health", nil))
+	}
+	response := httptest.NewRecorder()
+	routes.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	got := response.Body.String()
+	if !strings.Contains(got, `http_requests_total{method="OTHER",path="/unmatched",status="405"} 2`) || strings.Contains(got, `method="CUSTOM-`) {
+		t.Fatalf("unknown methods created separate metrics: %s", got)
+	}
+}
+
 type metricsWS struct{}
 
 func (metricsWS) ServeHTTP(http.ResponseWriter, *http.Request) {}

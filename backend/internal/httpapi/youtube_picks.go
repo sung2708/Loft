@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,7 +23,7 @@ func (s *Server) listYouTubePicks(w http.ResponseWriter, r *http.Request) {
 	}
 	identity, err := s.requestIdentity(r, room)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
+		s.writeRoomIdentityError(w, r, err)
 		return
 	}
 	if !domain.CanJoin(room, identity) {
@@ -51,7 +53,7 @@ func (s *Server) createYouTubePick(w http.ResponseWriter, r *http.Request) {
 	}
 	identity, err := s.requestIdentity(r, room)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
+		s.writeRoomIdentityError(w, r, err)
 		return
 	}
 	if !domain.CanCreateRoomPick(room, identity) {
@@ -63,7 +65,7 @@ func (s *Server) createYouTubePick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct{ VideoID, Title, Channel string }
-	if json.NewDecoder(r.Body).Decode(&input) != nil || !youtube.ValidVideoID(input.VideoID) {
+	if !decodeYouTubeJSON(w, r, &input) || !youtube.ValidVideoID(input.VideoID) || utf8.RuneCountInString(input.Title) > 140 || utf8.RuneCountInString(input.Channel) > 80 {
 		writeError(w, http.StatusBadRequest, "INVALID_PICK", "Invalid YouTube video")
 		return
 	}
@@ -106,7 +108,7 @@ func (s *Server) voteYouTubePick(w http.ResponseWriter, r *http.Request) {
 	}
 	identity, err := s.requestIdentity(r, room)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
+		s.writeRoomIdentityError(w, r, err)
 		return
 	}
 	if !domain.CanVoteRoomPick(room, identity) {
@@ -123,7 +125,7 @@ func (s *Server) voteYouTubePick(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		PickID string `json:"pick_id"`
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil || input.PickID == "" {
+	if !decodeYouTubeJSON(w, r, &input) || uuid.Validate(input.PickID) != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_VOTE", "Pick ID is required")
 		return
 	}
@@ -150,7 +152,7 @@ func (s *Server) youtubeMediaSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	identity, err := s.requestIdentity(r, room)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
+		s.writeRoomIdentityError(w, r, err)
 		return
 	}
 	repo, ok := s.store.(interface {
@@ -177,7 +179,7 @@ func (s *Server) youtubeMediaSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		AutoplayEnabled bool `json:"autoplay_enabled"`
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil {
+	if !decodeYouTubeJSON(w, r, &input) {
 		writeError(w, http.StatusBadRequest, "INVALID_SETTINGS", "Invalid media settings")
 		return
 	}
@@ -187,4 +189,14 @@ func (s *Server) youtubeMediaSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func decodeYouTubeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	decoder := json.NewDecoder(r.Body)
+	if decoder.Decode(target) != nil {
+		return false
+	}
+	var trailing any
+	return decoder.Decode(&trailing) == io.EOF
 }

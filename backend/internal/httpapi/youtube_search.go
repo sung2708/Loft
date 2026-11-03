@@ -12,13 +12,18 @@ func (s *Server) youtubeSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "YOUTUBE_DISABLED", "YouTube search is unavailable")
 		return
 	}
-	if _, err := s.authenticatedUser(r); err != nil {
+	identity, err := s.authenticatedUser(r)
+	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" || len([]rune(q)) > 120 {
 		writeError(w, http.StatusBadRequest, "INVALID_QUERY", "Enter a video or artist")
+		return
+	}
+	if !s.youtubeSearchLimit.AllowContext(r.Context(), identity.ID) || !s.youtubeSearchBudget.AllowContext(r.Context(), "provider") {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "YouTube search is busy; try again later")
 		return
 	}
 	result, err := (youtube.Client{APIKey: os.Getenv("YOUTUBE_API_KEY"), MaxResults: 10}).Search(r.Context(), q)

@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrDistributedRoomFull         = errors.New("distributed room capacity reached")
+	ErrDistributedRoomDeleting     = errors.New("room deletion in progress")
 	ErrDistributedDuplicateSession = errors.New("identity is active in another tab")
 	ErrDistributedStaleSession     = errors.New("presence lease was replaced by a newer connection")
 )
@@ -48,6 +49,7 @@ type presenceAdmissionResult struct {
 // Every admission and heartbeat prunes expired members atomically. The hash
 // itself expires, while per-member deadlines prevent stale capacity claims.
 var admitPresenceScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[2]) == 1 then return 'deleting' end
 local now = redis.call('TIME')
 local now_ms = tonumber(now[1]) * 1000 + tonumber(now[2]) / 1000
 local entries = redis.call('HGETALL', KEYS[1])
@@ -82,6 +84,25 @@ if existing ~= nil and existing.connection_id ~= ARGV[3] then
   response.replaced_connection_id = existing.connection_id
 end
 return cjson.encode(response)
+`)
+
+var beginDeleteScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+local now = redis.call('TIME')
+local now_ms = tonumber(now[1]) * 1000 + tonumber(now[2]) / 1000
+local entries = redis.call('HGETALL', KEYS[1])
+for i = 1, #entries, 2 do
+  local lease = cjson.decode(entries[i + 1])
+  if tonumber(lease.expires_ms) > now_ms then return 0 end
+  redis.call('HDEL', KEYS[1], entries[i])
+end
+redis.call('SET', KEYS[2], ARGV[1], 'PX', 60000, 'NX')
+return 1
+`)
+
+var finishDeleteScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
 `)
 
 var releasePresenceScript = redis.NewScript(`
@@ -120,6 +141,16 @@ return 0
 `)
 
 func presenceRoomKey(roomID string) string { return "presence:room:" + roomID + ":members" }
+func deletingRoomKey(roomID string) string { return "presence:room:" + roomID + ":deleting" }
+
+func (b *RedisBus) TryBeginDelete(ctx context.Context, roomID, token string) (bool, error) {
+	result, err := beginDeleteScript.Run(ctx, b.client, []string{presenceRoomKey(roomID), deletingRoomKey(roomID)}, token).Int()
+	return result == 1, err
+}
+
+func (b *RedisBus) FinishDelete(ctx context.Context, roomID, token string) error {
+	return finishDeleteScript.Run(ctx, b.client, []string{deletingRoomKey(roomID)}, token).Err()
+}
 
 func (b *RedisBus) SetPresenceReplacementHandler(handler func(presenceReplacement)) {
 	b.rpcMu.Lock()
@@ -133,8 +164,7 @@ func (b *RedisBus) SetPresenceKickHandler(handler func(presenceKick)) {
 	b.rpcMu.Unlock()
 }
 
-// AdmitPresence is the cross-node admission gate. Redis failure is surfaced to
-// the caller so it may use the local Hub policy in degraded single-node mode.
+// AdmitPresence is the cross-node admission gate. A Redis failure denies new joins.
 func (b *RedisBus) AdmitPresence(ctx context.Context, roomID, identity, tabSessionID, connectionID string, participant domain.Participant, maxParticipants int, replace bool) (domain.Participant, error) {
 	if maxParticipants <= 0 {
 		maxParticipants = 12
@@ -148,11 +178,13 @@ func (b *RedisBus) AdmitPresence(ctx context.Context, roomID, identity, tabSessi
 	if replace {
 		allowReplace = "1"
 	}
-	result, err := admitPresenceScript.Run(ctx, b.client, []string{presenceRoomKey(roomID)}, identity, tabSessionID, connectionID, maxParticipants, payload, presenceTTL.Milliseconds(), allowReplace).Text()
+	result, err := admitPresenceScript.Run(ctx, b.client, []string{presenceRoomKey(roomID), deletingRoomKey(roomID)}, identity, tabSessionID, connectionID, maxParticipants, payload, presenceTTL.Milliseconds(), allowReplace).Text()
 	if err != nil {
 		return domain.Participant{}, err
 	}
 	switch result {
+	case "deleting":
+		return domain.Participant{}, ErrDistributedRoomDeleting
 	case "duplicate":
 		return domain.Participant{}, ErrDistributedDuplicateSession
 	case "full":

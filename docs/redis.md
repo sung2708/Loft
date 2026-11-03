@@ -86,10 +86,10 @@ To preserve Mingly's world-class developer experience, the backend operates seam
 
 If Redis becomes unreachable in a clustered production environment:
 1. **Detection**: Redis client health ping detects connection timeout ($<500\text{ms}$).
-2. **Bounded fallback & Logging**: Logs a structured warning and uses local bounded limiters/admission when commands fail.
+2. **Bounded fallback & Logging**: Logs a structured warning, uses local bounded rate limits, and rejects new room joins while admission cannot be checked.
 3. **Graceful Local Fallback**:
-   - The Go backend falls back to local in-memory rate limiting and in-memory presence tracking for its own connected clients.
-   - Cross-instance broadcast pauses, but clients connected to the same instance continue chatting and syncing media normally.
+   - Existing connections retain local in-memory rate limiting and presence tracking. New joins wait for Redis to recover.
+   - Cross-instance broadcast pauses. Clients already on the same instance can continue chatting; shared media changes wait for Redis.
 4. **No Process Panics**: The Go process **never panics or crashes** due to Redis outages.
 5. **Automatic Reconnection**: The Redis client retries connection with exponential backoff and resumes its bounded wildcard room subscription automatically once Redis recovers.
 

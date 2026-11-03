@@ -364,6 +364,39 @@ func TestWebSocketPickVoteDBPersistenceFailure(t *testing.T) {
 	}
 }
 
+func TestWebSocketDuplicatePickVoteKeepsServerAlive(t *testing.T) {
+	room := domain.Room{ID: uuid.NewString(), Name: "Picks Vote", AllowGuests: true}
+	server, hub, guests := setupRealtimeTestServer(newYouTubeRealtimeMockStore(room))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := connectAndAuthGuest(t, ctx, server.URL, guests, room.ID, "Guest A")
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+	pickID := uuid.NewString()
+	hub.mu.Lock()
+	state := hub.rooms[room.ID]
+	var voter string
+	for _, participant := range state.clients {
+		voter = participant.identity.ID
+	}
+	state.picks = append(state.picks, youtubeRoomPick{ID: pickID, Voters: map[string]struct{}{voter: {}}, Votes: 1})
+	hub.mu.Unlock()
+	payload, _ := json.Marshal(map[string]string{"pick_id": pickID})
+	if err := wsjson.Write(ctx, conn, Envelope{Type: "youtube.pick.vote", Version: 1, EventID: uuid.NewString(), RoomID: room.ID, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	var response Envelope
+	if err := wsjson.Read(ctx, conn, &response); err != nil || response.Type != "error" || !strings.Contains(string(response.Payload), "already voted") {
+		t.Fatalf("duplicate vote response: event=%+v err=%v", response, err)
+	}
+	if err := wsjson.Write(ctx, conn, Envelope{Type: "connection.ping", Version: 1, EventID: uuid.NewString(), RoomID: room.ID, Payload: json.RawMessage(`{"client_time":1}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, conn, &response); err != nil || response.Type != "connection.pong" {
+		t.Fatalf("socket stopped after duplicate vote: event=%+v err=%v", response, err)
+	}
+}
+
 func TestForwardedAutoplayCommitsBeforeRemovingPick(t *testing.T) {
 	for _, rejected := range []bool{false, true} {
 		t.Run(fmt.Sprint(rejected), func(t *testing.T) {

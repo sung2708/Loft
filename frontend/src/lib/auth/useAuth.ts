@@ -23,8 +23,6 @@ export type AuthState =
 
 interface AuthStore {
   authState: AuthState;
-  initialized: boolean;
-  setAuthState: (state: AuthState) => void;
   initializeAuth: () => () => void;
   signOut: () => Promise<void>;
   signInWithGoogle: (next?: string) => Promise<void>;
@@ -33,62 +31,80 @@ interface AuthStore {
 let authSubscription: { unsubscribe: () => void } | null = null;
 let activeAuthSubscribers = 0;
 let authRevision = 0;
+let removePageShowListener: (() => void) | null = null;
 
-export const useAuthStore = create<AuthStore>((set, get) => ({
+function releaseAuthSubscriber() {
+  activeAuthSubscribers -= 1;
+  if (activeAuthSubscribers === 0) {
+    authSubscription?.unsubscribe();
+    authSubscription = null;
+    removePageShowListener?.();
+    removePageShowListener = null;
+  }
+}
+
+export const useAuthStore = create<AuthStore>((set) => ({
   authState: { status: "loading" },
-  initialized: false,
-
-  setAuthState: (authState) => set({ authState }),
 
   initializeAuth: () => {
     activeAuthSubscribers += 1;
     if (authSubscription) {
-      return () => {
-        activeAuthSubscribers -= 1;
-        if (activeAuthSubscribers <= 0 && authSubscription) {
-          authSubscription.unsubscribe();
-          authSubscription = null;
-        }
-      };
+      return releaseAuthSubscriber;
     }
 
     const supabase = getSupabase();
     if (!supabase) {
-      set({ authState: { status: "anonymous" }, initialized: true });
-      return () => {
-        activeAuthSubscribers -= 1;
-      };
+      set({ authState: { status: "anonymous" } });
+      return releaseAuthSubscriber;
     }
+
+    const resolveSession = async (session: Session | null, revision: number) => {
+      if (revision !== authRevision) return;
+      if (!session) {
+        set({ authState: { status: "anonymous" } });
+        return;
+      }
+
+      let identity: ApiIdentity | null = null;
+      try {
+        identity = await api.me(session.access_token);
+      } catch {
+        // Keep the Supabase session usable if custom identity fails.
+      }
+
+      if (revision !== authRevision) return;
+      set({
+        authState: {
+          status: "authenticated",
+          user: session.user,
+          session,
+          identity,
+        },
+      });
+    };
 
     // 1. Initial Session Resolution
     const initialRevision = ++authRevision;
     void supabase.auth
       .getSession()
-      .then(async ({ data: { session }, error }) => {
-        if (initialRevision !== authRevision) return;
-        if (error || !session) {
-          set({ authState: { status: "anonymous" }, initialized: true });
-          return;
-        }
+      .then(({ data: { session }, error }) =>
+        resolveSession(error ? null : session, initialRevision),
+      )
+      .catch(() => resolveSession(null, initialRevision));
 
-        let identity: ApiIdentity | null = null;
-        try {
-          identity = await api.me(session.access_token);
-        } catch {
-          // Fallback gracefully to Supabase user metadata
-        }
-
-        if (initialRevision !== authRevision) return;
-        set({
-          authState: {
-            status: "authenticated",
-            user: session.user,
-            session,
-            identity,
-          },
-          initialized: true,
-        });
-      });
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      // Back/Forward Cache restores the pre-login JS state without remounting React.
+      const revision = ++authRevision;
+      set({ authState: { status: "loading" } });
+      void supabase.auth.getSession()
+        .then(({ data: { session }, error }) =>
+          resolveSession(error ? null : session, revision),
+        )
+        .catch(() => resolveSession(null, revision));
+    };
+    window.addEventListener("pageshow", onPageShow);
+    removePageShowListener = () => window.removeEventListener("pageshow", onPageShow);
 
     // 2. Auth State Change Listener
     const {
@@ -100,7 +116,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           window.sessionStorage.removeItem("loft.auth.next");
           clearRoomCredentials();
         }
-        set({ authState: { status: "anonymous" }, initialized: true });
+        set({ authState: { status: "anonymous" } });
         return;
       }
 
@@ -110,45 +126,20 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         event === "USER_UPDATED"
       ) {
         const revision = ++authRevision;
-        let identity: ApiIdentity | null = null;
-        try {
-          identity = await api.me(session.access_token);
-        } catch {
-          // Keep usable even if custom identity fails
-        }
-
-        if (revision !== authRevision) return;
-        set({
-          authState: {
-            status: "authenticated",
-            user: session.user,
-            session,
-            identity,
-          },
-          initialized: true,
-        });
+        await resolveSession(session, revision);
       }
     });
 
     authSubscription = subscription;
 
-    return () => {
-      activeAuthSubscribers -= 1;
-      if (activeAuthSubscribers <= 0 && authSubscription) {
-        authSubscription.unsubscribe();
-        authSubscription = null;
-      }
-    };
+    return releaseAuthSubscriber;
   },
 
   signOut: async () => {
     const supabase = getSupabase();
     if (supabase) {
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        // Continue clearing local state
-      }
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
     }
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem("loft.auth.next");

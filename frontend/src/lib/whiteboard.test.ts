@@ -1,9 +1,22 @@
 import { describe, it, expect } from "vitest";
-import type { TLRecord } from "tldraw";
-import { boardDraftKey, mergeBoardRecords, isSafeBoardRecord, readBoardDraft, writeBoardDraft } from "./whiteboard";
+import { boardDraftKey, createTLStore, mergeBoardRecords, isSafeBoardRecord, readBoardDraft, savePendingBoard, writeBoardDraft, type TLRecord, type TLShape } from "./whiteboard";
 const record = (id: string) =>
   ({ id, typeName: "shape", type: "draw" }) as unknown as TLRecord;
 describe("whiteboard snapshot recovery", () => {
+  it("keeps edits after a failed save and retries without losing a newer edit", async () => {
+    const first = record("shape:local");
+    const newer = record("shape:newer");
+    const pending = new Map<string, TLRecord | null>([[first.id, first]]);
+    await expect(savePendingBoard(pending, 0, async () => { throw new Error("offline"); })).rejects.toThrow("offline");
+    expect(pending.get(first.id)).toBe(first);
+    const saved = await savePendingBoard(pending, 0, async (patch) => {
+      expect(patch.put).toEqual([first]);
+      pending.set(newer.id, newer);
+      return { version: 1, records: { [first.id]: first } };
+    });
+    expect(saved.outstanding).toEqual(new Map([[newer.id, newer]]));
+    expect(mergeBoardRecords(saved.snapshot, saved.outstanding).map((r) => r.id).sort()).toEqual([first.id, newer.id]);
+  });
   it("preserves pending local edits while merging another participant", () => {
     const local = record("shape:local"),
       other = record("shape:other"),
@@ -34,7 +47,6 @@ it("keeps an unsynced draft scoped to its room and ignores malformed storage", (
 });
 
 // The same pinned SDK fixtures are accepted by Go's trust-boundary tests.
-import { createTLStore, type TLShape } from "tldraw";
 import { readFileSync } from "node:fs";
 const fixtures = JSON.parse(readFileSync(new URL("../../../backend/internal/store/testdata/board_records.json", import.meta.url), "utf8")) as TLShape[];
 it("keeps the server fixtures compatible with the installed SDK", () => {

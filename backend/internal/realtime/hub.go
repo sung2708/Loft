@@ -175,7 +175,7 @@ type Hub struct {
 	mu                    sync.RWMutex
 	rooms                 map[string]*roomState
 	remoteHosts           map[string]domain.HostAuthority
-	deleting              map[string]struct{}
+	deleting              map[string]string
 	store                 domain.Store
 	guests                *auth.GuestTokens
 	users                 *auth.SupabaseVerifier
@@ -230,13 +230,13 @@ func New(store domain.Store, guests *auth.GuestTokens, users *auth.SupabaseVerif
 	for _, origin := range origins {
 		allowed[origin] = struct{}{}
 	}
-	return &Hub{boardLimit: ratelimit.New(15, time.Second, 15),
+	return &Hub{boardLimit: ratelimit.New(30, time.Second, 30),
 		cancels:               make(map[string]context.CancelFunc),
 		idleTimeout:           30 * time.Second,
-		disconnectGracePeriod: 15 * time.Second,
+		disconnectGracePeriod: 3 * time.Second,
 		rooms:                 make(map[string]*roomState),
 		remoteHosts:           make(map[string]domain.HostAuthority),
-		deleting:              make(map[string]struct{}),
+		deleting:              make(map[string]string),
 		store:                 store,
 		guests:                guests,
 		users:                 users,
@@ -893,19 +893,41 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 // Call FinishDelete on both success and failure; no I/O happens under h.mu.
 func (h *Hub) BeginDelete(roomID string) bool {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if _, busy := h.deleting[roomID]; busy {
+		h.mu.Unlock()
 		return false
 	}
 	if state := h.rooms[roomID]; state != nil && len(state.clients) > 0 {
+		h.mu.Unlock()
 		return false
 	}
-	h.deleting[roomID] = struct{}{}
+	token := uuid.NewString()
+	h.deleting[roomID] = token
+	bus := h.bus
+	h.mu.Unlock()
+	if guard, ok := bus.(interface {
+		TryBeginDelete(context.Context, string, string) (bool, error)
+	}); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		allowed, err := guard.TryBeginDelete(ctx, roomID, token)
+		cancel()
+		if err != nil || !allowed {
+			h.mu.Lock()
+			delete(h.deleting, roomID)
+			h.mu.Unlock()
+			if err != nil {
+				h.logger.Warn("distributed room deletion check failed", "room_id", roomID, "error", err)
+			}
+			return false
+		}
+	}
 	return true
 }
 
 func (h *Hub) FinishDelete(roomID string, deleted bool) {
 	h.mu.Lock()
+	token := h.deleting[roomID]
+	bus := h.bus
 	if deleted {
 		if state := h.rooms[roomID]; state != nil {
 			if state.evict != nil {
@@ -924,6 +946,15 @@ func (h *Hub) FinishDelete(roomID string, deleted bool) {
 	}
 	delete(h.deleting, roomID)
 	h.mu.Unlock()
+	if guard, ok := bus.(interface {
+		FinishDelete(context.Context, string, string) error
+	}); ok && token != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		if err := guard.FinishDelete(ctx, roomID, token); err != nil {
+			h.logger.Warn("distributed room deletion release failed", "room_id", roomID, "error", err)
+		}
+		cancel()
+	}
 	if deleted {
 		h.releaseMediaOwner(roomID)
 	}
@@ -1716,23 +1747,24 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 					continue
 				}
 				found := false
+				alreadyVoted := false
 				for _, p := range state.picks {
 					if p.ID == cmd.PickID {
 						found = true
 						if _, seen := p.Voters[c.identity.ID]; seen {
-							h.mu.Unlock()
-							h.sendError(c, "YOUTUBE_PICK_REJECTED", "You already voted for this pick")
-							found = false
-							break
+							alreadyVoted = true
 						}
 						break
 					}
 				}
-				if !found {
-					h.mu.Unlock()
+				h.mu.Unlock()
+				if alreadyVoted {
+					h.sendError(c, "YOUTUBE_PICK_REJECTED", "You already voted for this pick")
 					continue
 				}
-				h.mu.Unlock()
+				if !found {
+					continue
+				}
 
 				var persistErr error
 				if repo, ok := h.store.(interface {
@@ -1900,11 +1932,11 @@ func (h *Hub) admitPresence(parent context.Context, c *client, room domain.Room)
 		c.participant = accepted
 		return nil
 	}
-	if errors.Is(err, ErrDistributedRoomFull) || errors.Is(err, ErrDistributedDuplicateSession) {
+	if errors.Is(err, ErrDistributedRoomFull) || errors.Is(err, ErrDistributedDuplicateSession) || errors.Is(err, ErrDistributedRoomDeleting) {
 		return err
 	}
-	h.logger.Warn("redis admission unavailable; local room policy continues", "room_id", room.ID, "error", err)
-	return nil
+	h.logger.Warn("redis admission unavailable; room join denied", "room_id", room.ID, "error", err)
+	return err
 }
 
 func (h *Hub) roomParticipants(parent context.Context, roomID string, local []domain.Participant) []domain.Participant {

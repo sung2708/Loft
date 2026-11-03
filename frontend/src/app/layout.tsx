@@ -3,6 +3,7 @@ import Script from "next/script";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { I18nProvider } from "@/components/providers/I18nProvider";
+import { LegalFooter } from "@/components/legal/LegalFooter";
 
 export const metadata: Metadata = {
   metadataBase: new URL(
@@ -70,7 +71,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <I18nProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>{children}<LegalFooter /></ThemeProvider>
         </I18nProvider>
       </body>
     </html>

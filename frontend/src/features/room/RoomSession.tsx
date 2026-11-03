@@ -163,7 +163,15 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           clearCredential(credential.roomId);
           router.replace(`/join/${encodeURIComponent(credential.roomId)}`);
         }
-        else if (event.type === "board.changed") { useBoardStore.getState().changed(event.payload.version); }
+        else if (event.type === "board.changed") {
+          useBoardStore
+            .getState()
+            .changed(
+              event.payload.version,
+              event.payload.put,
+              event.payload.remove,
+            );
+        }
         else if (event.type === "board.cursor") { useBoardStore.getState().cursor(event.payload); }
         else if (event.type === "room.snapshot") {
           useRoomStore.getState().applySnapshot(event.payload);
@@ -318,7 +326,8 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         } else if (
           type !== "reaction.send" &&
           type !== "wave.send" &&
-          type !== "participant.hand.set"
+          type !== "participant.hand.set" &&
+          type !== "board.cursor"
         ) {
           useMusicStore
             .getState()

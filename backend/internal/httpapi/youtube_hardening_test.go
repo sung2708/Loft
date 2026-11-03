@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
 	"loft/backend/internal/livekit"
+	"loft/backend/internal/ratelimit"
 	"loft/backend/internal/store"
 )
 
@@ -30,6 +32,17 @@ type youtubeMockStore struct {
 	createErr error
 	voteErr   error
 	settings  map[string]store.YouTubeMediaSettings
+}
+
+type bannedYouTubeStore struct {
+	*youtubeMockStore
+	domain.GovernanceStore
+	banned bool
+	banErr error
+}
+
+func (s *bannedYouTubeStore) IsBanned(context.Context, string, domain.Identity) (bool, error) {
+	return s.banned, s.banErr
 }
 
 func newYouTubeMockStore() *youtubeMockStore {
@@ -163,6 +176,85 @@ func setupYouTubeTestServer(mock *youtubeMockStore) (http.Handler, string, *auth
 	livekitSvc := livekit.New("", "")
 	srv := New(mock, users, guests, livekitSvc, []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return srv.Routes(http.NotFoundHandler()), secret, users, guests
+}
+
+func TestBannedRoomIdentityCannotReadOrWriteHTTP(t *testing.T) {
+	roomID, userID := uuid.NewString(), uuid.NewString()
+	mock := newYouTubeMockStore()
+	mock.rooms[roomID] = domain.Room{ID: roomID, OwnerID: userID, AllowGuests: true}
+	store := &bannedYouTubeStore{youtubeMockStore: mock, banned: true}
+	secret := "01234567890123456789012345678901"
+	server := New(store, auth.NewSupabaseVerifier("https://example.supabase.co", "authenticated", secret), auth.NewGuestTokens(secret, time.Hour), livekit.New("", ""), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := server.Routes(http.NotFoundHandler())
+	token := generateUserToken(secret, userID)
+	for _, tc := range []struct{ method, path, body string }{
+		{"GET", "/messages", ""},
+		{"GET", "/youtube/picks", ""},
+		{"POST", "/youtube/picks", `{"VideoID":"dQw4w9WgXcQ"}`},
+		{"POST", "/youtube/picks/vote", `{"pick_id":"` + uuid.NewString() + `"}`},
+		{"GET", "/youtube/settings", ""},
+		{"PATCH", "/youtube/settings", `{"autoplay_enabled":true}`},
+	} {
+		req := httptest.NewRequest(tc.method, "/api/v1/rooms/"+roomID+tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != 403 || extractErrorCode(t, response.Body.Bytes()) != "ROOM_KICKED" {
+			t.Errorf("%s %s: status=%d body=%s", tc.method, tc.path, response.Code, response.Body.String())
+		}
+	}
+	store.banned = false
+	store.banErr = fmt.Errorf("database unavailable")
+	req := httptest.NewRequest("GET", "/api/v1/rooms/"+roomID+"/messages", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != 500 {
+		t.Fatalf("ban lookup failure allowed request: %d", response.Code)
+	}
+}
+
+func TestYouTubeWritesRejectOversizedJSON(t *testing.T) {
+	mock := newYouTubeMockStore()
+	roomID, userID := uuid.NewString(), uuid.NewString()
+	mock.rooms[roomID] = domain.Room{ID: roomID, OwnerID: userID, AllowGuests: true}
+	handler, secret, _, _ := setupYouTubeTestServer(mock)
+	token := generateUserToken(secret, userID)
+	for _, tc := range []struct{ path, method, body string }{
+		{"/youtube/picks", "POST", `{"VideoID":"dQw4w9WgXcQ","Title":"` + strings.Repeat("a", 33<<10) + `"}`},
+		{"/youtube/picks", "POST", `{"VideoID":"dQw4w9WgXcQ"}` + strings.Repeat(" ", 33<<10)},
+		{"/youtube/picks/vote", "POST", `{"pick_id":"` + strings.Repeat("a", 33<<10) + `"}`},
+		{"/youtube/picks/vote", "POST", `{"pick_id":"` + uuid.NewString() + `"}{}`},
+		{"/youtube/settings", "PATCH", `{"autoplay_enabled":true,"padding":"` + strings.Repeat("a", 33<<10) + `"}`},
+		{"/youtube/settings", "PATCH", `{"autoplay_enabled":true}` + strings.Repeat(" ", 33<<10)},
+	} {
+		req := httptest.NewRequest(tc.method, "/api/v1/rooms/"+roomID+tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != 400 {
+			t.Errorf("%s accepted oversized JSON: %d", tc.path, response.Code)
+		}
+	}
+}
+
+func TestYouTubeSearchStopsBeforeProviderWhenBudgetExhausted(t *testing.T) {
+	secret := "01234567890123456789012345678901"
+	server := New(newYouTubeMockStore(), auth.NewSupabaseVerifier("https://example.supabase.co", "authenticated", secret), nil, livekit.New("", ""), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server.youtubeSearchLimit = ratelimit.New(1, time.Hour, 1)
+	server.youtubeSearchBudget = ratelimit.New(1, time.Hour, 1)
+	usedAccount := uuid.NewString()
+	server.youtubeSearchLimit.Allow(usedAccount)
+	server.youtubeSearchBudget.Allow("provider")
+	for _, user := range []string{usedAccount, uuid.NewString()} {
+		req := httptest.NewRequest("GET", "/api/v1/youtube/search?q=music", nil)
+		req.Header.Set("Authorization", "Bearer "+generateUserToken(secret, user))
+		response := httptest.NewRecorder()
+		server.Routes(http.NotFoundHandler()).ServeHTTP(response, req)
+		if response.Code != 429 {
+			t.Fatalf("search for %s reached provider: %d %s", user, response.Code, response.Body.String())
+		}
+	}
 }
 
 func generateUserToken(secret, userID string) string {

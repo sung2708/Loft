@@ -35,10 +35,16 @@ func HTTPMiddleware(base zerolog.Logger, metrics *Metrics) func(http.Handler) ht
 			next.ServeHTTP(recorder, r.WithContext(ctx))
 
 			route := routePattern(r)
+			method := r.Method
+			switch method {
+			case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions:
+			default:
+				method = "OTHER"
+			}
 			status := fmt.Sprintf("%d", recorder.status)
 			elapsed := time.Since(started)
-			metrics.HTTPRequests.WithLabelValues(r.Method, route, status).Inc()
-			metrics.HTTPDuration.WithLabelValues(r.Method, route).Observe(elapsed.Seconds())
+			metrics.HTTPRequests.WithLabelValues(method, route, status).Inc()
+			metrics.HTTPDuration.WithLabelValues(method, route).Observe(elapsed.Seconds())
 			requestLogger.Info().
 				Str("route", route).
 				Int("status", recorder.status).

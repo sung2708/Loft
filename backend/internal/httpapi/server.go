@@ -25,21 +25,23 @@ import (
 )
 
 type Server struct {
-	store            domain.Store
-	deletion         RoomDeletionGuard
-	users            *auth.SupabaseVerifier
-	guests           *auth.GuestTokens
-	livekit          *livekit.TokenService
-	lookupLimit      *ratelimit.Limiter
-	guestLimit       *ratelimit.Limiter
-	passwordLimit    *ratelimit.Limiter
-	boardLimit       *ratelimit.Limiter
-	roomLimit        *ratelimit.Limiter
-	youtubePickLimit *ratelimit.Limiter
-	origins          map[string]struct{}
-	logger           *slog.Logger
-	metrics          *observability.Metrics
-	httpLogger       *zerolog.Logger
+	store               domain.Store
+	deletion            RoomDeletionGuard
+	users               *auth.SupabaseVerifier
+	guests              *auth.GuestTokens
+	livekit             *livekit.TokenService
+	lookupLimit         *ratelimit.Limiter
+	guestLimit          *ratelimit.Limiter
+	passwordLimit       *ratelimit.Limiter
+	boardLimit          *ratelimit.Limiter
+	roomLimit           *ratelimit.Limiter
+	youtubePickLimit    *ratelimit.Limiter
+	youtubeSearchLimit  *ratelimit.Limiter
+	youtubeSearchBudget *ratelimit.Limiter
+	origins             map[string]struct{}
+	logger              *slog.Logger
+	metrics             *observability.Metrics
+	httpLogger          *zerolog.Logger
 }
 
 type RoomDeletionGuard interface {
@@ -91,7 +93,7 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		guard = deletion[0]
 	}
 	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		boardLimit: ratelimit.New(20, time.Second, 20), lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
+		boardLimit: ratelimit.New(20, time.Second, 20), lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), youtubeSearchLimit: ratelimit.New(20, time.Minute, 5), youtubeSearchBudget: ratelimit.New(300, time.Hour, 30), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
 // ConfigureObservability is called once during process bootstrap before routes
@@ -112,6 +114,8 @@ func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
 	s.passwordLimit.SetDistributed("room_password", remote)
 	s.roomLimit.SetDistributed("room_create", remote)
 	s.youtubePickLimit.SetDistributed("youtube_picks", remote)
+	s.youtubeSearchLimit.SetDistributed("youtube_search_user", remote)
+	s.youtubeSearchBudget.SetDistributed("youtube_search_shared", remote)
 	s.boardLimit.SetDistributed("board_write", remote)
 }
 
@@ -493,7 +497,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.requestIdentity(r, room); err != nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
+		s.writeRoomIdentityError(w, r, err)
 		return
 	}
 	messages, err := s.store.RecentMessages(r.Context(), room.ID, 50)
@@ -520,19 +524,8 @@ func (s *Server) liveKitToken(w http.ResponseWriter, r *http.Request) {
 	}
 	identity, err := s.requestIdentity(r, room)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
+		s.writeRoomIdentityError(w, r, err)
 		return
-	}
-	if governance, ok := s.store.(domain.GovernanceStore); ok {
-		banned, err := governance.IsBanned(r.Context(), room.ID, identity)
-		if err != nil {
-			s.internal(w, r, "check room ban", err)
-			return
-		}
-		if banned {
-			writeError(w, http.StatusForbidden, "ROOM_KICKED", "You were removed from this room")
-			return
-		}
 	}
 	if guard, ok := s.deletion.(mediaAdmissionGuard); ok {
 		admitted, err := guard.CanIssueMediaToken(r.Context(), room.ID, identity)
@@ -555,18 +548,41 @@ func (s *Server) liveKitToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requestIdentity(r *http.Request, room domain.Room) (domain.Identity, error) {
+	var identity domain.Identity
 	if raw := strings.TrimSpace(r.Header.Get("X-Guest-Token")); raw != "" {
-		identity, err := s.guests.Verify(raw)
-		if err == nil && domain.CanJoin(room, identity) {
-			return identity, nil
+		guest, err := s.guests.Verify(raw)
+		if err == nil && domain.CanJoin(room, guest) {
+			identity = guest
+		} else {
+			return domain.Identity{}, domain.ErrUnauthorized
 		}
-		return domain.Identity{}, domain.ErrUnauthorized
+	} else {
+		user, err := s.authenticatedUser(r)
+		if err != nil || !s.canAccessRoom(r.Context(), room, user) {
+			return domain.Identity{}, domain.ErrUnauthorized
+		}
+		identity = user
 	}
-	identity, err := s.authenticatedUser(r)
-	if err != nil || !s.canAccessRoom(r.Context(), room, identity) {
-		return domain.Identity{}, domain.ErrUnauthorized
+	if governance, ok := s.store.(domain.GovernanceStore); ok {
+		banned, err := governance.IsBanned(r.Context(), room.ID, identity)
+		if err != nil {
+			return domain.Identity{}, err
+		}
+		if banned {
+			return domain.Identity{}, domain.ErrBanned
+		}
 	}
 	return identity, nil
+}
+
+func (s *Server) writeRoomIdentityError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, domain.ErrBanned) {
+		writeError(w, http.StatusForbidden, "ROOM_KICKED", "You were removed from this room")
+	} else if errors.Is(err, domain.ErrUnauthorized) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Valid room identity required")
+	} else {
+		s.internal(w, r, "check room admission", err)
+	}
 }
 
 func (s *Server) canAccessRoom(ctx context.Context, room domain.Room, identity domain.Identity) bool {

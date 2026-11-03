@@ -135,7 +135,7 @@ Cloud credentials, Redis/LiveKit services, and browser device permissions are re
 
 ## Known MVP limits
 
-- Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage preserves bounded local chat/presence behavior; shared media mutations stop until the coordinator can confirm ownership.
+- Redis is optional for single-node development. When configured, Pub/Sub, distributed admission, media-owner fencing, and rate limits coordinate multiple Go instances; Redis outage blocks new room joins while existing same-node connections can continue local chat. Shared media mutations stop until the coordinator can confirm ownership.
 - A room admits one active connection per verified identity. A same-tab reload replaces the previous socket; a different tab receives `DUPLICATE_SESSION`. Idle application connections expire after roughly 30 seconds without traffic, and room capacity is enforced locally and through Redis leases.
 - Authenticated invite holders may join; durable non-owner membership is reserved for later product rules.
 - Advanced moderation dashboards, external music OAuth, recording, and discovery remain deferred. The current host can transfer realtime authority, lock admission, remove a participant, or apply a room-scoped one-hour temporary ban.

@@ -10,8 +10,6 @@ import (
 	"strings"
 )
 
-// Pinned to tldraw 5.6.0; SDK fixture tests guard upgrades to its record schema.
-//
 //go:embed board_props.json
 var boardPropsJSON []byte
 
@@ -245,7 +243,7 @@ func validBoardRecord(raw json.RawMessage) bool {
 	return false
 }
 
-// tldraw stores a Float32 starting point followed by Float16 deltas.
+// Paths store a Float32 starting point followed by Float16 deltas.
 func validBoardPath(path string, dimension int) bool {
 	if path == "" {
 		return true

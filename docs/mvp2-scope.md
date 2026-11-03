@@ -45,7 +45,7 @@ The following items are strictly **IN SCOPE** for MVP 2:
 - **Origin Instance Guard**: Inclusion of `origin_instance_id` to prevent recursive re-broadcast loops.
 - **Ephemeral Presence Leases**: Redis key TTLs (15s) refreshed by client heartbeats.
 - **Distributed Rate Limiting**: Sliding-window rate limit counters in Redis with graceful in-memory fallbacks.
-- **Degraded Operation**: Seamless fallback to single-node in-memory operation when `REDIS_URL` is omitted or Redis is unreachable.
+- **Degraded Operation**: Single-node in-memory operation when `REDIS_URL` is omitted; existing local connections continue during a Redis outage, but new joins pause.
 
 ### E. Synchronized Media & Collaborative Queue
 - **Server-Authoritative YouTube State**: Dynamic playback position prediction based on anchor timestamps ($P = P_0 + (t - t_0) \times \text{rate}$); zero continuous timestamp broadcasting.

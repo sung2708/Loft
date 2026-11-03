@@ -396,17 +396,6 @@ export default function LobbyPage() {
 
       </main>
 
-      <footer className="border-t border-[var(--stroke-subtle)] px-4 py-5 sm:px-6">
-        <nav aria-label="Thông tin pháp lý" className="mx-auto flex w-full max-w-[920px] items-center justify-center gap-4 text-[14px] text-[var(--text-loft-muted)]">
-          <Link href="/privacy" className="transition-colors hover:text-[var(--text-loft-primary)]">
-            {locale === "vi" ? "Quyền riêng tư" : "Privacy"}
-          </Link>
-          <Link href="/terms" className="transition-colors hover:text-[var(--text-loft-primary)]">
-            {locale === "vi" ? "Điều khoản" : "Terms"}
-          </Link>
-        </nav>
-      </footer>
-
       <DeleteRoomDialog room={deletingRoom} locale={locale} pending={deleting} error={deleteError} onCancel={() => { setDeletingRoom(null); setDeleteError(null); }} onConfirm={() => void removeRecentRoom()} />
 
     </div>

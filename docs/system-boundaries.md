@@ -119,6 +119,6 @@ Clear ownership boundaries prevent state drift, security vulnerabilities, and di
 | Failure Scenario | Isolated Impact | Surviving Features |
 | :--- | :--- | :--- |
 | **LiveKit Unavailable** | Voice, video, and screen sharing fail to connect or disconnect. | Chat, presence, shared media, room settings continue functioning via Go WebSocket. |
-| **Redis Unavailable** | Multi-instance fan-out disabled; fallback to local instance presence and in-memory rate limiting. | Core room communication continues on single instances; DB remains sound. |
+| **Redis Unavailable** | Multi-instance fan-out and new joins pause; existing connections retain local presence and in-memory rate limits. | Same-instance communication continues; DB remains sound. |
 | **Supabase Auth Outage**| New user logins fail; token refresh fails. | Existing active sessions and guests continue in rooms until token expiry. |
 | **YouTube API Error** | Video iframe displays playback error or stall. | Voice, chat, screen share, and queue management remain fully responsive. |

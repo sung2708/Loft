@@ -59,7 +59,8 @@ func main() {
 	if cfg.RedisURL != "" {
 		bus, err := realtime.NewRedisBus(cfg.RedisURL, cfg.InstanceID, slogLogger)
 		if err != nil {
-			logger.Error().Err(err).Msg("redis disabled; serving local realtime only")
+			logger.Error().Err(err).Msg("redis configuration failed")
+			os.Exit(1)
 		} else {
 			hub.SetBus(bus)
 			hub.ConfigureDistributedRateLimits(bus)

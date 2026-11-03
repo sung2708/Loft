@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-chi/chi/v5"
+	"io"
 	"loft/backend/internal/domain"
 	"loft/backend/internal/store"
 	"net/http"
@@ -12,25 +13,18 @@ import (
 
 func (s *Server) whiteboard(w http.ResponseWriter, r *http.Request) {
 	room, err := s.store.GetRoom(r.Context(), chi.URLParam(r, "roomID"))
-	if err != nil {
+	if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrRoomEnded) {
 		writeError(w, 404, "ROOM_NOT_FOUND", "Room not found")
+		return
+	}
+	if err != nil {
+		s.internal(w, r, "get room for whiteboard", err)
 		return
 	}
 	identity, err := s.requestIdentity(r, room)
 	if err != nil {
-		writeError(w, 401, "UNAUTHORIZED", "Valid room identity required")
+		s.writeRoomIdentityError(w, r, err)
 		return
-	}
-	if governance, ok := s.store.(domain.GovernanceStore); ok {
-		banned, err := governance.IsBanned(r.Context(), room.ID, identity)
-		if err != nil {
-			s.internal(w, r, "check board admission", err)
-			return
-		}
-		if banned {
-			writeError(w, 403, "ROOM_KICKED", "You were removed from this room")
-			return
-		}
 	}
 	if guard, ok := s.deletion.(mediaAdmissionGuard); ok {
 		admitted, err := guard.CanIssueMediaToken(r.Context(), room.ID, identity)
@@ -75,7 +69,8 @@ func (s *Server) whiteboard(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&patch); err != nil {
+	var trailing any
+	if err := decoder.Decode(&patch); err != nil || decoder.Decode(&trailing) != io.EOF {
 		writeError(w, 400, "INVALID_BOARD", "Invalid whiteboard update")
 		return
 	}
@@ -96,7 +91,19 @@ func (s *Server) whiteboard(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, "save whiteboard", err)
 		return
 	}
-	if notifier, ok := s.deletion.(interface{ NotifyBoard(string, int64) }); ok {
+	if patchNotifier, ok := s.deletion.(interface {
+		NotifyBoardPatch(string, int64, []json.RawMessage, []string)
+	}); ok {
+		patchBytes := 0
+		for _, raw := range patch.Put {
+			patchBytes += len(raw)
+		}
+		if patchBytes <= 64<<10 {
+			patchNotifier.NotifyBoardPatch(room.ID, snapshot.Version, patch.Put, patch.Remove)
+		} else if notifier, ok := s.deletion.(interface{ NotifyBoard(string, int64) }); ok {
+			notifier.NotifyBoard(room.ID, snapshot.Version)
+		}
+	} else if notifier, ok := s.deletion.(interface{ NotifyBoard(string, int64) }); ok {
 		notifier.NotifyBoard(room.ID, snapshot.Version)
 	}
 	writeJSON(w, 200, snapshot)

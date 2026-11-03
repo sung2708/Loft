@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
@@ -23,6 +24,12 @@ type boardTestStore struct {
 	mu    sync.Mutex
 	board store.BoardSnapshot
 	loads int
+}
+
+type failingBoardRoomStore struct{ *boardTestStore }
+
+func (s *failingBoardRoomStore) GetRoom(context.Context, string) (domain.Room, error) {
+	return domain.Room{}, errors.New("database unavailable")
 }
 
 func (s *boardTestStore) BoardVersion(context.Context, string) (int64, error) {
@@ -84,6 +91,12 @@ func TestWhiteboardRequiresRoomCredentialAndCAS(t *testing.T) {
 	if got := call("PATCH", patch, token); got.Code != 409 {
 		t.Fatalf("stale write accepted: %d", got.Code)
 	}
+	if got := call("PATCH", `{"version":1,"put":[],"remove":[]} {}`, token); got.Code != 400 {
+		t.Fatalf("trailing JSON accepted: %d", got.Code)
+	}
+	if got := call("PATCH", `{"version":1,"put":[],"remove":[]}`+strings.Repeat(" ", 256<<10), token); got.Code != 400 {
+		t.Fatalf("oversized trailing data accepted: %d", got.Code)
+	}
 	if got := call("PATCH", `{"version":1,"put":[{"id":"shape:asset","typeName":"shape","type":"image"}],"remove":[]}`, token); got.Code != 400 {
 		t.Fatalf("unsafe content accepted: %d", got.Code)
 	}
@@ -114,5 +127,17 @@ func TestWhiteboardConditionalReadAvoidsSnapshotLoad(t *testing.T) {
 	server.Routes(http.NotFoundHandler()).ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"board-7"` || repo.loads != 1 {
 		t.Fatal("changed snapshot not returned")
+	}
+}
+
+func TestWhiteboardRoomLookupFailureIsServerError(t *testing.T) {
+	room := domain.Room{ID: "58bb9fe4-79bc-41c7-9d63-61c04815b668", AllowGuests: true}
+	repo := &failingBoardRoomStore{&boardTestStore{fakeStore: &fakeStore{room: room}}}
+	server := New(repo, nil, auth.NewGuestTokens("12345678901234567890123456789012", time.Hour), livekit.New("", ""), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/rooms/"+room.ID+"/whiteboard", nil)
+	response := httptest.NewRecorder()
+	server.Routes(http.NotFoundHandler()).ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("room lookup failure returned %d", response.Code)
 	}
 }
