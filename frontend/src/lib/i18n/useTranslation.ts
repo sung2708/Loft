@@ -1,7 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import { useEffect } from "react";
 import type { Locale, TranslationDictionary } from "./types";
 import { vi } from "./dictionaries/vi";
 import { en } from "./dictionaries/en";
@@ -58,11 +57,7 @@ export const useI18nStore = create<I18nStore>((set, _get, api) => {
 });
 
 export function useTranslation() {
-  const { locale, t, setLocale, toggleLocale, initLocale } = useI18nStore();
-
-  useEffect(() => {
-    initLocale();
-  }, [initLocale]);
+  const { locale, t, setLocale, toggleLocale } = useI18nStore();
 
   return { locale, t, setLocale, toggleLocale };
 }

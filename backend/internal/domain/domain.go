@@ -230,6 +230,37 @@ type Store interface {
 	Close()
 }
 
+type AdminOverview struct {
+	Users int `json:"users"`
+	Rooms int `json:"rooms"`
+}
+
+type AdminUser struct {
+	ID          string    `json:"id"`
+	DisplayName string    `json:"display_name"`
+	CreatedAt   time.Time `json:"created_at"`
+	RoomCount   int       `json:"room_count"`
+}
+
+type AdminRoom struct {
+	ID               string    `json:"id"`
+	Code             string    `json:"code"`
+	Name             string    `json:"name"`
+	OwnerID          string    `json:"owner_id"`
+	OwnerName        string    `json:"owner_name"`
+	AllowGuests      bool      `json:"allow_guests"`
+	IsLocked         bool      `json:"is_locked"`
+	PasswordRequired bool      `json:"password_required"`
+	Ended            bool      `json:"ended"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type AdminStore interface {
+	AdminOverview(context.Context) (AdminOverview, error)
+	ListAdminUsers(context.Context, string, int, int) ([]AdminUser, int, error)
+	ListAdminRooms(context.Context, string, int, int) ([]AdminRoom, int, error)
+}
+
 func ValidateDisplayName(value string) (string, error) {
 	value = strings.Join(strings.Fields(value), " ")
 	if len([]rune(value)) < 2 || len([]rune(value)) > 48 {

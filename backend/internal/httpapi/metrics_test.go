@@ -19,6 +19,27 @@ func TestMetricsIncludeHTTPAndRealtime(t *testing.T) {
 	}
 	response := httptest.NewRecorder()
 	routes.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unconfigured metrics endpoint returned %d, want 404", response.Code)
+	}
+	server.ConfigureMetricsBearerToken("01234567890123456789012345678901")
+	routes = server.Routes(metricsWS{})
+	unauthorized := httptest.NewRecorder()
+	routes.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized metrics returned %d, want 401", unauthorized.Code)
+	}
+	wrongToken := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	wrongToken.Header.Set("Authorization", "Bearer wrong-token")
+	wrongTokenResponse := httptest.NewRecorder()
+	routes.ServeHTTP(wrongTokenResponse, wrongToken)
+	if wrongTokenResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid bearer token returned %d, want 401", wrongTokenResponse.Code)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	response = httptest.NewRecorder()
+	routes.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("metrics returned %d", response.Code)
 	}
@@ -35,12 +56,15 @@ func TestMetricsIncludeHTTPAndRealtime(t *testing.T) {
 
 func TestMetricsCollapseUnknownMethods(t *testing.T) {
 	server := &Server{origins: map[string]struct{}{}}
+	server.ConfigureMetricsBearerToken("01234567890123456789012345678901")
 	routes := server.Routes(metricsWS{})
 	for _, method := range []string{"CUSTOM-A", "CUSTOM-B"} {
 		routes.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, "/health", nil))
 	}
 	response := httptest.NewRecorder()
-	routes.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	routes.ServeHTTP(response, request)
 	got := response.Body.String()
 	if !strings.Contains(got, `http_requests_total{method="OTHER",path="/unmatched",status="405"} 2`) || strings.Contains(got, `method="CUSTOM-`) {
 		t.Fatalf("unknown methods created separate metrics: %s", got)

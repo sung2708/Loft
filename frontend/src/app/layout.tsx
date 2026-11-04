@@ -52,6 +52,19 @@ export default function RootLayout({
     >
       <head>
         <script
+          id="locale-init"
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                const locale = localStorage.getItem("loft.locale");
+                document.documentElement.lang = locale === "en" ? "en" : "vi";
+              } catch {
+                document.documentElement.lang = "vi";
+              }
+            `,
+          }}
+        />
+        <script
           id="theme-init"
           dangerouslySetInnerHTML={{
             __html: `

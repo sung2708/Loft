@@ -25,7 +25,8 @@ k6 run -e LOFT_VUS=100 -e LOFT_SESSION_MS=15000 loadtest/k6_room_burst.js
 
 Set `LOFT_WS_URL` and `LOFT_ORIGIN` for the target deployment. Distribute users
 over enough rooms to satisfy each room's configured `max_participants`; the
-default room capacity is 12. Observe `/metrics`, process RSS, and goroutine
-count during each run. A passing k6 run proves admission and snapshot delivery
-only; chat fan-out, slow consumers, cross-instance coordination, and hardware
-failures need separate runs.
+default room capacity is 12. Observe `/metrics` (with
+`Authorization: Bearer $METRICS_BEARER_TOKEN` when configured), process RSS, and
+goroutine count during each run. A passing k6 run proves admission and snapshot
+delivery only; chat fan-out, slow consumers, cross-instance coordination, and
+hardware failures need separate runs.

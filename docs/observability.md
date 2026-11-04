@@ -78,7 +78,7 @@ All metrics are designed for low cardinality. Dynamic UUIDs (`room_id`, `user_id
 
 The HTTP middleware uses chi route templates such as `/api/v1/rooms/{roomID}`, never raw URL paths. This keeps UUIDs, invite codes, and user input out of Prometheus labels.
 
-`/metrics` is served by `promhttp.HandlerFor` with a process-local Prometheus registry. The existing realtime exposition is appended for backward compatibility.
+`/metrics` is served by `promhttp.HandlerFor` with a process-local Prometheus registry. The existing realtime exposition is appended for backward compatibility. It requires `Authorization: Bearer <METRICS_BEARER_TOKEN>`; when the backend token is unset, the endpoint returns 404. Use a random token of at least 32 characters and keep it separate from the Better Stack remote-write source token.
 
 ### Planned metrics (not exported yet)
 
@@ -97,21 +97,22 @@ Never place a Better Stack source token in app logs, client-side variables, or G
 
 ### Metrics
 
-Create a separate **Prometheus source** in Better Stack. Copy `deploy/prometheus/.env.example` to `deploy/prometheus/.env`, set `MINGLY_METRICS_TARGET`, `MINGLY_METRICS_SCHEME`, `APP_ENV`, `BETTER_STACK_INGESTING_HOST`, and `BETTER_STACK_METRICS_SOURCE_TOKEN`, then run Prometheus with `deploy/prometheus/prometheus.yml`. For the public Render URL `https://loft-ytxd.onrender.com`, use `MINGLY_METRICS_TARGET=loft-ytxd.onrender.com` and `MINGLY_METRICS_SCHEME=https`—do not append `:8080`. The file scrapes `/metrics` and forwards samples with Remote Write bearer authentication. Prometheus only expands `${VARIABLE}`; provide every variable explicitly through your deployment secret store.
+Create a separate **Prometheus source** in Better Stack. Copy `deploy/prometheus/.env.example` to `deploy/prometheus/.env`, set `MINGLY_METRICS_TARGET`, `MINGLY_METRICS_SCHEME`, `MINGLY_METRICS_SCRAPE_TOKEN`, `APP_ENV`, `BETTER_STACK_INGESTING_HOST`, and `BETTER_STACK_METRICS_SOURCE_TOKEN`, then run Prometheus with `deploy/prometheus/prometheus.yml`. Set the same random scrape token as backend `METRICS_BEARER_TOKEN`. For the public Render URL `https://loft-ytxd.onrender.com`, use `MINGLY_METRICS_TARGET=loft-ytxd.onrender.com` and `MINGLY_METRICS_SCHEME=https`—do not append `:8080`. The file scrapes `/metrics` with bearer authentication and forwards samples using the separate Remote Write bearer token. Prometheus expands `${VARIABLE}` at startup; provide every variable explicitly through your deployment secret store.
 
-For a managed collector instead of a local Prometheus agent, Better Stack can scrape the protected `/metrics` URL directly. Allow only the collector/scraper and require bearer authentication at the proxy if the endpoint is publicly reachable.
+For a managed collector instead of a local Prometheus agent, configure Better Stack to send `Authorization: Bearer <METRICS_BEARER_TOKEN>` when scraping `/metrics`.
 
 ### Render deployment
 
-Create a new Render **Blueprint** and set its Blueprint File Path to `deploy/prometheus/render.yaml`. This creates the private `mingly-prometheus` service with a 1 GB persistent disk for the Prometheus write-ahead log. It is a private service, so Render does not attach an HTTP health-check path. Set the three prompted secrets in Render:
+Create a new Render **Blueprint** and set its Blueprint File Path to `deploy/prometheus/render.yaml`. This creates the private `mingly-prometheus` service with a 1 GB persistent disk for the Prometheus write-ahead log. It is a private service, so Render does not attach an HTTP health-check path. Set the prompted values in Render:
 
 ```env
 MINGLY_METRICS_TARGET=loft-ytxd.onrender.com
+MINGLY_METRICS_SCRAPE_TOKEN=<same random value as backend METRICS_BEARER_TOKEN>
 BETTER_STACK_INGESTING_HOST=<host displayed by the Better Stack Prometheus source>
 BETTER_STACK_METRICS_SOURCE_TOKEN=<source token displayed by Better Stack>
 ```
 
-Keep `MINGLY_METRICS_SCHEME=https`. After the deploy is healthy, open the Better Stack source and wait for incoming samples; Prometheus scrapes every 15 seconds. `https://loft-ytxd.onrender.com/metrics` should return Prometheus text before deploying the collector.
+Keep `MINGLY_METRICS_SCHEME=https`. Configure the same scrape token in the backend's Render environment as `METRICS_BEARER_TOKEN`. After both deploys are healthy, open the Better Stack source and wait for incoming samples; Prometheus scrapes every 15 seconds. Verify access with `curl -H "Authorization: Bearer $METRICS_BEARER_TOKEN" https://loft-ytxd.onrender.com/metrics`; unauthenticated requests should return 401.
 
 ---
 

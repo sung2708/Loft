@@ -93,4 +93,4 @@ All HTTP error responses return a standardized JSON envelope with stable machine
 ### Infrastructure & Telemetry
 - `GET /health` (`/healthz` alias) — Liveness probe (Returns `200 OK` if Go runtime is responsive).
 - `GET /ready` (`/readyz` alias) — Readiness probe (Returns `200 OK` when PostgreSQL is reachable; Redis is optional and reported through degraded logs).
-- `GET /metrics` — Prometheus metrics scrape endpoint. Keep this route behind an internal ingress or auth policy in production.
+- `GET /metrics` — Prometheus metrics scrape endpoint. Requires the configured `METRICS_BEARER_TOKEN`; disabled when unset.

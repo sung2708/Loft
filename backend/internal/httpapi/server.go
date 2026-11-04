@@ -2,11 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -34,6 +34,8 @@ type Server struct {
 	guestLimit          *ratelimit.Limiter
 	passwordLimit       *ratelimit.Limiter
 	boardLimit          *ratelimit.Limiter
+	adminUserIDs        map[string]struct{}
+	metricsBearerToken  string
 	roomLimit           *ratelimit.Limiter
 	youtubePickLimit    *ratelimit.Limiter
 	youtubeSearchLimit  *ratelimit.Limiter
@@ -106,6 +108,17 @@ func (s *Server) ConfigureObservability(logger zerolog.Logger, metrics *observab
 	s.httpLogger = &logger
 }
 
+func (s *Server) ConfigureAdminUserIDs(ids []string) {
+	s.adminUserIDs = make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		s.adminUserIDs[id] = struct{}{}
+	}
+}
+
+func (s *Server) ConfigureMetricsBearerToken(token string) {
+	s.metricsBearerToken = token
+}
+
 // ConfigureDistributedRateLimits shares abuse budgets across backend nodes.
 // Each limiter retains a bounded in-process fallback for Redis outages.
 func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
@@ -135,6 +148,16 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 	// deliberately combined in this compatibility handler.
 	prometheusHandler := promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{DisableCompression: true})
 	r.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.metricsBearerToken == "" {
+			http.NotFound(w, r)
+			return
+		}
+		authorization := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authorization, "Bearer ") || !hmac.Equal([]byte(strings.TrimPrefix(authorization, "Bearer ")), []byte(s.metricsBearerToken)) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		prometheusHandler.ServeHTTP(w, r)
 		if realtimeMetrics, ok := ws.(metricsProvider); ok {
 			_, _ = fmt.Fprint(w, realtimeMetrics.PrometheusMetrics())
@@ -151,6 +174,11 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Get("/ready", s.ready)
 		r.Get("/readyz", s.ready)
 		r.Route("/api/v1", func(r chi.Router) {
+			r.Route("/admin", func(r chi.Router) {
+				r.Get("/overview", s.adminOverview)
+				r.Get("/users", s.adminUsers)
+				r.Get("/rooms", s.adminRooms)
+			})
 			r.Get("/youtube/search", s.youtubeSearch)
 			r.Get("/rooms/{roomID}/whiteboard", s.whiteboard)
 			r.Patch("/rooms/{roomID}/whiteboard", s.whiteboard)
@@ -225,7 +253,7 @@ func (s *Server) deleteRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveRoom(w http.ResponseWriter, r *http.Request) {
-	if !s.lookupLimit.AllowContext(r.Context(), clientIP(r)) {
+	if !s.lookupLimit.AllowContext(r.Context(), observability.ClientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many room lookups")
 		return
 	}
@@ -262,7 +290,7 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getRoom(w http.ResponseWriter, r *http.Request) {
-	if !s.lookupLimit.AllowContext(r.Context(), clientIP(r)) {
+	if !s.lookupLimit.AllowContext(r.Context(), observability.ClientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many room lookups")
 		return
 	}
@@ -283,7 +311,7 @@ func (s *Server) getRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
-	if !s.guestLimit.AllowContext(r.Context(), clientIP(r)) {
+	if !s.guestLimit.AllowContext(r.Context(), observability.ClientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many guest sessions")
 		return
 	}
@@ -321,7 +349,7 @@ func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if room.PasswordRequired {
-		if !s.passwordLimit.AllowContext(r.Context(), clientIP(r)+":"+room.ID) {
+		if !s.passwordLimit.AllowContext(r.Context(), observability.ClientIP(r)+":"+room.ID) {
 			writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Please wait a moment before trying again")
 			return
 		}
@@ -435,7 +463,7 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
-	if !s.roomLimit.AllowContext(r.Context(), clientIP(r)) {
+	if !s.roomLimit.AllowContext(r.Context(), observability.ClientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many room creation attempts")
 		return
 	}
@@ -751,11 +779,4 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
-}
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
 }

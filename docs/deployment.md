@@ -21,7 +21,8 @@ Preview deployments must keep their generated Vercel origin. Do not hard-code `m
 | `GUEST_TOKEN_SECRET`     |     Yes     | At least 32 characters                                                 |
 | `HTTP_ADDR`              |     No      | `:8080`                                                                |
 | `FRONTEND_ORIGINS`       |     No      | `http://localhost:3000`; comma-separated exact CORS/WS origins         |
-| `FRONTEND_URL`           |     No      | Canonical allowed frontend origin used after OAuth callbacks           |
+| `ADMIN_USER_IDS`          |     No      | Comma-separated Supabase user UUIDs allowed to open the read-only admin page; empty disables admin access |
+| `METRICS_BEARER_TOKEN`    |     No      | 32+ character secret enabling authenticated `/metrics`; empty disables it |
 | `SUPABASE_JWT_SECRET`    | Legacy only | HS256 projects; asymmetric projects use JWKS                           |
 | `SUPABASE_JWT_AUDIENCE`  |     No      | `authenticated`                                                        |
 | `REDIS_URL`              | Multi-node  | Pub/Sub, leases, and distributed rate limits                           |
@@ -34,8 +35,11 @@ Render production CORS:
 
 ```text
 FRONTEND_ORIGINS=https://mingly.site,https://www.mingly.site
-FRONTEND_URL=https://mingly.site
 ```
+
+Set a random `METRICS_BEARER_TOKEN` on the backend and the same value as
+`MINGLY_METRICS_SCRAPE_TOKEN` on the Prometheus collector. Keep it separate from
+the Better Stack remote-write source token.
 
 Redeploy the backend after changing environment variables.
 

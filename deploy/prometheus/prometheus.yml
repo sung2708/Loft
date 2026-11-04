@@ -6,6 +6,9 @@ scrape_configs:
   - job_name: mingly-api
     metrics_path: /metrics
     scheme: "${MINGLY_METRICS_SCHEME}"
+    authorization:
+      type: Bearer
+      credentials: "${MINGLY_METRICS_SCRAPE_TOKEN}"
     static_configs:
       # Use a private Docker/Kubernetes DNS name or a protected public URL.
       - targets: ["${MINGLY_METRICS_TARGET}"]

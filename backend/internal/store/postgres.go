@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,64 @@ import (
 )
 
 type Postgres struct{ pool *pgxpool.Pool }
+
+func (p *Postgres) AdminOverview(ctx context.Context) (domain.AdminOverview, error) {
+	var overview domain.AdminOverview
+	err := p.pool.QueryRow(ctx, `SELECT (SELECT COUNT(*) FROM profiles), (SELECT COUNT(*) FROM rooms)`).Scan(&overview.Users, &overview.Rooms)
+	return overview, err
+}
+
+func (p *Postgres) ListAdminUsers(ctx context.Context, query string, limit, offset int) ([]domain.AdminUser, int, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	var total int
+	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM profiles WHERE $1 = '' OR strpos(lower(display_name), $1) > 0 OR id::text = $1`, query).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := p.pool.Query(ctx, `SELECT p.id, p.display_name, p.created_at, COUNT(r.id)::int
+		FROM profiles p LEFT JOIN rooms r ON r.owner_id=p.id
+		WHERE $1 = '' OR strpos(lower(p.display_name), $1) > 0 OR p.id::text = $1
+		GROUP BY p.id ORDER BY p.created_at DESC, p.id LIMIT $2 OFFSET $3`, query, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	users := make([]domain.AdminUser, 0)
+	for rows.Next() {
+		var user domain.AdminUser
+		if err := rows.Scan(&user.ID, &user.DisplayName, &user.CreatedAt, &user.RoomCount); err != nil {
+			return nil, 0, err
+		}
+		users = append(users, user)
+	}
+	return users, total, rows.Err()
+}
+
+func (p *Postgres) ListAdminRooms(ctx context.Context, query string, limit, offset int) ([]domain.AdminRoom, int, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	where := `($1 = '' OR strpos(lower(r.name), $1) > 0 OR lower(r.short_code) = $1 OR lower(r.invite_code) = $1 OR r.id::text = $1 OR strpos(lower(p.display_name), $1) > 0)`
+	var total int
+	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM rooms r JOIN profiles p ON p.id=r.owner_id WHERE `+where, query).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := p.pool.Query(ctx, `SELECT r.id, COALESCE(r.short_code, r.invite_code), r.name, r.owner_id, p.display_name,
+		r.allow_guests, r.is_locked, r.password_required,
+		EXISTS(SELECT 1 FROM room_endings e WHERE e.room_id=r.id), r.created_at
+		FROM rooms r JOIN profiles p ON p.id=r.owner_id
+		WHERE `+where+` ORDER BY r.created_at DESC, r.id LIMIT $2 OFFSET $3`, query, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	rooms := make([]domain.AdminRoom, 0)
+	for rows.Next() {
+		var room domain.AdminRoom
+		if err := rows.Scan(&room.ID, &room.Code, &room.Name, &room.OwnerID, &room.OwnerName, &room.AllowGuests, &room.IsLocked, &room.PasswordRequired, &room.Ended, &room.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		rooms = append(rooms, room)
+	}
+	return rooms, total, rows.Err()
+}
 
 func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) error {
 	tx, err := p.pool.Begin(ctx)

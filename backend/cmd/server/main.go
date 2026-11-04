@@ -56,6 +56,8 @@ func main() {
 	hub.SetParticipantEvictor(liveKitService)
 	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, slogLogger, hub)
 	api.ConfigureObservability(logger, observability.NewMetrics())
+	api.ConfigureAdminUserIDs(cfg.AdminUserIDs)
+	api.ConfigureMetricsBearerToken(cfg.MetricsBearerToken)
 	if cfg.RedisURL != "" {
 		bus, err := realtime.NewRedisBus(cfg.RedisURL, cfg.InstanceID, slogLogger)
 		if err != nil {

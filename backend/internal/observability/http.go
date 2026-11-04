@@ -28,7 +28,7 @@ func HTTPMiddleware(base zerolog.Logger, metrics *Metrics) func(http.Handler) ht
 			requestLogger := base.With().
 				Str("request_id", requestID).
 				Str("method", r.Method).
-				Str("client_ip", clientIP(r)).
+				Str("client_ip", ClientIP(r)).
 				Logger()
 			ctx := requestLogger.WithContext(r.Context())
 			recorder := &statusWriter{ResponseWriter: w, status: http.StatusOK}
@@ -63,12 +63,17 @@ func routePattern(r *http.Request) string {
 	return "/unmatched"
 }
 
-func clientIP(r *http.Request) string {
+// shortcut: trusts forwarding headers; if direct clients can reach the API, restrict parsing to known proxy hops.
+func ClientIP(r *http.Request) string {
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
+		if ip := net.ParseIP(strings.TrimSpace(strings.Split(forwarded, ",")[0])); ip != nil {
+			return ip.String()
+		}
 	}
 	if forwarded := strings.TrimSpace(r.Header.Get("X-Real-IP")); forwarded != "" {
-		return forwarded
+		if ip := net.ParseIP(forwarded); ip != nil {
+			return ip.String()
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {

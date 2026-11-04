@@ -39,6 +39,38 @@ export interface ApiIdentity {
   avatar_url?: string;
 }
 
+export interface AdminOverview {
+  users: number;
+  rooms: number;
+}
+
+export interface AdminUser {
+  id: string;
+  display_name: string;
+  created_at: string;
+  room_count: number;
+}
+
+export interface AdminRoom {
+  id: string;
+  code: string;
+  name: string;
+  owner_id: string;
+  owner_name: string;
+  allow_guests: boolean;
+  is_locked: boolean;
+  password_required: boolean;
+  ended: boolean;
+  created_at: string;
+}
+
+export interface AdminPage<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ApiParticipant {
   connection_id: string;
   identity_id: string;

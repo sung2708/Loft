@@ -3,6 +3,10 @@ import { API_URL } from "./config";
 import { translateUI } from "./i18n/uiText";
 import { useI18nStore } from "./i18n/useTranslation";
 import type {
+  AdminOverview,
+  AdminPage,
+  AdminRoom,
+  AdminUser,
   ApiIdentity,
   ApiMessage,
   ApiRoom,
@@ -68,6 +72,20 @@ async function request<T>(
 }
 
 export const api = {
+  adminOverview: (token: string) =>
+    request<AdminOverview>("/api/v1/admin/overview", {}, token),
+  adminUsers: (token: string, query = "", limit = 25, offset = 0) =>
+    request<AdminPage<AdminUser>>(
+      `/api/v1/admin/users?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`,
+      {},
+      token,
+    ),
+  adminRooms: (token: string, query = "", limit = 25, offset = 0) =>
+    request<AdminPage<AdminRoom>>(
+      `/api/v1/admin/rooms?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`,
+      {},
+      token,
+    ),
  endRoom: (id:string,credential:RoomCredential)=>request<void>(`/api/v1/rooms/${encodeURIComponent(id)}/end`,{method:"POST"},credential),
  board: (id:string,credential:RoomCredential,signal?:AbortSignal,version?:number) => request<import("./whiteboard").BoardSnapshot | undefined>(`/api/v1/rooms/${encodeURIComponent(id)}/whiteboard`,{signal,headers:version === undefined ? undefined : {"If-None-Match": `"board-${version}"`}},credential),
  saveBoard: (id:string,credential:RoomCredential,patch:import("./whiteboard").BoardPatch,signal?:AbortSignal) => request<import("./whiteboard").BoardSnapshot>(`/api/v1/rooms/${encodeURIComponent(id)}/whiteboard`,{method:"PATCH",body:JSON.stringify(patch),signal},credential),

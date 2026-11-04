@@ -107,3 +107,7 @@ In MVP 2, room ownership is tied durably to the authenticated creator (`room.own
 The host's `participant.kick` command writes a durable room ban first, then closes the participant's WebSocket and asks LiveKit to remove the active media participant. Mingly rejects future WebSocket admission and LiveKit token issuance for the banned identity. If the LiveKit management call fails, the ban and WebSocket eviction still stand, but the active SFU connection may remain until LiveKit disconnects it.
 
 LiveKit Cloud revokes existing tokens on `RemoveParticipant`; this implementation supplies an explicit `revoke_token_ts`. Self-hosted LiveKit does not revoke an already issued JWT when a participant is removed. Such a cached token can be retried directly against the SFU until it expires, even though Mingly will not issue a fresh one. See [LiveKit participant management](https://docs.livekit.io/intro/basics/rooms-participants-tracks/participants/) and [token revocation limits](https://docs.livekit.io/frontends/reference/tokens-grants/).
+
+## 6. Global Admin Access
+
+The read-only `/api/v1/admin/*` endpoints require a valid Supabase user JWT and a matching user UUID in the backend-only `ADMIN_USER_IDS` allowlist. An empty allowlist disables access. Admin responses expose profile names, IDs, account creation dates, room ownership, and room access settings; they do not expose emails, messages, or room password verifiers. The Go API enforces authorization on every request.
