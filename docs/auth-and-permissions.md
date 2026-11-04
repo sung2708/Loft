@@ -110,4 +110,16 @@ LiveKit Cloud revokes existing tokens on `RemoveParticipant`; this implementatio
 
 ## 6. Global Admin Access
 
-The read-only `/api/v1/admin/*` endpoints require a valid Supabase user JWT and a matching user UUID in the backend-only `ADMIN_USER_IDS` allowlist. An empty allowlist disables access. Admin responses expose profile names, IDs, account creation dates, room ownership, and room access settings; they do not expose emails, messages, or room password verifiers. The Go API enforces authorization on every request.
+The `/api/v1/admin/*` endpoints require a valid Supabase user JWT and a matching user UUID in the backend-only `ADMIN_USER_IDS` allowlist. An empty allowlist disables access. Admin responses expose profile names, IDs, account creation dates, room ownership, and room access settings; they do not expose emails, messages, or room password verifiers. The Go API enforces authorization on every request.
+
+
+Admin overview counts come from PostgreSQL, including accounts and rooms created in the last seven days. `open_rooms` means rooms without a durable ending record; it does not indicate connected participants. Room lists support `status=open|ended|moderated` and an exact `owner` UUID alongside search and pagination.
+
+`POST /api/v1/admin/rooms/{roomID}/end` allows an allowlisted administrator to end another user's room. It uses the same durable ending and connection cleanup path as owner termination: persist first, disconnect second, retain messages and room records. Repeating the request retries cleanup safely. A `ROOM_END_MEDIA_PENDING` response means admission is already closed but call cleanup needs retrying. Successful persistence emits an `admin ended room` structured log with actor and room IDs; this log is not a durable audit ledger.
+
+
+Admin endings require JSON `{ "reason": "policy", "note": "Documented basis for the decision" }`. Supported reasons are `illegal` (suspected illegal activity, not a legal determination), `policy`, `safety`, `spam`, and `other`. Notes are trimmed and require 10–1000 characters. Migration 000015 must be applied before deploying this version.
+
+The decision (actor, reason, note, timestamp) and room ending are recorded atomically in PostgreSQL. A unique room ID keeps the first decision immutable across retries and concurrent administrators. Admin room responses include this record; `status=moderated` finds rooms with a decision. The record survives subsequent room/account deletion and remains searchable by room UUID in the admin list (including `status=moderated`). Deleted entries expose the retained decision and ID, not deleted room/owner details, and cannot trigger cleanup. It is inaccessible through public room responses. Owner-ended rooms can still receive a moderation decision. Notes should describe the observed conduct and policy basis without storing secrets or unnecessary personal data. This flow does not record media, ban accounts, or adjudicate legal violations.
+
+Room closure also serializes against chat writes using the room row lock. The server rechecks durable room admission every 15 seconds per connected socket; a missing/ended room terminates local participants even when the bus event or client heartbeat is absent. An unavailable check closes the socket so normal authenticated reconnect recovery must succeed before further use.

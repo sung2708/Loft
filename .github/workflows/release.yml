@@ -67,6 +67,28 @@ jobs:
     name: Backend quality gates
     needs: release-metadata
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: loft_test
+          POSTGRES_PASSWORD: loft_test
+          POSTGRES_DB: loft_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U loft_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://loft_test:loft_test@localhost:5432/loft_test?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      LOFT_RELEASE_DB_TEST: "1"
+      LOFT_RELEASE_REDIS_TEST: "1"
     steps:
       - name: Check out tagged commit
         uses: actions/checkout@v4
@@ -78,6 +100,9 @@ jobs:
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: backend/go.sum
+
+      - name: Prepare disposable auth fixtures
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/testdata/release-auth.sql
 
       - name: Vet
         working-directory: backend
@@ -128,6 +153,17 @@ jobs:
       - name: Test
         working-directory: frontend
         run: pnpm test
+
+      - name: Install browser
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Admin browser tests
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://admin-test.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+        run: pnpm exec playwright test e2e/admin.spec.ts
 
       - name: Build
         working-directory: frontend

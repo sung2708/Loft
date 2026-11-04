@@ -72,6 +72,7 @@ async function request<T>(
 }
 
 export const api = {
+  adminEndRoom: (token: string, id: string, reason: string, note: string) => request<void>(`/api/v1/admin/rooms/${encodeURIComponent(id)}/end`, { method: "POST", body: JSON.stringify({ reason, note }) }, token),
   adminOverview: (token: string) =>
     request<AdminOverview>("/api/v1/admin/overview", {}, token),
   adminUsers: (token: string, query = "", limit = 25, offset = 0) =>
@@ -80,9 +81,9 @@ export const api = {
       {},
       token,
     ),
-  adminRooms: (token: string, query = "", limit = 25, offset = 0) =>
+  adminRooms: (token: string, query = "", limit = 25, offset = 0, status = "", owner = "") =>
     request<AdminPage<AdminRoom>>(
-      `/api/v1/admin/rooms?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`,
+      `/api/v1/admin/rooms?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}&status=${encodeURIComponent(status)}&owner=${encodeURIComponent(owner)}`,
       {},
       token,
     ),

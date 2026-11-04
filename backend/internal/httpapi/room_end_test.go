@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +45,10 @@ func (s *endingStore) EndOwnedRoom(_ context.Context, _ string, owner string) er
 	return nil
 }
 
+func (s *endingStore) ModerateRoom(ctx context.Context, id, actor, reason, note string) error {
+	return s.EndOwnedRoom(ctx, id, s.room.OwnerID)
+}
+
 type endNotifier struct{ notified int }
 
 func (*endNotifier) BeginDelete(string) bool   { return true }
@@ -65,12 +70,35 @@ func TestEndRoomOwnerOnlyDurableAndIdempotent(t *testing.T) {
 	}
 	call := func(method, path, bearer string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, nil)
+		if strings.Contains(path, "/admin/") {
+			r = httptest.NewRequest(method, path, strings.NewReader(`{"reason":"policy","note":"Documented terms violation"}`))
+		}
 		if bearer != "" {
 			r.Header.Set("Authorization", "Bearer "+bearer)
 		}
 		w := httptest.NewRecorder()
 		server.Routes(http.NotFoundHandler()).ServeHTTP(w, r)
 		return w
+	}
+	adminID := "33333333-3333-4333-8333-333333333333"
+	server.ConfigureAdminUserIDs([]string{adminID})
+	adminPath := "/api/v1/admin/rooms/" + room.ID + "/end"
+	for _, tc := range []struct {
+		bearer string
+		want   int
+	}{{"", 401}, {token(room.OwnerID), 403}} {
+		if got := call("POST", adminPath, tc.bearer); got.Code != tc.want || repo.ended {
+			t.Fatal("admin route bypassed authorization", got.Code)
+		}
+	}
+	for _, body := range []string{`{}`, `{"reason":"unknown","note":"Long enough note"}`, `{"reason":"policy","note":"short"}`} {
+		r := httptest.NewRequest("POST", adminPath, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token(adminID))
+		w := httptest.NewRecorder()
+		server.Routes(http.NotFoundHandler()).ServeHTTP(w, r)
+		if w.Code != 400 || repo.ended || notifier.notified != 0 {
+			t.Fatal("invalid decision reached store", w.Code)
+		}
 	}
 	path := "/api/v1/rooms/" + room.ID + "/end"
 	if got := call("POST", path, ""); got.Code != 401 {
@@ -89,7 +117,18 @@ func TestEndRoomOwnerOnlyDurableAndIdempotent(t *testing.T) {
 			t.Fatal(got.Code, got.Body.String())
 		}
 	}
-	if !repo.ended || notifier.notified != 2 || repo.deletedRoomID != "" {
+	repo.ended = false
+	repo.endErr = errors.New("database unavailable")
+	if got := call("POST", adminPath, token(adminID)); got.Code != 500 || repo.ended || notifier.notified != 2 {
+		t.Fatal("admin failure disconnected room", got.Code)
+	}
+	repo.endErr = nil
+	for i := 0; i < 2; i++ {
+		if got := call("POST", adminPath, token(adminID)); got.Code != 204 {
+			t.Fatal(got.Code, got.Body.String())
+		}
+	}
+	if !repo.ended || notifier.notified != 4 || repo.deletedRoomID != "" {
 		t.Fatal("end deleted data or failed to notify")
 	}
 	if got := call("GET", "/api/v1/rooms/"+room.ID, ""); got.Code != 410 {

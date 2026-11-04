@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,7 +18,11 @@ type Postgres struct{ pool *pgxpool.Pool }
 
 func (p *Postgres) AdminOverview(ctx context.Context) (domain.AdminOverview, error) {
 	var overview domain.AdminOverview
-	err := p.pool.QueryRow(ctx, `SELECT (SELECT COUNT(*) FROM profiles), (SELECT COUNT(*) FROM rooms)`).Scan(&overview.Users, &overview.Rooms)
+	err := p.pool.QueryRow(ctx, `SELECT (SELECT COUNT(*) FROM profiles), (SELECT COUNT(*) FROM rooms),
+        (SELECT COUNT(*) FROM rooms r WHERE NOT EXISTS (SELECT 1 FROM room_endings e WHERE e.room_id=r.id)),
+        (SELECT COUNT(*) FROM room_endings),
+        (SELECT COUNT(*) FROM profiles WHERE created_at >= now() - interval '7 days'),
+        (SELECT COUNT(*) FROM rooms WHERE created_at >= now() - interval '7 days')`).Scan(&overview.Users, &overview.Rooms, &overview.OpenRooms, &overview.EndedRooms, &overview.NewUsers, &overview.NewRooms)
 	return overview, err
 }
 
@@ -46,18 +51,24 @@ func (p *Postgres) ListAdminUsers(ctx context.Context, query string, limit, offs
 	return users, total, rows.Err()
 }
 
-func (p *Postgres) ListAdminRooms(ctx context.Context, query string, limit, offset int) ([]domain.AdminRoom, int, error) {
+func (p *Postgres) ListAdminRooms(ctx context.Context, query, status, owner string, limit, offset int) ([]domain.AdminRoom, int, error) {
 	query = strings.ToLower(strings.TrimSpace(query))
-	where := `($1 = '' OR strpos(lower(r.name), $1) > 0 OR lower(r.short_code) = $1 OR lower(r.invite_code) = $1 OR r.id::text = $1 OR strpos(lower(p.display_name), $1) > 0)`
+	source := ` FROM (SELECT r.id, r.short_code, r.invite_code, r.name, r.owner_id,
+ r.allow_guests,r.is_locked,r.password_required,r.created_at,false AS deleted FROM rooms r
+ UNION ALL SELECT m.room_id,NULL,NULL,'',NULL,false,false,false,m.created_at,true
+ FROM room_moderation m WHERE NOT EXISTS(SELECT 1 FROM rooms r WHERE r.id=m.room_id)) r
+ LEFT JOIN profiles p ON p.id=r.owner_id `
+	where := `($1 = '' OR strpos(lower(r.name), $1) > 0 OR lower(r.short_code) = $1 OR lower(r.invite_code) = $1 OR r.id::text = $1 OR strpos(lower(p.display_name), $1) > 0)
+        AND ($2 = '' OR ($2 IN ('open','ended') AND ($2 = 'ended') = (r.deleted OR EXISTS(SELECT 1 FROM room_endings e WHERE e.room_id=r.id))) OR ($2 = 'moderated' AND EXISTS(SELECT 1 FROM room_moderation m WHERE m.room_id=r.id)))
+        AND ($3 = '' OR r.owner_id::text = $3)`
 	var total int
-	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM rooms r JOIN profiles p ON p.id=r.owner_id WHERE `+where, query).Scan(&total); err != nil {
+	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*)`+source+` WHERE `+where, query, status, owner).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := p.pool.Query(ctx, `SELECT r.id, COALESCE(r.short_code, r.invite_code), r.name, r.owner_id, p.display_name,
+	rows, err := p.pool.Query(ctx, `SELECT r.id, COALESCE(r.short_code, r.invite_code, ''), r.name, COALESCE(r.owner_id::text, ''), COALESCE(p.display_name, ''),
 		r.allow_guests, r.is_locked, r.password_required,
-		EXISTS(SELECT 1 FROM room_endings e WHERE e.room_id=r.id), r.created_at
-		FROM rooms r JOIN profiles p ON p.id=r.owner_id
-		WHERE `+where+` ORDER BY r.created_at DESC, r.id LIMIT $2 OFFSET $3`, query, limit, offset)
+		r.deleted OR EXISTS(SELECT 1 FROM room_endings e WHERE e.room_id=r.id), r.created_at, r.deleted, (SELECT row_to_json(m) FROM room_moderation m WHERE m.room_id=r.id)
+		`+source+` WHERE `+where+` ORDER BY r.created_at DESC, r.id LIMIT $4 OFFSET $5`, query, status, owner, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -65,8 +76,14 @@ func (p *Postgres) ListAdminRooms(ctx context.Context, query string, limit, offs
 	rooms := make([]domain.AdminRoom, 0)
 	for rows.Next() {
 		var room domain.AdminRoom
-		if err := rows.Scan(&room.ID, &room.Code, &room.Name, &room.OwnerID, &room.OwnerName, &room.AllowGuests, &room.IsLocked, &room.PasswordRequired, &room.Ended, &room.CreatedAt); err != nil {
+		var moderation []byte
+		if err := rows.Scan(&room.ID, &room.Code, &room.Name, &room.OwnerID, &room.OwnerName, &room.AllowGuests, &room.IsLocked, &room.PasswordRequired, &room.Ended, &room.CreatedAt, &room.Deleted, &moderation); err != nil {
 			return nil, 0, err
+		}
+		if len(moderation) > 0 {
+			if err := json.Unmarshal(moderation, &room.Moderation); err != nil {
+				return nil, 0, err
+			}
 		}
 		rooms = append(rooms, room)
 	}
@@ -495,13 +512,33 @@ func (p *Postgres) DeleteOwnedRoom(ctx context.Context, roomID, ownerID string) 
 
 func (p *Postgres) InsertMessage(ctx context.Context, roomID string, identity domain.Identity, content string) (domain.Message, error) {
 	var message domain.Message
-	err := p.pool.QueryRow(ctx, `INSERT INTO messages
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return message, err
+	}
+	defer tx.Rollback(ctx)
+	// Serialize chat with room closure; recheck the ending after acquiring the lock.
+	var id string
+	if err = tx.QueryRow(ctx, `SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, roomID).Scan(&id); err != nil {
+		return message, err
+	}
+	var ended bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_endings WHERE room_id=$1)`, roomID).Scan(&ended); err != nil {
+		return message, err
+	}
+	if ended {
+		return message, domain.ErrRoomEnded
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO messages
 		(room_id, sender_user_id, sender_guest_id, sender_type, sender_display_name, sender_avatar_url, content)
 		VALUES ($1, CASE WHEN $2 = 'user' THEN $3::uuid END, CASE WHEN $2 = 'guest' THEN $3::uuid END, $2::identity_type, $4, NULLIF($5, ''), $6)
 		RETURNING id, room_id, COALESCE(sender_user_id, sender_guest_id), sender_type, sender_display_name, COALESCE(sender_avatar_url, ''), content, created_at`,
 		roomID, identity.Type, identity.ID, identity.DisplayName, identity.AvatarURL, content).Scan(
 		&message.ID, &message.RoomID, &message.SenderID, &message.SenderType, &message.SenderDisplayName, &message.SenderAvatarURL, &message.Content, &message.CreatedAt)
-	return message, err
+	if err != nil {
+		return message, err
+	}
+	return message, tx.Commit(ctx)
 }
 
 func (p *Postgres) RecentMessages(ctx context.Context, roomID string, limit int) ([]domain.Message, error) {

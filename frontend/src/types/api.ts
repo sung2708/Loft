@@ -40,6 +40,10 @@ export interface ApiIdentity {
 }
 
 export interface AdminOverview {
+  open_rooms: number;
+  ended_rooms: number;
+  new_users: number;
+  new_rooms: number;
   users: number;
   rooms: number;
 }
@@ -52,6 +56,8 @@ export interface AdminUser {
 }
 
 export interface AdminRoom {
+  deleted?: boolean;
+  moderation?: { actor_id: string; reason: string; note: string; created_at: string };
   id: string;
   code: string;
   name: string;

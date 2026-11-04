@@ -94,3 +94,9 @@ pnpm exec tsc --noEmit
 - With reduced motion, data saver, or a constrained device signal, disable adaptive palette work and retain a static semantic treatment.
 - Screen share suppresses decorative prominence; camera, participant identity, reactions, drawers, and Call Dock retain their established ownership and layout.
 - Test 1440, 1280, 1024, 768, 430, and 375 pixel widths for horizontal overflow and control overlap. Physical-device results must be recorded as `NOT VERIFIED` until actually executed.
+
+## Release integration gates
+
+The release backend job starts disposable PostgreSQL and Redis services, seeds only the minimal auth roles/user from `backend/testdata/release-auth.sql`, and enables `LOFT_RELEASE_DB_TEST=1` and `LOFT_RELEASE_REDIS_TEST=1` for `go test -race ./...`. The migration gate applies every `*.up.sql` in numeric order in an isolated schema and rolls back. Never apply the auth fixture to an existing application database.
+
+The frontend gate runs the admin browser scenarios on desktop and mobile using mocked authentication/API responses. Database behavior is covered separately by the backend integration tests. Chat state retains the newest 200 messages locally; persisted history is unaffected.

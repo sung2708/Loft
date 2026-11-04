@@ -178,6 +178,7 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 				r.Get("/overview", s.adminOverview)
 				r.Get("/users", s.adminUsers)
 				r.Get("/rooms", s.adminRooms)
+				r.Post("/rooms/{roomID}/end", s.adminEndRoom)
 			})
 			r.Get("/youtube/search", s.youtubeSearch)
 			r.Get("/rooms/{roomID}/whiteboard", s.whiteboard)

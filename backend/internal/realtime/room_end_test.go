@@ -91,3 +91,28 @@ func TestRoomEndRecoversFromMissedNotificationOnHeartbeat(t *testing.T) {
 		}
 	}
 }
+
+func TestRoomEndRecoversWithoutClientHeartbeat(t *testing.T) {
+	room := domain.Room{ID: "no-heartbeat", AllowGuests: true, MaxParticipants: 12}
+	repo := &endFallbackStore{realtimeStore: realtimeStore{room: room}}
+	guests := auth.NewGuestTokens("12345678901234567890123456789012", time.Hour)
+	hub := New(repo, guests, nil, []string{"http://localhost:3000"}, nil)
+	server := httptest.NewServer(hub)
+	defer server.Close()
+	defer hub.Shutdown(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	connection := connectAndAuthGuest(t, ctx, server.URL, guests, room.ID, "Alice")
+	defer connection.CloseNow()
+	repo.ended.Store(true)
+	// No client ping and no bus notification: the server must discover the closure.
+	for {
+		var message Envelope
+		if err := wsjson.Read(ctx, connection, &message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Type == "room.ended" {
+			break
+		}
+	}
+}

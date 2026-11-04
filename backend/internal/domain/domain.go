@@ -231,8 +231,12 @@ type Store interface {
 }
 
 type AdminOverview struct {
-	Users int `json:"users"`
-	Rooms int `json:"rooms"`
+	Users      int `json:"users"`
+	Rooms      int `json:"rooms"`
+	OpenRooms  int `json:"open_rooms"`
+	EndedRooms int `json:"ended_rooms"`
+	NewUsers   int `json:"new_users"`
+	NewRooms   int `json:"new_rooms"`
 }
 
 type AdminUser struct {
@@ -242,23 +246,40 @@ type AdminUser struct {
 	RoomCount   int       `json:"room_count"`
 }
 
+type RoomModeration struct {
+	ActorID   string    `json:"actor_id"`
+	Reason    string    `json:"reason"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func ValidModerationReason(reason string) bool {
+	switch reason {
+	case "illegal", "policy", "safety", "spam", "other":
+		return true
+	}
+	return false
+}
+
 type AdminRoom struct {
-	ID               string    `json:"id"`
-	Code             string    `json:"code"`
-	Name             string    `json:"name"`
-	OwnerID          string    `json:"owner_id"`
-	OwnerName        string    `json:"owner_name"`
-	AllowGuests      bool      `json:"allow_guests"`
-	IsLocked         bool      `json:"is_locked"`
-	PasswordRequired bool      `json:"password_required"`
-	Ended            bool      `json:"ended"`
-	CreatedAt        time.Time `json:"created_at"`
+	Deleted          bool            `json:"deleted"`
+	Moderation       *RoomModeration `json:"moderation,omitempty"`
+	ID               string          `json:"id"`
+	Code             string          `json:"code"`
+	Name             string          `json:"name"`
+	OwnerID          string          `json:"owner_id"`
+	OwnerName        string          `json:"owner_name"`
+	AllowGuests      bool            `json:"allow_guests"`
+	IsLocked         bool            `json:"is_locked"`
+	PasswordRequired bool            `json:"password_required"`
+	Ended            bool            `json:"ended"`
+	CreatedAt        time.Time       `json:"created_at"`
 }
 
 type AdminStore interface {
 	AdminOverview(context.Context) (AdminOverview, error)
 	ListAdminUsers(context.Context, string, int, int) ([]AdminUser, int, error)
-	ListAdminRooms(context.Context, string, int, int) ([]AdminRoom, int, error)
+	ListAdminRooms(context.Context, string, string, string, int, int) ([]AdminRoom, int, error)
 }
 
 func ValidateDisplayName(value string) (string, error) {

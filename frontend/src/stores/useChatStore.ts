@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import type { ApiMessage } from "@/types/api";
 
+const MAX_MESSAGES = 200;
+
 interface ChatState {
   messages: ApiMessage[];
   unreadCount: number;
@@ -20,14 +22,16 @@ export const useChatStore = create<ChatState>((set) => ({
   sendError: null,
   replace: (messages) =>
     set({
-      messages: [...new Map(messages.map((item) => [item.id, item])).values()],
+      messages: [
+        ...new Map(messages.map((item) => [item.id, item])).values(),
+      ].slice(-MAX_MESSAGES),
     }),
   append: (message, isOpen) =>
     set((state) =>
       state.messages.some((item) => item.id === message.id)
         ? state
         : {
-            messages: [...state.messages, message],
+            messages: [...state.messages.slice(-(MAX_MESSAGES - 1)), message],
             unreadCount: isOpen ? state.unreadCount : state.unreadCount + 1,
           },
     ),

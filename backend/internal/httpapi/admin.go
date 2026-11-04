@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"loft/backend/internal/domain"
 )
 
@@ -15,13 +16,18 @@ type adminListResponse[T any] struct {
 	Offset int `json:"offset"`
 }
 
+func (s *Server) isAdmin(userID string) bool {
+	_, ok := s.adminUserIDs[userID]
+	return ok
+}
+
 func (s *Server) adminStore(w http.ResponseWriter, r *http.Request) (domain.AdminStore, bool) {
 	identity, err := s.authenticatedUser(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Sign in to continue")
 		return nil, false
 	}
-	if _, ok := s.adminUserIDs[identity.ID]; !ok {
+	if !s.isAdmin(identity.ID) {
 		writeError(w, http.StatusForbidden, "ADMIN_REQUIRED", "Admin access is required")
 		return nil, false
 	}
@@ -72,7 +78,20 @@ func (s *Server) adminRooms(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rooms, total, err := admin.ListAdminRooms(r.Context(), query, limit, offset)
+	status, owner := r.URL.Query().Get("status"), r.URL.Query().Get("owner")
+	if status != "" && status != "open" && status != "ended" && status != "moderated" {
+		writeError(w, 400, "INVALID_STATUS", "Invalid room status")
+		return
+	}
+	if owner != "" {
+		parsed, err := uuid.Parse(owner)
+		if err != nil {
+			writeError(w, 400, "INVALID_OWNER", "Invalid owner ID")
+			return
+		}
+		owner = parsed.String()
+	}
+	rooms, total, err := admin.ListAdminRooms(r.Context(), query, status, owner, limit, offset)
 	if err != nil {
 		s.internal(w, r, "list admin rooms", err)
 		return

@@ -1557,6 +1557,10 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				continue
 			}
 			message, err := h.store.InsertMessage(ctx, c.roomID, c.identity, content)
+			if errors.Is(err, domain.ErrRoomEnded) {
+				h.endRoomLocal(c.roomID)
+				return nil
+			}
 			if err != nil {
 				h.logger.Error("persist chat", "room_id", c.roomID, "connection_id", c.id, "error", err)
 				h.sendError(c, "MESSAGE_SEND_FAILED", "Message could not be sent")
@@ -1977,10 +1981,22 @@ func (h *Hub) roomParticipants(parent context.Context, roomID string, local []do
 }
 
 func (h *Hub) writePump(ctx context.Context, c *client) error {
+	checks := time.NewTicker(15 * time.Second)
+	defer checks.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-checks.C:
+			checkCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+			_, err := h.store.GetRoom(checkCtx, c.roomID)
+			cancel()
+			if err != nil {
+				if errors.Is(err, domain.ErrRoomEnded) || errors.Is(err, domain.ErrNotFound) {
+					h.endRoomLocal(c.roomID)
+				}
+				return err
+			}
 		case data, ok := <-c.send:
 			if !ok {
 				return nil
