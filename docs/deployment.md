@@ -8,6 +8,7 @@ Production uses a Vercel frontend, a Go service, Supabase PostgreSQL/Auth, optio
 | ----------------------- | ------------------------------------------------------- |
 | Frontend                | `https://mingly.site`                                   |
 | Optional frontend alias | `https://www.mingly.site`                               |
+| Admin                   | `https://admin.mingly.site`                             |
 | Legacy frontend         | `loft-amber.vercel.app` redirects through `vercel.json` |
 
 Preview deployments must keep their generated Vercel origin. Do not hard-code `mingly.site` into components.
@@ -34,7 +35,7 @@ Preview deployments must keep their generated Vercel origin. Do not hard-code `m
 Render production CORS:
 
 ```text
-FRONTEND_ORIGINS=https://mingly.site,https://www.mingly.site
+FRONTEND_ORIGINS=https://mingly.site,https://www.mingly.site,https://admin.mingly.site
 ```
 
 Set a random `METRICS_BEARER_TOKEN` on the backend and the same value as
@@ -42,6 +43,10 @@ Set a random `METRICS_BEARER_TOKEN` on the backend and the same value as
 the Better Stack remote-write source token.
 
 Redeploy the backend after changing environment variables.
+
+Add `admin.mingly.site` to the frontend project's Vercel **Settings → Domains**.
+Use the exact CNAME target Vercel displays in your DNS provider. The host rewrite
+in `vercel.json` serves `/admin` at the subdomain root.
 
 ## Frontend environment
 
@@ -98,6 +103,7 @@ After deployment:
 - `GET /ready` returns 200.
 - Frontend API requests use the production backend and pass CORS preflight for GET, POST, PATCH, and DELETE.
 - Google callback returns to `https://mingly.site/auth/callback`.
+- Add `https://admin.mingly.site/auth/callback` to Supabase Auth **URL Configuration → Redirect URLs**; keep the canonical Site URL as `https://mingly.site`.
 - OAuth callback accepts only configured frontend origins and internal post-login paths; external and protocol-relative destinations fall back to `/`.
 - Create, join, password admission, room settings, LiveKit token issuance, WebSocket reconnect, and invite metadata work.
 - `/metrics` is reachable only through trusted monitoring infrastructure.

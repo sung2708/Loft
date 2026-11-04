@@ -1,4 +1,16 @@
 {
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/admin",
+      "has": [
+        {
+          "type": "host",
+          "value": "admin.mingly.site"
+        }
+      ]
+    }
+  ],
   "redirects": [
     {
       "source": "/(.*)",
