@@ -145,6 +145,7 @@ body {
   border: 1px solid var(--stroke-strong);
   box-shadow: var(--shadow-float), var(--shadow-contact);
 }
+.workflow-panel[role="menu"] { position: absolute; }
 .workflow-panel::before {
   content: "";
   position: absolute;
