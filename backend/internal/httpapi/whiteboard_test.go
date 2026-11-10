@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -139,5 +140,47 @@ func TestWhiteboardRoomLookupFailureIsServerError(t *testing.T) {
 	server.Routes(http.NotFoundHandler()).ServeHTTP(response, request)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("room lookup failure returned %d", response.Code)
+	}
+}
+
+func TestWhiteboardMinimalAckOmitsSnapshot(t *testing.T) {
+	room := domain.Room{ID: "58bb9fe4-79bc-41c7-9d63-61c04815b668", AllowGuests: true}
+	repo := &boardTestStore{fakeStore: &fakeStore{room: room}, board: store.BoardSnapshot{Records: map[string]json.RawMessage{}}}
+	guests := auth.NewGuestTokens("12345678901234567890123456789012", time.Hour)
+	token, _, _, err := guests.Issue(room.ID, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(repo, nil, guests, livekit.New("", ""), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := server.Routes(http.NotFoundHandler())
+	raw, err := os.ReadFile("../store/testdata/board_records.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []json.RawMessage
+	if err = json.Unmarshal(raw, &records); err != nil {
+		t.Fatal(err)
+	}
+	patch := func(version int, id, query string) *httptest.ResponseRecorder {
+		body := `{"version":` + strconv.Itoa(version) + `,"put":[` + strings.Replace(string(records[0]), "shape:draw", id, 1) + `],"remove":[]}`
+		req := httptest.NewRequest("PATCH", "/api/v1/rooms/"+room.ID+"/whiteboard"+query, strings.NewReader(body))
+		req.Header.Set("X-Guest-Token", token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	got := patch(0, "shape:a", "?ack=minimal")
+	if got.Code != 200 || strings.TrimSpace(got.Body.String()) != `{"version":1}` {
+		t.Fatalf("minimal ack not returned: %d %s", got.Code, got.Body.String())
+	}
+	// Legacy clients still receive the full snapshot.
+	got = patch(1, "shape:b", "")
+	if got.Code != 200 || !strings.Contains(got.Body.String(), "shape:a") || !strings.Contains(got.Body.String(), "shape:b") {
+		t.Fatalf("full snapshot missing: %d %s", got.Code, got.Body.String())
+	}
+	// A stale minimal writer still gets the authoritative snapshot on conflict.
+	got = patch(1, "shape:c", "?ack=minimal")
+	if got.Code != 409 || !strings.Contains(got.Body.String(), "shape:b") {
+		t.Fatalf("conflict snapshot missing: %d %s", got.Code, got.Body.String())
 	}
 }

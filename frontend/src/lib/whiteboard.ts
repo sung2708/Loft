@@ -64,16 +64,21 @@ export interface BoardSnapshot {
   version: number;
   records: Record<string, TLRecord>;
 }
+/** PATCH response: a bare version when the server confirms our base was current. */
+export interface BoardSaveResult {
+  version: number;
+  records?: Record<string, TLRecord>;
+}
 export interface BoardPatch {
   version: number;
   put: TLRecord[];
   remove: string[];
 }
 
-export async function savePendingBoard(
+export async function savePendingBoard<T extends BoardSaveResult>(
   pending: Map<string, TLRecord | null>,
   version: number,
-  save: (patch: BoardPatch) => Promise<BoardSnapshot>,
+  save: (patch: BoardPatch) => Promise<T>,
 ) {
   const batch = new Map<string, TLRecord | null>();
   let bytes = 0;
@@ -233,6 +238,71 @@ function validIndex(s: unknown): boolean {
   else if (c0 >= 65 && c0 <= 90) len = 90 - c0 + 2;
   if (len === 0 || s.length < len || (s.length > len && s.endsWith("0")) || s === "A" + "0".repeat(26)) return false;
   return /^[0-9A-Za-z]+$/.test(s.slice(1));
+}
+
+export const isValidBoardIndex = validIndex;
+
+const INDEX_DIGITS =
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const INDEX_CAPACITY = [62, 62 ** 2, 62 ** 3];
+
+// Integer fractional-index keys ("a0".."az", "b00".."bzz", "c000"...) sort in
+// ASCII order and always pass the server's index rule (no trailing "0" in a
+// fraction part), unlike ad-hoc keys such as "a110".
+function integerIndexKey(n: number): string | null {
+  let rest = n;
+  for (let width = 1; width <= INDEX_CAPACITY.length; width++) {
+    const capacity = INDEX_CAPACITY[width - 1];
+    if (rest < capacity) {
+      let digits = "";
+      for (let i = 0; i < width; i++) {
+        digits = INDEX_DIGITS[rest % 62] + digits;
+        rest = Math.floor(rest / 62);
+      }
+      return String.fromCharCode(96 + width) + digits;
+    }
+    rest -= capacity;
+  }
+  return null;
+}
+
+/** Returns a valid index that sorts above every index in `existing`. */
+export function boardIndexAbove(existing: Iterable<string>): string {
+  let max = "";
+  for (const index of existing)
+    if (validIndex(index) && index > max) max = index;
+  if (!max) return "a1";
+  let lo = 0;
+  let hi = INDEX_CAPACITY.reduce((sum, n) => sum + n, 0) - 1;
+  if ((integerIndexKey(hi) as string) <= max) return max + "V";
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if ((integerIndexKey(mid) as string) > max) hi = mid;
+    else lo = mid + 1;
+  }
+  return integerIndexKey(lo) as string;
+}
+
+/** Re-keys shapes whose index the server would reject (e.g. legacy drafts). */
+export function repairBoardIndexes(
+  records: Map<string, TLRecord | null>,
+  existing: Iterable<string>,
+): number {
+  const used = [...existing];
+  let repaired = 0;
+  for (const [id, record] of records) {
+    if (!record || record.typeName !== "shape") continue;
+    const index = (record as TLShape).index;
+    if (validIndex(index)) {
+      used.push(index);
+      continue;
+    }
+    const next = boardIndexAbove(used);
+    used.push(next);
+    records.set(id, { ...(record as TLShape), index: next });
+    repaired++;
+  }
+  return repaired;
 }
 
 function validVec(v: unknown): boolean {

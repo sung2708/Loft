@@ -106,5 +106,16 @@ func (s *Server) whiteboard(w http.ResponseWriter, r *http.Request) {
 	} else if notifier, ok := s.deletion.(interface{ NotifyBoard(string, int64) }); ok {
 		notifier.NotifyBoard(room.ID, snapshot.Version)
 	}
+	// A successful CAS write means the caller's base plus its own patch is the
+	// new board, so clients that opt in only need the new version, not the
+	// whole (up to 2 MiB) snapshot echoed back on every stroke.
+	if r.URL.Query().Get("ack") == "minimal" && snapshot.Version == patch.Version+1 {
+		writeJSON(w, 200, boardAck{Version: snapshot.Version})
+		return
+	}
 	writeJSON(w, 200, snapshot)
+}
+
+type boardAck struct {
+	Version int64 `json:"version"`
 }
