@@ -89,7 +89,7 @@ export const api = {
     ),
  endRoom: (id:string,credential:RoomCredential)=>request<void>(`/api/v1/rooms/${encodeURIComponent(id)}/end`,{method:"POST"},credential),
  board: (id:string,credential:RoomCredential,signal?:AbortSignal,version?:number) => request<import("./whiteboard").BoardSnapshot | undefined>(`/api/v1/rooms/${encodeURIComponent(id)}/whiteboard`,{signal,headers:version === undefined ? undefined : {"If-None-Match": `"board-${version}"`}},credential),
- saveBoard: (id:string,credential:RoomCredential,patch:import("./whiteboard").BoardPatch,signal?:AbortSignal) => request<import("./whiteboard").BoardSnapshot>(`/api/v1/rooms/${encodeURIComponent(id)}/whiteboard`,{method:"PATCH",body:JSON.stringify(patch),signal},credential),
+ saveBoard: (id:string,credential:RoomCredential,patch:import("./whiteboard").BoardPatch,signal?:AbortSignal) => request<import("./whiteboard").BoardSaveResult>(`/api/v1/rooms/${encodeURIComponent(id)}/whiteboard?ack=minimal`,{method:"PATCH",body:JSON.stringify(patch),signal},credential),
   resolveRoom: (value: string, signal?: AbortSignal) =>
     request<{ room: ApiRoomPreview }>(
       `/api/v1/rooms/resolve?value=${encodeURIComponent(value)}`,

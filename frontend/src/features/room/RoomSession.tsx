@@ -49,6 +49,7 @@ import {
 } from "./mediaErrors";
 import { isFrontCameraSelfView } from "./cameraOrientation";
 import { hasActiveScreenShare } from "./screenShare";
+import { ScreenShareViewport } from "./ScreenShareViewport";
 import type { RoomCommandType } from "@/types/room";
 
 const currentText = (english: string) =>
@@ -571,6 +572,9 @@ function LiveMediaContext({
             },
             {
               degradationPreference: "maintain-resolution",
+              // One full-resolution layer: simulcast lets small tiles pull a
+              // 540p layer, which makes shared text unreadable.
+              simulcast: false,
             },
           );
           playSfx(isScreenShareEnabled ? "screen-end" : "screen-start");
@@ -611,6 +615,7 @@ export function MediaStage() {
   const participants = useRoomStore((state) => state.participants);
   const stageRef = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [stripHidden, setStripHidden] = useState(false);
   useEffect(() => {
     const element = stageRef.current;
     if (!element) return;
@@ -658,19 +663,13 @@ export function MediaStage() {
   return (
     <div ref={stageRef} className={`w-full h-full min-h-0 ${screen ? "p-1 sm:p-2" : "p-3 sm:p-6"}`}>
       {layout.mode === "screen-share" && screen ? (
-        <div data-testid="screen-share-stage" className="grid h-full min-h-0 min-w-0 w-full grid-cols-1 grid-rows-[minmax(0,1fr)_88px] gap-2 sm:grid-rows-[minmax(0,1fr)_104px] sm:gap-3">
-          <div data-testid="screen-share-viewport" className="relative min-h-0 min-w-0 overflow-hidden rounded-[10px] bg-[#101113] shadow-2xl">
-            <VideoTrack
-              trackRef={screen}
-              className="h-full w-full object-contain"
-              style={{ objectFit: "contain" }}
-            />
-            <div className="absolute bottom-3 left-3 rounded-[5px] bg-[#101113]/80 px-2 py-1 text-[13px] text-white">
-              {screen.participant.name || screen.participant.identity}{" "}
-              {tr("is sharing")}
-            </div>
-          </div>
-          <div
+        <div data-testid="screen-share-stage" className={`grid h-full min-h-0 min-w-0 w-full grid-cols-1 ${stripHidden ? "grid-rows-[minmax(0,1fr)]" : "grid-rows-[minmax(0,1fr)_88px] gap-2 sm:grid-rows-[minmax(0,1fr)_104px] sm:gap-3"}`}>
+          <ScreenShareViewport
+            track={screen}
+            stripHidden={stripHidden}
+            onToggleStrip={() => setStripHidden((hidden) => !hidden)}
+          />
+          {!stripHidden && (<div
             className="min-h-0 min-w-0 overflow-x-auto overflow-y-hidden rounded-[10px] pb-1"
             role="region"
             tabIndex={0}
@@ -694,7 +693,7 @@ export function MediaStage() {
               );
             })}
             </div>
-          </div>
+          </div>)}
         </div>
       ) : layout.mode === "empty" ? (
         <EmptyStage />

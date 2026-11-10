@@ -21,7 +21,6 @@ requires:
     # core commands referenced in ``steps``.
     any:
       - "alquimia"
-      - "claude"
       - "copilot"
       - "gemini"
       - "opencode"
@@ -34,7 +33,7 @@ inputs:
   integration:
     type: string
     default: "auto"
-    prompt: "Integration to use (e.g. claude, copilot, gemini; 'auto' uses the project's initialized integration)"
+    prompt: "Integration to use (e.g. copilot, gemini; 'auto' uses the project's initialized integration)"
 
 steps:
   - id: specify

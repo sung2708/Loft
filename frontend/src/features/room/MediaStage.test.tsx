@@ -42,6 +42,11 @@ describe("screen share presentation", () => {
     expect(html.indexOf('screen-share-viewport')).toBeLessThan(html.indexOf('role="region"'));
     expect(html).not.toContain('lg:grid-cols');
   });
+  it("offers full screen and a focus toggle on the shared screen", () => {
+    const html = renderShare(3);
+    expect(html).toMatch(/aria-label="(Full screen|Toàn màn hình)"/);
+    expect(html).toMatch(/aria-label="(Hide participants|Ẩn thành viên)"/);
+  });
   it.each([1, 6, 12])("keeps all %i participants in one bounded horizontal strip", count => {
     const html = renderShare(count);
     expect(html).toContain('overflow-x-auto overflow-y-hidden');

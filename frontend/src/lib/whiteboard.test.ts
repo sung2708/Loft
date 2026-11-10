@@ -3,6 +3,33 @@ import { boardDraftKey, createTLStore, mergeBoardRecords, isSafeBoardRecord, rea
 const record = (id: string) =>
   ({ id, typeName: "shape", type: "draw" }) as unknown as TLRecord;
 describe("whiteboard snapshot recovery", () => {
+  it.each(["shape:local", "shape:newer"])("keeps an in-flight edit to %s after a version-only save", async (id) => {
+    const first = record("shape:local");
+    const acknowledged = record("shape:acknowledged");
+    const newer = record(id);
+    const pending = new Map<string, TLRecord | null>([
+      [first.id, first], [acknowledged.id, acknowledged], ["shape:gone", null],
+    ]);
+    let acknowledge!: (result: { version: number }) => void;
+    const response = new Promise<{ version: number }>((resolve) => { acknowledge = resolve; });
+    const saving = savePendingBoard(pending, 0, (patch) => {
+      expect(patch).toEqual({ version: 0, put: [first, acknowledged], remove: ["shape:gone"] });
+      return response;
+    });
+
+    pending.set(newer.id, newer);
+    acknowledge({ version: 1 });
+    const saved = await saving;
+
+    expect(saved.snapshot).toEqual({ version: 1 });
+    expect(saved.outstanding).toEqual(new Map([[newer.id, newer]]));
+    expect(readBoardDraft(writeBoardDraft(saved.outstanding))).toEqual(saved.outstanding);
+    const retry = await savePendingBoard(saved.outstanding, saved.snapshot.version, async (patch) => {
+      expect(patch).toEqual({ version: 1, put: [newer], remove: [] });
+      return { version: 2 };
+    });
+    expect(retry.outstanding.size).toBe(0);
+  });
   it("keeps edits after a failed save and retries without losing a newer edit", async () => {
     const first = record("shape:local");
     const newer = record("shape:newer");
@@ -79,4 +106,30 @@ it("rejects unsupported rich text marks before SDK rendering",()=>{
  expect(isSafeBoardRecord(store,shape("bold italic"))).toBe(false);
  expect(isSafeBoardRecord(store,shape("unknown"))).toBe(false);
  expect(isSafeBoardRecord(store,shape("bold"))).toBe(true);
+});
+
+describe("whiteboard shape indexes", () => {
+  it("always produces server-valid, strictly increasing indexes", async () => {
+    const { boardIndexAbove, isValidBoardIndex } = await import("./whiteboard");
+    const seen: string[] = [];
+    for (let i = 0; i < 1600; i++) {
+      const next = boardIndexAbove(seen);
+      expect(isValidBoardIndex(next)).toBe(true);
+      if (seen.length) expect(next > seen[seen.length - 1]).toBe(true);
+      seen.push(next);
+    }
+    // Keys the previous generator produced for every 10th shape were invalid.
+    expect(isValidBoardIndex("a110")).toBe(false);
+    expect(boardIndexAbove(["a101", "a199"]) > "a199").toBe(true);
+  });
+  it("repairs restored drafts with rejected indexes", async () => {
+    const { repairBoardIndexes, isValidBoardIndex } = await import("./whiteboard");
+    const bad = { id: "shape:x", typeName: "shape", type: "draw", index: "a110" } as unknown as TLRecord;
+    const records = new Map<string, TLRecord | null>([[bad.id, bad], ["shape:gone", null]]);
+    expect(repairBoardIndexes(records, ["a5"])).toBe(1);
+    const fixed = records.get(bad.id) as TLShape;
+    expect(isValidBoardIndex(fixed.index)).toBe(true);
+    expect(fixed.index > "a5").toBe(true);
+    expect(records.get("shape:gone")).toBeNull();
+  });
 });
