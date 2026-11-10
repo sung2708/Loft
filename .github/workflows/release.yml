@@ -21,7 +21,6 @@ concurrency:
 env:
   GO_VERSION_FILE: backend/go.mod
   NODE_VERSION: "24"
-  PNPM_VERSION: "11.26.0"
 
 jobs:
   release-metadata:
@@ -32,7 +31,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -91,12 +90,12 @@ jobs:
       LOFT_RELEASE_REDIS_TEST: "1"
     steps:
       - name: Check out tagged commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.commit_sha }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: backend/go.sum
@@ -122,17 +121,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out tagged commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.commit_sha }}
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
-          version: ${{ env.PNPM_VERSION }}
+          # Version comes from "packageManager" so CI matches local installs.
+          package_json_file: frontend/package.json
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -260,17 +260,18 @@ jobs:
     environment: production
     steps:
       - name: Check out tagged commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.commit_sha }}
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
-          version: ${{ env.PNPM_VERSION }}
+          # Version comes from "packageManager" so CI matches local installs.
+          package_json_file: frontend/package.json
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm

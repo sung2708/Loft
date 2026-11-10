@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: loft_test
+          POSTGRES_PASSWORD: loft_test
+          POSTGRES_DB: loft_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U loft_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://loft_test:loft_test@localhost:5432/loft_test?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      LOFT_RELEASE_DB_TEST: "1"
+      LOFT_RELEASE_REDIS_TEST: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Prepare disposable auth fixtures
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/testdata/release-auth.sql
+
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: Test with race detector
+        working-directory: backend
+        run: go test -race ./...
+
+      - name: Build
+        working-directory: backend
+        run: go build ./...
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: frontend
+        run: pnpm lint
+
+      - name: Type-check
+        working-directory: frontend
+        run: pnpm exec tsc --noEmit
+
+      - name: Test
+        working-directory: frontend
+        run: pnpm test
+
+      - name: Build
+        working-directory: frontend
+        run: pnpm build

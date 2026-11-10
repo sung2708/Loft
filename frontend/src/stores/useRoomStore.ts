@@ -85,13 +85,14 @@ export const useRoomStore = create<RoomStoreState>((set, _get, api) => {
       ? { room: { ...state.room, ...appearance }, governanceError: null }
       : state),
   roomUpdated: (updated) =>
-    set((state) => ({
+    set((state) => state.room && updated.version < state.room.version ? state : ({
       room: state.room ? { ...state.room, ...updated } : updated,
       governanceError: null,
     })),
   hostChanged: (host) =>
     set((state) => {
-      if (state.host && host.version < state.host.version) return state;
+      if (state.host && (host.version < state.host.version ||
+        (host.version === state.host.version && host.connection_id <= state.host.connection_id))) return state;
       const roleFor = (participant: ApiParticipant) =>
         participant.connection_id === host.connection_id
           ? "host" as const

@@ -14,6 +14,50 @@ import (
 	"loft/backend/internal/domain"
 )
 
+func TestOpenPoolConfiguration(t *testing.T) {
+	for _, tt := range []struct {
+		name, dsn string
+		max, min  int32
+	}{
+		{"defaults", "postgres://test@localhost/test", 10, 1},
+		{"url overrides", "postgres://test@localhost/test?pool_max_conns=2&pool_min_conns=0", 2, 0},
+		{"spaced DSN", "host=localhost user=test pool_max_conns = 2 pool_min_conns = 0", 2, 0},
+		{"encoded keys", "postgres://test@localhost/test?pool%5Fmax_conns=2&pool%5Fmin_conns=0", 2, 0},
+		{"max only", "postgres://test@localhost/test?pool_max_conns=2", 2, 1},
+		{"min only", "postgres://test@localhost/test?pool_min_conns=0", 10, 0},
+		{"parameter text in value", "host=localhost user=test application_name='pool_max_conns=2 pool_min_conns=0'", 10, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			// Inspect pool configuration without allowing background connections.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			db, err := Open(ctx, tt.dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			config := db.pool.Config()
+			if config.MaxConns != tt.max || config.MinConns != tt.min {
+				t.Fatalf("pool max/min = %d/%d, want %d/%d", config.MaxConns, config.MinConns, tt.max, tt.min)
+			}
+		})
+	}
+}
+
+func TestOpenRejectsInvalidPoolConfiguration(t *testing.T) {
+	for _, dsn := range []string{
+		"postgres://test@localhost/test?pool_max_conns=0",
+		"postgres://test@localhost/test?pool_min_conns=invalid",
+		"postgres://test@localhost/test?pool%ZZmax_conns=2",
+	} {
+		db, err := Open(context.Background(), dsn)
+		if err == nil {
+			db.Close()
+			t.Fatalf("expected invalid configuration to fail: %s", dsn)
+		}
+	}
+}
+
 func TestMigrationSQL000006Definitions(t *testing.T) {
 	upBytes, err := os.ReadFile(filepath.Join("..", "..", "migrations", "000006_room_appearance.up.sql"))
 	if err != nil {

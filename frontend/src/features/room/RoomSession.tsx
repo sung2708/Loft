@@ -214,6 +214,8 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           useRoomStore
             .getState()
             .roomLocked(event.payload.locked, event.payload.version);
+        else if (event.type === "room.access_changed")
+          useRoomStore.getState().roomUpdated(event.payload);
         else if (event.type === "room.appearance.updated")
           useRoomStore.getState().roomAppearanceUpdated(event.payload);
         else if (event.type === "chat.message")
@@ -364,6 +366,10 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           },
           publishDefaults: {
             simulcast: true,
+            // VP9 (SVC) cuts bandwidth, especially for screen share; browsers
+            // that cannot decode it receive the VP8 backup layers instead.
+            videoCodec: "vp9",
+            backupCodec: true,
             degradationPreference: "maintain-framerate",
           },
         }}

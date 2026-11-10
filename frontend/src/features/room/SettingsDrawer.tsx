@@ -156,23 +156,30 @@ export function SettingsDrawer() {
         currentVersion = updated.version;
       }
 
+      if (updated !== room) useRoomStore.getState().roomUpdated(updated);
       if (appearanceChanged) {
-        session.sendCommand("room.appearance.update", {
-          atmosphere,
-          accent,
-          adaptive_media_background: adaptiveMedia,
+        const failure = vi ? "Không thể lưu cài đặt" : "Could not save settings";
+        const sent = session.sendCommand("room.appearance.update", {
+          atmosphere, accent, adaptive_media_background: adaptiveMedia,
           expected_version: currentVersion,
         });
-        updated = {
-          ...updated,
-          atmosphere,
-          accent,
-          adaptive_media_background: adaptiveMedia,
-          version: currentVersion + 1,
-        };
+        if (!sent) throw new Error(failure);
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(() => finish(false), 5000);
+          const unsubscribe = useRoomStore.subscribe((state, previous) => {
+            if (state.room && state.room.version > currentVersion) {
+              finish(state.room.atmosphere === atmosphere && state.room.accent === accent &&
+                state.room.adaptive_media_background === adaptiveMedia);
+            } else if (state.governanceError !== previous.governanceError ||
+                       state.connectionState !== "CONNECTED") finish(false);
+          });
+          function finish(saved: boolean) {
+            window.clearTimeout(timer);
+            unsubscribe();
+            if (saved) resolve(); else reject(new Error(failure));
+          }
+        });
       }
-
-      useRoomStore.getState().roomUpdated(updated);
       clearAppearancePreview();
       setPassword("");
       setSavedSuccess(true);

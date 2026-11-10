@@ -101,10 +101,10 @@ func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) err
 		return err
 	}
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO youtube_room_picks (id, room_id, video_id, title, channel, suggested_by, active)
-		SELECT $1, $2, $3, $4, $5, $6, $7
+		INSERT INTO youtube_room_picks (id, room_id, video_id, title, channel, suggested_by, active, suggested_by_guest)
+		SELECT $1, $2, $3, $4, $5, CASE WHEN $9 = 'guest' THEN NULL ELSE $6::uuid END, $7, CASE WHEN $9 = 'guest' THEN $6::uuid END
 		WHERE (SELECT COUNT(*) FROM youtube_room_picks WHERE room_id = $2 AND active) < $8`,
-		pick.ID, pick.RoomID, pick.VideoID, pick.Title, pick.Channel, pick.SuggestedBy, pick.Active, MaxActivePicks)
+		pick.ID, pick.RoomID, pick.VideoID, pick.Title, pick.Channel, pick.SuggestedBy, pick.Active, MaxActivePicks, pick.SuggestedByType)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.ErrConflict
@@ -118,11 +118,11 @@ func (p *Postgres) CreateRoomPick(ctx context.Context, pick YouTubeRoomPick) err
 }
 
 func (p *Postgres) ListRoomPicks(ctx context.Context, roomID string) ([]YouTubeRoomPick, error) {
-	rows, err := p.pool.Query(ctx, `SELECT p.id, p.room_id, p.video_id, p.title, p.channel, p.suggested_by, p.active, p.created_at, COALESCE(COUNT(v.user_id), 0)::int AS votes
+	rows, err := p.pool.Query(ctx, `SELECT p.id, p.room_id, p.video_id, p.title, p.channel, COALESCE(p.suggested_by, p.suggested_by_guest), p.active, p.created_at, COUNT(COALESCE(v.user_id, v.guest_id))::int AS votes
 		FROM youtube_room_picks p
 		LEFT JOIN youtube_room_pick_votes v ON v.pick_id = p.id
 		WHERE p.room_id=$1 AND p.active
-		GROUP BY p.id, p.room_id, p.video_id, p.title, p.channel, p.suggested_by, p.active, p.created_at
+		GROUP BY p.id, p.room_id, p.video_id, p.title, p.channel, p.suggested_by, p.suggested_by_guest, p.active, p.created_at
 		ORDER BY votes DESC, p.created_at ASC LIMIT 100`, roomID)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,7 @@ func (p *Postgres) ListRoomPicks(ctx context.Context, roomID string) ([]YouTubeR
 }
 
 func (p *Postgres) ListRoomPickVoters(ctx context.Context, roomID string) (map[string][]string, error) {
-	rows, err := p.pool.Query(ctx, `SELECT v.pick_id, v.user_id FROM youtube_room_pick_votes v JOIN youtube_room_picks p ON p.id = v.pick_id WHERE p.room_id=$1 AND p.active`, roomID)
+	rows, err := p.pool.Query(ctx, `SELECT v.pick_id, COALESCE(v.user_id, v.guest_id) FROM youtube_room_pick_votes v JOIN youtube_room_picks p ON p.id = v.pick_id WHERE p.room_id=$1 AND p.active`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -156,31 +156,36 @@ func (p *Postgres) ListRoomPickVoters(ctx context.Context, roomID string) (map[s
 	return voters, rows.Err()
 }
 
-func (p *Postgres) VoteRoomPick(ctx context.Context, roomID, pickID, userID string) error {
-	var pickExists, voteInserted bool
-	err := p.pool.QueryRow(ctx, `
-		WITH target_pick AS (
-			SELECT id FROM youtube_room_picks WHERE id = $1 AND room_id = $2 AND active = TRUE
-		),
-		inserted_vote AS (
-			INSERT INTO youtube_room_pick_votes (pick_id, user_id)
-			SELECT id, $3 FROM target_pick
-			ON CONFLICT (pick_id, user_id) DO NOTHING
-			RETURNING pick_id
-		)
-		SELECT
-			EXISTS(SELECT 1 FROM target_pick) AS pick_exists,
-			EXISTS(SELECT 1 FROM inserted_vote) AS vote_inserted`, pickID, roomID, userID).Scan(&pickExists, &voteInserted)
+func (p *Postgres) VoteRoomPick(ctx context.Context, roomID, pickID string, actor domain.Identity) (int, error) {
+	tx, err := p.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if !pickExists {
-		return domain.ErrNotFound
+	defer tx.Rollback(ctx)
+	// Serialize votes with each other and with promotion; count after the insert.
+	var id string
+	if err = tx.QueryRow(ctx, `SELECT id FROM youtube_room_picks WHERE id=$1 AND room_id=$2 AND active FOR UPDATE`, pickID, roomID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, domain.ErrNotFound
+		}
+		return 0, err
 	}
-	if !voteInserted {
-		return ErrAlreadyVoted
+	if actor.Type != domain.IdentityUser && actor.Type != domain.IdentityGuest {
+		return 0, domain.ErrUnauthorized
 	}
-	return nil
+	tag, err := tx.Exec(ctx, `INSERT INTO youtube_room_pick_votes(pick_id,user_id,guest_id)
+ VALUES($1,CASE WHEN $3='user' THEN $2::uuid END,CASE WHEN $3='guest' THEN $2::uuid END) ON CONFLICT DO NOTHING`, pickID, actor.ID, actor.Type)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrAlreadyVoted
+	}
+	var votes int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM youtube_room_pick_votes WHERE pick_id=$1`, pickID).Scan(&votes); err != nil {
+		return 0, err
+	}
+	return votes, tx.Commit(ctx)
 }
 
 const promoteRoomPickSQL = `UPDATE youtube_room_picks SET active=FALSE WHERE id=$1 AND room_id=$2 AND active`
@@ -241,12 +246,25 @@ func (p *Postgres) GetMediaSettings(ctx context.Context, roomID string) (YouTube
 }
 
 func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
+	// pgxpool removes pool parameters; retain their parsed presence before that.
+	connConfig, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database config: %w", err)
+	}
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database config: %w", err)
 	}
-	config.MaxConns = 10
-	config.MinConns = 1
+	// Defaults suit the Supabase session pooler. Override per deployment with
+	// pool_max_conns / pool_min_conns in DATABASE_URL. When pointing at the
+	// transaction pooler (port 6543), also add default_query_exec_mode=exec,
+	// because it does not support pgx's cached prepared statements.
+	if _, present := connConfig.RuntimeParams["pool_max_conns"]; !present {
+		config.MaxConns = 10
+	}
+	if _, present := connConfig.RuntimeParams["pool_min_conns"]; !present {
+		config.MinConns = 1
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

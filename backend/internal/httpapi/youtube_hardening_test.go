@@ -118,26 +118,27 @@ func (s *youtubeMockStore) ListRoomPickVoters(_ context.Context, roomID string) 
 	return res, nil
 }
 
-func (s *youtubeMockStore) VoteRoomPick(_ context.Context, roomID, pickID, userID string) error {
+func (s *youtubeMockStore) VoteRoomPick(_ context.Context, roomID, pickID string, actor domain.Identity) (int, error) {
+	userID := actor.ID
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.voteErr != nil {
-		return s.voteErr
+		return 0, s.voteErr
 	}
 	p, ok := s.picks[pickID]
 	if !ok || p.RoomID != roomID || !p.Active {
-		return domain.ErrNotFound
+		return 0, domain.ErrNotFound
 	}
 	if s.voters[pickID] == nil {
 		s.voters[pickID] = make(map[string]bool)
 	}
 	if s.voters[pickID][userID] {
-		return store.ErrAlreadyVoted
+		return 0, store.ErrAlreadyVoted
 	}
 	s.voters[pickID][userID] = true
 	p.Votes++
 	s.picks[pickID] = p
-	return nil
+	return len(s.voters[pickID]), nil
 }
 
 func (s *youtubeMockStore) PromoteRoomPick(_ context.Context, roomID, pickID string) error {

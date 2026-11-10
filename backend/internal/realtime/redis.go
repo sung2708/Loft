@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"loft/backend/internal/domain"
 )
 
 // RedisBus is an ephemeral room-event relay. PostgreSQL and the Hub retain
@@ -80,10 +81,11 @@ func (b *RedisBus) AllowRate(ctx context.Context, category, identity string, eve
 }
 
 type interNodeEvent struct {
-	OriginInstanceID string `json:"origin_instance_id"`
-	EventID          string `json:"event_id"`
-	RoomID           string `json:"room_id"`
-	Data             []byte `json:"data"`
+	OriginInstanceID string                `json:"origin_instance_id"`
+	EventID          string                `json:"event_id"`
+	RoomID           string                `json:"room_id"`
+	Data             []byte                `json:"data"`
+	Host             *domain.HostAuthority `json:"host,omitempty"`
 }
 
 func NewRedisBus(rawURL, instanceID string, logger *slog.Logger) (*RedisBus, error) {
@@ -185,8 +187,11 @@ func (b *RedisBus) Start(parent context.Context, deliver func(string, []byte)) {
 					continue
 				}
 				var packet interNodeEvent
-				if json.Unmarshal([]byte(message.Payload), &packet) != nil || packet.OriginInstanceID == b.instanceID || packet.RoomID == "" || message.Channel != "room:"+packet.RoomID+":events" || len(packet.Data) > maxEventBytes {
+				if json.Unmarshal([]byte(message.Payload), &packet) != nil || packet.OriginInstanceID == b.instanceID || packet.RoomID == "" || message.Channel != "room:"+packet.RoomID+":events" || len(packet.Data) > maxServerEventBytes {
 					continue
+				}
+				if packet.Host != nil {
+					packet.Data = hostEvent(packet.RoomID, *packet.Host, "presence-reconciled")
 				}
 				deliver(packet.RoomID, packet.Data)
 			}

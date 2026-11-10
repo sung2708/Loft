@@ -75,7 +75,7 @@ if existing ~= nil then
   lease.participant.connection_id = existing.participant.connection_id
   lease.participant.joined_at = existing.participant.joined_at
 end
-lease.expires_ms = now_ms + tonumber(ARGV[6])
+lease.expires_ms = math.floor(now_ms) + tonumber(ARGV[6])
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(lease))
 redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[6]) * 2)
 local response = { participant = lease.participant }
