@@ -580,14 +580,26 @@ func TestRoomLockAndParticipantKick(t *testing.T) {
 	}
 }
 
-func TestGuestAuthenticatesAndReceivesSnapshot(t *testing.T) {
+type chatDuringSnapshotStore struct {
+	realtimeStore
+	duringRead func()
+}
+
+func (s *chatDuringSnapshotStore) RecentMessages(context.Context, string, int) ([]domain.Message, error) {
+	s.duringRead()
+	return nil, nil
+}
+
+func TestJoinReceivesSnapshotBeforeConcurrentChat(t *testing.T) {
 	room := domain.Room{ID: uuid.NewString(), Name: "Night room", AllowGuests: true}
 	guests := auth.NewGuestTokens("12345678901234567890123456789012", time.Hour)
 	raw, _, _, err := guests.Issue(room.ID, "Minh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := New(&realtimeStore{room: room}, guests, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store := &chatDuringSnapshotStore{realtimeStore: realtimeStore{room: room}}
+	hub := New(store, guests, auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", ""), []string{"http://localhost:3000"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store.duringRead = func() { hub.broadcast(room.ID, event("chat.message", room.ID, domain.Message{ID: "concurrent"}), "") }
 	server := httptest.NewServer(hub)
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -608,6 +620,10 @@ func TestGuestAuthenticatesAndReceivesSnapshot(t *testing.T) {
 	if response.Type != "room.snapshot" || response.RoomID != room.ID {
 		t.Fatalf("unexpected event: %#v", response)
 	}
+	if err := wsjson.Read(ctx, conn, &response); err != nil || response.Type != "chat.message" {
+		t.Fatalf("missing live message after snapshot: %s %v", response.Type, err)
+	}
+
 }
 
 func TestTwoGuestsQueueAndReactionsOverWebSocket(t *testing.T) {

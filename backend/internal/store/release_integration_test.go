@@ -86,6 +86,16 @@ func TestReleaseMigrationInIsolatedSchema(t *testing.T) {
 	if _, err := tx.Exec(ctx, "INSERT INTO room_bans(room_id,identity_type,identity_id,banned_by) VALUES($1,'guest',$2,$3)", roomID, guestID, userID); err != nil {
 		t.Fatal("ban insert failed")
 	}
+	var pickID string
+	if err := tx.QueryRow(ctx, `INSERT INTO youtube_room_picks(room_id,video_id,suggested_by_guest) VALUES($1,'dQw4w9WgXcQ',$2) RETURNING id`, roomID, guestID).Scan(&pickID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		tag, err := tx.Exec(ctx, `INSERT INTO youtube_room_pick_votes(pick_id,guest_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, pickID, guestID)
+		if err != nil || tag.RowsAffected() != int64(1-i) {
+			t.Fatalf("guest vote %d: %v, %v", i, tag, err)
+		}
+	}
 	var banned bool
 	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM room_bans WHERE room_id=$1 AND identity_type='guest' AND identity_id=$2)", roomID, guestID).Scan(&banned); err != nil || !banned {
 		t.Fatalf("ban row missing: banned=%v err=%v", banned, err)

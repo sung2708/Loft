@@ -432,8 +432,11 @@ func (s *Server) updateRoom(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, "update room access", err)
 		return
 	}
+	if notifier, ok := s.deletion.(interface{ NotifyRoomAccess(domain.Room) }); ok {
+		notifier.NotifyRoomAccess(updated)
+	}
 	s.logger.Info("room access changed", "request_id", middleware.GetReqID(r.Context()), "room_id", room.ID, "password_required", updated.PasswordRequired, "locked", updated.IsLocked)
-	writeJSON(w, http.StatusOK, preview(updated))
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {

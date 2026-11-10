@@ -77,13 +77,14 @@ func (s *Server) createYouTubePick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pick := store.YouTubeRoomPick{
-		ID:          uuid.NewString(),
-		RoomID:      room.ID,
-		VideoID:     input.VideoID,
-		Title:       input.Title,
-		Channel:     input.Channel,
-		SuggestedBy: identity.ID,
-		Active:      true,
+		ID:              uuid.NewString(),
+		RoomID:          room.ID,
+		VideoID:         input.VideoID,
+		Title:           input.Title,
+		Channel:         input.Channel,
+		SuggestedBy:     identity.ID,
+		SuggestedByType: identity.Type,
+		Active:          true,
 	}
 	if err := repo.CreateRoomPick(r.Context(), pick); err != nil {
 		if errors.Is(err, store.ErrPickCapacityReached) {
@@ -96,6 +97,9 @@ func (s *Server) createYouTubePick(w http.ResponseWriter, r *http.Request) {
 		}
 		s.internal(w, r, "create youtube pick", err)
 		return
+	}
+	if notifier, ok := s.deletion.(interface{ NotifyPickCreated(store.YouTubeRoomPick) }); ok {
+		notifier.NotifyPickCreated(pick)
 	}
 	writeJSON(w, http.StatusCreated, pick)
 }
@@ -116,7 +120,7 @@ func (s *Server) voteYouTubePick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo, ok := s.store.(interface {
-		VoteRoomPick(context.Context, string, string, string) error
+		VoteRoomPick(context.Context, string, string, domain.Identity) (int, error)
 	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "YOUTUBE_PICKS_UNAVAILABLE", "Room picks are unavailable")
@@ -129,7 +133,8 @@ func (s *Server) voteYouTubePick(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_VOTE", "Pick ID is required")
 		return
 	}
-	if err := repo.VoteRoomPick(r.Context(), room.ID, input.PickID, identity.ID); err != nil {
+	votes, err := repo.VoteRoomPick(r.Context(), room.ID, input.PickID, identity)
+	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "PICK_NOT_FOUND", "Pick not found in this room")
 			return
@@ -140,6 +145,9 @@ func (s *Server) voteYouTubePick(w http.ResponseWriter, r *http.Request) {
 		}
 		s.internal(w, r, "vote youtube pick", err)
 		return
+	}
+	if notifier, ok := s.deletion.(interface{ NotifyPickVote(string, string, int) }); ok {
+		notifier.NotifyPickVote(room.ID, input.PickID, votes)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "voted"})
 }
@@ -184,7 +192,14 @@ func (s *Server) youtubeMediaSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings := store.YouTubeMediaSettings{RoomID: room.ID, AutoplayEnabled: input.AutoplayEnabled, UpdatedBy: identity.ID}
-	if err := repo.SetAutoplay(r.Context(), settings); err != nil {
+	if authority, ok := s.deletion.(interface {
+		SetRoomAutoplay(context.Context, domain.Room, domain.Identity, bool) error
+	}); ok {
+		err = authority.SetRoomAutoplay(r.Context(), room, identity, input.AutoplayEnabled)
+	} else {
+		err = repo.SetAutoplay(r.Context(), settings)
+	}
+	if err != nil {
 		s.internal(w, r, "set youtube autoplay", err)
 		return
 	}

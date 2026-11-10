@@ -200,7 +200,7 @@ export type ServerEvent =
       version: 1;
       event_id: string;
       room_id: string;
-      payload: { allow_guests: boolean; password_required: boolean; is_locked: boolean; version: number };
+      payload: ApiRoom;
     }
   | {
       type: "chat.message";

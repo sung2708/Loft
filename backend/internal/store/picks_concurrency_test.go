@@ -39,7 +39,7 @@ func TestPostgresRoomPickCapacityConcurrentWriters(t *testing.T) {
 			t.Error("test schema cleanup failed", err)
 		}
 	}()
-	if _, err = conn.Exec(ctx, "CREATE TABLE "+schema+".rooms(id uuid PRIMARY KEY); CREATE TABLE "+schema+".youtube_room_picks(id uuid PRIMARY KEY,room_id uuid,video_id text,title text,channel text,suggested_by uuid,active boolean)"); err != nil {
+	if _, err = conn.Exec(ctx, "CREATE TABLE "+schema+".rooms(id uuid PRIMARY KEY); CREATE TABLE "+schema+".profiles(id uuid PRIMARY KEY)"); err != nil {
 		t.Fatal(err)
 	}
 	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
@@ -53,12 +53,21 @@ func TestPostgresRoomPickCapacityConcurrentWriters(t *testing.T) {
 	}
 	defer pool.Close()
 	repo := &Postgres{pool: pool}
+	for _, file := range []string{"000010_youtube_room_picks.up.sql", "000016_guest_room_picks.up.sql"} {
+		sql, err := os.ReadFile(filepath.Join("..", "..", "migrations", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(sql)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	roomID := uuid.NewString()
 	if _, err = pool.Exec(ctx, `INSERT INTO rooms(id) VALUES($1)`, roomID); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 49; i++ {
-		if err = repo.CreateRoomPick(ctx, YouTubeRoomPick{ID: uuid.NewString(), RoomID: roomID, VideoID: uuid.NewString(), SuggestedBy: uuid.NewString(), Active: true}); err != nil {
+		if err = repo.CreateRoomPick(ctx, YouTubeRoomPick{ID: uuid.NewString(), RoomID: roomID, VideoID: uuid.NewString()[:11], SuggestedBy: uuid.NewString(), SuggestedByType: domain.IdentityGuest, Active: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,7 +76,7 @@ func TestPostgresRoomPickCapacityConcurrentWriters(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		go func() {
 			<-start
-			results <- repo.CreateRoomPick(ctx, YouTubeRoomPick{ID: uuid.NewString(), RoomID: roomID, VideoID: uuid.NewString(), SuggestedBy: uuid.NewString(), Active: true})
+			results <- repo.CreateRoomPick(ctx, YouTubeRoomPick{ID: uuid.NewString(), RoomID: roomID, VideoID: uuid.NewString()[:11], SuggestedBy: uuid.NewString(), SuggestedByType: domain.IdentityGuest, Active: true})
 		}()
 	}
 	close(start)
@@ -101,6 +110,29 @@ func TestPostgresRoomPickCapacityConcurrentWriters(t *testing.T) {
 	var pickID string
 	if err = pool.QueryRow(ctx, `SELECT id FROM youtube_room_picks WHERE room_id=$1 AND active LIMIT 1`, roomID).Scan(&pickID); err != nil {
 		t.Fatal(err)
+	}
+	type result struct {
+		votes int
+		err   error
+	}
+	votes := make(chan result, 8)
+	for range 8 {
+		go func() {
+			n, err := repo.VoteRoomPick(ctx, roomID, pickID, domain.Identity{Type: domain.IdentityGuest, ID: uuid.NewString()})
+			votes <- result{n, err}
+		}()
+	}
+	seen := map[int]bool{}
+	for range 8 {
+		r := <-votes
+		if r.err != nil || r.votes < 1 || r.votes > 8 || seen[r.votes] {
+			t.Fatalf("vote count %d: %v", r.votes, r.err)
+		}
+		seen[r.votes] = true
+	}
+	picks, err := repo.ListRoomPicks(ctx, roomID)
+	if err != nil || len(picks) == 0 || picks[0].ID != pickID || picks[0].Votes != 8 {
+		t.Fatalf("unexpected vote ranking: %v", err)
 	}
 	if err = repo.CommitYouTubeSelection(ctx, roomID, settings, pickID); err != nil {
 		t.Fatal(err)

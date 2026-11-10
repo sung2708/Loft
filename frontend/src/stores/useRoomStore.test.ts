@@ -53,3 +53,11 @@ describe("room social state", () => {
   });
 });
 
+
+it("keeps the winning host when competing nodes send the same version", () => {
+  const store = useRoomStore.getState();
+  store.applySnapshot(snapshot);
+  store.hostChanged({ ...snapshot.host, connection_id: "z", version: 2 });
+  store.hostChanged({ ...snapshot.host, connection_id: "a", version: 2 });
+  expect(useRoomStore.getState().host?.connection_id).toBe("z");
+});

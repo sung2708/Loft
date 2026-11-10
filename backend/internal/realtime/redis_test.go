@@ -212,7 +212,7 @@ func TestLiveRedisBusMultiInstance(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	roomID := uuid.NewString()
-	testPayload := []byte(`{"type":"room.appearance.updated","payload":{"atmosphere":"party"}}`)
+	testPayload := event("board.changed", roomID, map[string]string{"record": strings.Repeat("x", 32<<10)})
 	if err := busA.Publish(ctx, roomID, testPayload); err != nil {
 		t.Fatalf("publish error: %v", err)
 	}
@@ -229,4 +229,54 @@ func TestLiveRedisBusMultiInstance(t *testing.T) {
 
 func stringContainsInsensitive(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+func TestLiveHostRecoveryAfterLeaseExpiry(t *testing.T) {
+	if os.Getenv("LOFT_RELEASE_REDIS_TEST") != "1" {
+		t.Skip("requires disposable Redis")
+	}
+	bus, err := NewRedisBus(os.Getenv("REDIS_URL"), "survivor", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bus.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	room := uuid.NewString()
+	for _, id := range []string{"owner", "member"} {
+		participant := domain.Participant{ConnectionID: id, IdentityID: id, IdentityType: domain.IdentityUser, JoinedAt: time.Now().UTC()}
+		if _, err = bus.AdmitPresence(ctx, room, "user:"+id, id, id, participant, 12, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := bus.SyncHost(ctx, room, "owner", "", "", 0)
+	if err != nil || first.ConnectionID != "owner" {
+		t.Fatalf("initial host: %+v, %v", first, err)
+	}
+	// Leave an expired lease in the hash, as a crashed node does.
+	key := presenceRoomKey(room)
+	raw, err := bus.client.HGet(ctx, key, "user:owner").Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lease presenceLease
+	if err = json.Unmarshal(raw, &lease); err != nil {
+		t.Fatal(err)
+	}
+	lease.ExpiresMS = 1
+	raw, err = json.Marshal(lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = bus.client.HSet(ctx, key, "user:owner", raw).Err(); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := bus.SyncHost(ctx, room, "owner", "", "", 0)
+	if err != nil || recovered.ConnectionID != "member" || recovered.Version <= first.Version {
+		t.Fatalf("recovered host: %+v, %v", recovered, err)
+	}
+	again, err := bus.SyncHost(ctx, room, "owner", "", "", 0)
+	if err != nil || again != recovered {
+		t.Fatalf("reconciliation changed host: %+v, %v", again, err)
+	}
 }

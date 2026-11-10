@@ -214,6 +214,8 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           useRoomStore
             .getState()
             .roomLocked(event.payload.locked, event.payload.version);
+        else if (event.type === "room.access_changed")
+          useRoomStore.getState().roomUpdated(event.payload);
         else if (event.type === "room.appearance.updated")
           useRoomStore.getState().roomAppearanceUpdated(event.payload);
         else if (event.type === "chat.message")

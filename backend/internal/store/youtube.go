@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"loft/backend/internal/domain"
 	"time"
 )
 
@@ -14,15 +15,16 @@ var (
 )
 
 type YouTubeRoomPick struct {
-	ID          string
-	RoomID      string
-	VideoID     string
-	Title       string
-	Channel     string
-	SuggestedBy string
-	Active      bool
-	Votes       int
-	CreatedAt   time.Time
+	ID              string
+	RoomID          string
+	VideoID         string
+	Title           string
+	Channel         string
+	SuggestedBy     string
+	SuggestedByType domain.IdentityType
+	Active          bool
+	Votes           int
+	CreatedAt       time.Time
 }
 
 type YouTubeMediaSettings struct {
@@ -38,7 +40,7 @@ type YouTubeRepository interface {
 	CreateRoomPick(context.Context, YouTubeRoomPick) error
 	ListRoomPicks(context.Context, string) ([]YouTubeRoomPick, error)
 	ListRoomPickVoters(context.Context, string) (map[string][]string, error)
-	VoteRoomPick(ctx context.Context, roomID, pickID, userID string) error
+	VoteRoomPick(ctx context.Context, roomID, pickID string, actor domain.Identity) (int, error)
 	PromoteRoomPick(ctx context.Context, roomID, pickID string) error
 	SetAutoplay(context.Context, YouTubeMediaSettings) error
 	GetMediaSettings(context.Context, string) (YouTubeMediaSettings, error)
