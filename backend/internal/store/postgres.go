@@ -245,8 +245,16 @@ func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database config: %w", err)
 	}
-	config.MaxConns = 10
-	config.MinConns = 1
+	// Defaults suit the Supabase session pooler. Override per deployment with
+	// pool_max_conns / pool_min_conns in DATABASE_URL. When pointing at the
+	// transaction pooler (port 6543), also add default_query_exec_mode=exec,
+	// because it does not support pgx's cached prepared statements.
+	if !strings.Contains(databaseURL, "pool_max_conns=") {
+		config.MaxConns = 10
+	}
+	if !strings.Contains(databaseURL, "pool_min_conns=") {
+		config.MinConns = 1
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

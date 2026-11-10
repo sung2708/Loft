@@ -364,6 +364,10 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           },
           publishDefaults: {
             simulcast: true,
+            // VP9 (SVC) cuts bandwidth, especially for screen share; browsers
+            // that cannot decode it receive the VP8 backup layers instead.
+            videoCodec: "vp9",
+            backupCodec: true,
             degradationPreference: "maintain-framerate",
           },
         }}
