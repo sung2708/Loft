@@ -27,13 +27,16 @@ import { api, ApiError } from "@/lib/api";
 import {
   b64Vecs,
   boardDraftKey,
+  boardIndexAbove,
   createTLStore,
   isSafeBoardRecord,
   mergeBoardRecords,
   readBoardDraft,
+  repairBoardIndexes,
   savePendingBoard,
   withoutBoardCycles,
   writeBoardDraft,
+  type BoardSnapshot,
   type TLRecord,
   type TLShape,
   type VecPoint,
@@ -129,10 +132,8 @@ function fromRichText(node: unknown): string {
   return value.content.map(fromRichText).join(value.type === "doc" ? "\n" : "");
 }
 
-function makeIndex(n: number): string {
-  const tag = (Math.max(1, n) % 900) + 100;
-  return `a${tag}`;
-}
+// ~8 base64 chars per point keeps a thinned preview well under 16 KiB.
+const MAX_PREVIEW_POINTS = 1200;
 
 function uid(): string {
   return (
@@ -155,11 +156,10 @@ function buildShapeRecord(
     size: string;
     opacity: number;
   },
-  order: number,
+  index: string,
   textVal = "",
 ): TLShape {
   const id = `shape:${uid()}`;
-  const index = makeIndex(order);
   const base = {
     id,
     typeName: "shape" as const,
@@ -470,7 +470,21 @@ export default function Whiteboard({ active }: { active: boolean }) {
     sy: number;
     pts: VecPoint[];
     moved?: boolean;
+    index?: string;
   } | null>(null);
+
+  // New shapes stack above everything already on the board, including
+  // unsaved local records, with an index the server accepts.
+  const nextShapeIndex = useCallback(
+    () =>
+      boardIndexAbove(
+        store
+          .allRecords()
+          .filter((r): r is TLShape => r.typeName === "shape")
+          .map((r) => r.index),
+      ),
+    [store],
+  );
 
   const syncShapesFromStore = useCallback(() => {
     const valid = withoutBoardCycles(
@@ -537,7 +551,17 @@ export default function Whiteboard({ active }: { active: boolean }) {
     } catch {
       // Storage can be unavailable in private browsing; server sync remains authoritative.
     }
-    for (const [id, record] of readBoardDraft(storedDraft))
+    const restored = readBoardDraft(storedDraft);
+    // Drafts saved by older builds can carry indexes the server rejects
+    // (e.g. "a110"), which used to wedge every later save behind a 400.
+    repairBoardIndexes(
+      restored,
+      store
+        .allRecords()
+        .filter((r): r is TLShape => r.typeName === "shape")
+        .map((r) => r.index),
+    );
+    for (const [id, record] of restored)
       if (record === null || isSafeBoardRecord(store, record))
         pending.current.set(id, record);
     let stopped = false;
@@ -546,6 +570,8 @@ export default function Whiteboard({ active }: { active: boolean }) {
     let failed = false;
     let hydrated = false;
     let halted = false;
+    let retryDelay = 0;
+    let chased = 0;
     const reconcile = (
       snapshot: import("@/lib/whiteboard").BoardSnapshot | undefined,
     ) => {
@@ -594,11 +620,18 @@ export default function Whiteboard({ active }: { active: boolean }) {
           const saved = pending.current;
           pending.current = outstanding;
           saveDraft();
-          try {
-            reconcile(snapshot);
-          } catch (error) {
-            pending.current = saved;
-            throw error;
+          if (!snapshot.records) {
+            // Minimal ack: the server applied our patch on top of the version
+            // we already hold, so local state is already authoritative.
+            if (snapshot.version > boardVersion.current)
+              boardVersion.current = snapshot.version;
+          } else {
+            try {
+              reconcile(snapshot as BoardSnapshot);
+            } catch (error) {
+              pending.current = saved;
+              throw error;
+            }
           }
         } else if (document.visibilityState === "visible") {
           const snapshot = await api.board(
@@ -628,9 +661,17 @@ export default function Whiteboard({ active }: { active: boolean }) {
           halted = true;
           setSaveBlocked(true);
         }
-        if (caught instanceof ApiError && caught.status === 409) {
+        if (caught instanceof ApiError && caught.status === 429) {
+          // Transient throttling: keep the edits queued and retry shortly
+          // instead of flashing a save error at the user.
+          failed = false;
+          retryDelay = 400;
+        } else if (caught instanceof ApiError && caught.status === 409) {
           try {
             reconcile(await api.board(roomID, credential, abort.signal));
+            // Rebased onto the latest board; resend pending edits right away
+            // rather than waiting out the 2 s failure backoff.
+            failed = false;
           } catch {
             setError(
               locale === "vi"
@@ -646,11 +687,23 @@ export default function Whiteboard({ active }: { active: boolean }) {
           );
       } finally {
         busy = false;
-        if (!stopped && !halted)
-          timer = setTimeout(
-            () => void sync(),
-            !failed && pending.current.size ? 60 : 2000,
-          );
+        if (!stopped && !halted) {
+          // A board.changed event that arrived mid-request could not be
+          // applied in order; catch up immediately instead of on the next poll.
+          // Chase each announced version once so a stale announcement can't
+          // turn into a tight polling loop.
+          const announced = useBoardStore.getState().version;
+          const behind =
+            announced > boardVersion.current && announced !== chased;
+          if (behind) chased = announced;
+          const delay = retryDelay
+            ? retryDelay
+            : !failed && (pending.current.size || behind)
+              ? 60
+              : 2000;
+          retryDelay = 0;
+          timer = setTimeout(() => void sync(), delay);
+        }
       }
     };
     discard.current = () => {
@@ -970,7 +1023,7 @@ export default function Whiteboard({ active }: { active: boolean }) {
         pt.y + 80,
         [],
         style,
-        shapes.length + 1,
+        nextShapeIndex(),
       );
       store.put([shape], "user");
       setSelectedIds([shape.id]);
@@ -985,7 +1038,8 @@ export default function Whiteboard({ active }: { active: boolean }) {
       return;
     }
 
-    dragRef.current = { kind: "create", sx: pt.x, sy: pt.y, pts: [pt] };
+    const index = nextShapeIndex();
+    dragRef.current = { kind: "create", sx: pt.x, sy: pt.y, pts: [pt], index };
     setDraftShape(
       buildShapeRecord(
         tool,
@@ -995,7 +1049,7 @@ export default function Whiteboard({ active }: { active: boolean }) {
         pt.y + 1,
         [pt],
         style,
-        shapes.length + 1,
+        index,
       ),
     );
   };
@@ -1032,7 +1086,13 @@ export default function Whiteboard({ active }: { active: boolean }) {
       return;
     }
     if (d.kind === "create") {
+      // Sub-pixel jitter adds bytes (and save/broadcast cost) without
+      // changing what anyone sees, so keep only points ~1 screen px apart.
+      const last = d.pts[d.pts.length - 1];
+      const minGap = 1 / Math.max(cameraRef.current.z, 0.01);
+      if (last && Math.hypot(pt.x - last.x, pt.y - last.y) < minGap) return;
       d.pts.push(pt);
+      const index = d.index ?? nextShapeIndex();
       const nextDraft = buildShapeRecord(
         tool,
         d.sx,
@@ -1041,10 +1101,30 @@ export default function Whiteboard({ active }: { active: boolean }) {
         pt.y,
         d.pts,
         style,
-        shapes.length + 1,
+        index,
       );
-      pointerState.current.draft = nextDraft;
       setDraftShape(nextDraft);
+      // Live preview for peers rides on board.cursor, whose events are capped
+      // at 16 KiB; thin long strokes so the preview never gets dropped.
+      const stride = Math.ceil(d.pts.length / MAX_PREVIEW_POINTS);
+      pointerState.current.draft =
+        stride <= 1
+          ? nextDraft
+          : {
+              ...buildShapeRecord(
+                tool,
+                d.sx,
+                d.sy,
+                pt.x,
+                pt.y,
+                d.pts.filter(
+                  (_, i) => i % stride === 0 || i === d.pts.length - 1,
+                ),
+                style,
+                index,
+              ),
+              id: nextDraft.id,
+            };
     }
   };
 
@@ -1067,7 +1147,7 @@ export default function Whiteboard({ active }: { active: boolean }) {
         pt.y,
         d.pts,
         style,
-        shapes.length + 1,
+        d.index ?? nextShapeIndex(),
       );
       setDraftShape(null);
       store.put([created], "user");
