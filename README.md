@@ -186,6 +186,6 @@ The full physical-device and two-node Redis release matrix still requires stagin
 
 Use the two-terminal commands above on macOS, Linux, or Windows. To expose the frontend on the LAN, run `pnpm dev --hostname 0.0.0.0` from `frontend/`; configure the API origin and backend origin allowlist for that address. Camera/microphone access requires a [secure browser context](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia), so use HTTPS for remote-device testing.
 
-The checked-in Makefile targets Windows PowerShell (`pwsh.exe`, `.exe`/`.cmd` paths). Its `make run` target also expects `concurrently`, which is not in the frontend dependency list; use the direct commands above instead.
+The checked-in Makefile targets Windows PowerShell (`pwsh.exe`, `.exe`/`.cmd` paths).
 
 Frontend environment variables and browser-test commands are documented in [frontend/README.md](frontend/README.md).

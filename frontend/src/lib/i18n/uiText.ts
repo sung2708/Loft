@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useI18nStore } from "./useTranslation";
 
 const vietnamese: Record<string, string> = {
@@ -247,5 +248,5 @@ export function translateUI(locale: "vi" | "en", english: string): string {
 
 export function useUIText() {
   const locale = useI18nStore((state) => state.locale);
-  return (english: string) => translateUI(locale, english);
+  return useCallback((english: string) => translateUI(locale, english), [locale]);
 }

@@ -24,8 +24,7 @@ func (h *Hub) DisconnectUser(ctx context.Context, userID string) {
 
 // PostgreSQL is rechecked so a delayed notification cannot reapply a lifted ban.
 func (h *Hub) checkAccountSuspension(ctx context.Context, identity domain.Identity) error {
-	h.bans.Invalidate(identity.ID)
-	err := h.bans.Check(ctx, identity)
+	err := h.bans.Refresh(ctx, identity)
 	if errors.Is(err, domain.ErrAccountSuspended) {
 		h.disconnectUserLocal(ctx, identity.ID)
 	}

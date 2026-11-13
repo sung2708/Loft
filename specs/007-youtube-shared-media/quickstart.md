@@ -4,7 +4,7 @@
 
 1. Configure existing Mingly Supabase, PostgreSQL, Redis/LiveKit as needed.
 2. Configure a YouTube Data API key only for search validation; do not put it in the browser.
-3. Run `make run` and open two browser profiles in the same room.
+3. Start both services using the [README](../../README.md#local-setup) and open two browser profiles in the same room.
 
 ## Core validation
 

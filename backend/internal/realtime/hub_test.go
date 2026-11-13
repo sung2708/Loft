@@ -984,8 +984,13 @@ func TestRoomAppearanceRealtimeWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var guestErr Envelope
-	if err := wsjson.Read(ctx, guestConn, &guestErr); err != nil || guestErr.Type != "error" {
-		t.Fatalf("expected error for guest update, got: %s %v", guestErr.Type, err)
+	for {
+		if err := wsjson.Read(ctx, guestConn, &guestErr); err != nil {
+			t.Fatalf("read guest update rejection: %v", err)
+		}
+		if guestErr.Type == "error" {
+			break
+		}
 	}
 	var errPayload errorPayload
 	if err := json.Unmarshal(guestErr.Payload, &errPayload); err != nil || errPayload.Code != "ROOM_COMMAND_REJECTED" {

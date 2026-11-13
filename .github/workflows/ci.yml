@@ -93,6 +93,17 @@ jobs:
         working-directory: frontend
         run: pnpm test
 
+      - name: Install Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Room switch regression
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://room-test.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+        run: pnpm exec playwright test e2e/spec001_room_access.spec.ts --project=chromium -g "late admission response"
+
       - name: Build
         working-directory: frontend
         run: pnpm build

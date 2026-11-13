@@ -8,8 +8,7 @@ import { unlockSfx } from "@/lib/sfx";
 import { useMediaPrefsStore } from "@/stores/useMediaPrefsStore";
 import { formatMediaError, isSecureMediaContext } from "./mediaErrors";
 
-/** sessionStorage key RoomSession reads once LiveKit connects. */
-export const ROOM_MEDIA_KEY = "loft.room.media";
+export type JoinMedia = { mic: boolean; camera: boolean };
 
 type DeviceOption = { deviceId: string; label: string };
 
@@ -55,7 +54,7 @@ export function PreJoin({
 }: {
   roomName?: string;
   displayName?: string;
-  onJoin: () => void;
+  onJoin: (media: JoinMedia) => void;
 }) {
   const tr = useUIText();
   const updatePrefs = useMediaPrefsStore((state) => state.update);
@@ -146,6 +145,11 @@ export function PreJoin({
     let stream: MediaStream | null = null;
     let context: AudioContext | null = null;
     let frame = 0;
+    const resumeMeter = () => {
+      if (context?.state === "suspended") void context.resume().catch(() => undefined);
+    };
+    window.addEventListener("pointerup", resumeMeter);
+    window.addEventListener("keydown", resumeMeter);
     const meter = meterRef.current;
     void openStream("audio", audioId)
       .then((opened) => {
@@ -159,6 +163,7 @@ export function PreJoin({
             .webkitAudioContext;
         if (!AudioCtor) return;
         context = new AudioCtor();
+        void context.resume().catch(() => undefined);
         const analyser = context.createAnalyser();
         analyser.fftSize = 512;
         context.createMediaStreamSource(opened).connect(analyser);
@@ -178,6 +183,8 @@ export function PreJoin({
     return () => {
       cancelled = true;
       cancelAnimationFrame(frame);
+      window.removeEventListener("pointerup", resumeMeter);
+      window.removeEventListener("keydown", resumeMeter);
       void context?.close().catch(() => undefined);
       stopStream(stream);
       if (meter) meter.style.transform = "scaleX(0)";
@@ -186,21 +193,13 @@ export function PreJoin({
 
   const join = () => {
     unlockSfx();
-    try {
-      sessionStorage.setItem(
-        ROOM_MEDIA_KEY,
-        JSON.stringify({ mic: micOn, camera: cameraOn }),
-      );
-    } catch {
-      // Without storage the room opens with media off, which is safe.
-    }
     updatePrefs({
       micOnJoin: micOn,
       cameraOnJoin: cameraOn,
       audioDeviceId: audioId,
       videoDeviceId: videoId,
     });
-    onJoin();
+    onJoin({ mic: micOn, camera: cameraOn });
   };
 
   const toggle =
