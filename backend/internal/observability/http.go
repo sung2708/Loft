@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -63,20 +64,45 @@ func routePattern(r *http.Request) string {
 	return "/unmatched"
 }
 
-// shortcut: trusts forwarding headers; if direct clients can reach the API, restrict parsing to known proxy hops.
+type clientIPKey struct{}
+
+// TrustedProxyMiddleware resolves the client address once for logs and limits.
+func TrustedProxyMiddleware(trusted []netip.Prefix) func(http.Handler) http.Handler {
+	isTrusted := func(ip netip.Addr) bool {
+		for _, prefix := range trusted {
+			if prefix.Contains(ip) {
+				return true
+			}
+		}
+		return false
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			peer := ClientIP(r)
+			ip, err := netip.ParseAddr(peer)
+			if err == nil && isTrusted(ip.Unmap()) {
+				hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+				for i := len(hops) - 1; i >= 0; i-- {
+					hop, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+					if err != nil || hop.Zone() != "" {
+						break
+					}
+					if !isTrusted(hop.Unmap()) {
+						peer = hop.Unmap().String()
+						break
+					}
+				}
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey{}, peer)))
+		})
+	}
+}
+
 func ClientIP(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		if ip := net.ParseIP(strings.TrimSpace(strings.Split(forwarded, ",")[0])); ip != nil {
-			return ip.String()
-		}
+	if ip, ok := r.Context().Value(clientIPKey{}).(string); ok {
+		return ip
 	}
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Real-IP")); forwarded != "" {
-		if ip := net.ParseIP(forwarded); ip != nil {
-			return ip.String()
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
 	}
 	return r.RemoteAddr

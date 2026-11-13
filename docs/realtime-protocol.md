@@ -106,6 +106,11 @@ replay missed access events.
 - **Direction**: Server → Client (Broadcast)
 - **Payload**: Full `Participant` object of joining peer.
 
+#### `participant.avatar`
+
+Updates the avatar for an existing `connection_id`. An empty `avatar_url`
+clears the avatar. This event does not change presence or play a join sound.
+
 #### `participant.left`
 - **Direction**: Server → Client (Broadcast)
 - **Payload**: `{ "connection_id": "uuid" }`

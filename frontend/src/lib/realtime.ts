@@ -122,9 +122,11 @@ export class RoomSocket {
               : "You were removed from this room");
           return;
         }
-        if (event.type === "error" && event.payload.code === "ACCOUNT_SUSPENDED") {
+        if (event.type === "error" && (event.payload.code === "ACCOUNT_SUSPENDED" || event.payload.code === "UNAUTHORIZED")) {
           this.close();
-          this.callbacks.onState("FAILED", "This account is suspended");
+          this.callbacks.onState("FAILED", event.payload.code === "UNAUTHORIZED"
+            ? "Sign in to continue"
+            : "This account is suspended");
           return;
         }
         if (event.type === "error" && event.payload.code === "DUPLICATE_SESSION") {

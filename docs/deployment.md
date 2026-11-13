@@ -23,6 +23,7 @@ Preview deployments must keep their generated Vercel origin. Do not hard-code `m
 | `HTTP_ADDR`              |     No      | `:8080`                                                                |
 | `FRONTEND_ORIGINS`       |     No      | `http://localhost:3000`; comma-separated exact CORS/WS origins         |
 | `ADMIN_USER_IDS`          |     No      | Comma-separated Supabase user UUIDs allowed to open the read-only admin page; empty disables admin access |
+| `ADMIN_REQUIRE_MFA`       |     No      | `true` requires a second factor (Supabase `aal2`) for every admin request; `/admin` runs TOTP enrolment and verification. Enable TOTP in Supabase Auth first. Default `false` |
 | `METRICS_BEARER_TOKEN`    |     No      | 32+ character secret enabling authenticated `/metrics`; empty disables it |
 | `SUPABASE_JWT_SECRET`    | Legacy only | HS256 projects; asymmetric projects use JWKS                           |
 | `SUPABASE_JWT_AUDIENCE`  |     No      | `authenticated`                                                        |
@@ -60,6 +61,11 @@ in `vercel.json` serves `/admin` at the subdomain root.
 
 Set frontend variables before the Vercel build; `NEXT_PUBLIC_*` values are embedded into the client bundle.
 
+Set `TRUSTED_PROXY_CIDRS` only to the CIDRs of proxies you control that append
+the observed peer to `X-Forwarded-For`. With no configured proxies, the API uses
+the connection peer for HTTP and WebSocket rate limits. Verify proxy CIDRs and
+header handling before rollout behind a shared ingress.
+
 ## Database migrations
 
 Apply in order:
@@ -84,6 +90,8 @@ Apply in order:
 18. `000018_account_bans.up.sql`
 19. `000019_call_feedback.up.sql`
 20. `000020_message_revision.up.sql`
+21. `000021_accounts_reports.up.sql`
+22. `000022_account_deletion_retry.up.sql`
 
 Migrations 000017–000020 must be applied **before** rolling out the backend that
 uses them: chat history reads the new `messages` columns, the admin user list joins
@@ -96,6 +104,11 @@ bus scope. Notifications run on the existing bounded Redis workers, outside the
 subscription loop. Every node rechecks PostgreSQL before disconnecting the account and
 removing its media participant. Existing sockets also recheck every 15 seconds
 so a missed notification does not leave an account connected indefinitely.
+
+Apply migrations 000021 and 000022 before deploying account settings and reports.
+Verify that the backend database role can read and delete the matching row in `auth.users`
+in a staging environment. If it cannot, the purge rolls back and leaves the
+deletion scheduled for retry.
 
 Do not edit applied migration files. Use a new numbered migration for schema changes.
 

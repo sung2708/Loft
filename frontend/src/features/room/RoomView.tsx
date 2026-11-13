@@ -9,6 +9,7 @@ import {
   Check,
   Copy,
   Crown,
+  Flag,
   MessageSquare,
   Music2,
   Mic,
@@ -41,6 +42,7 @@ import { useMusicPlayerStore } from "@/stores/useMusicPlayerStore";
 import { useUIText } from "@/lib/i18n/uiText";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
 import { KickParticipantDialog } from "@/components/room/KickParticipantDialog";
+import { ReportDialog, type ReportTarget } from "@/components/room/ReportDialog";
 import {
   ParticipantMenu,
   type ParticipantAction,
@@ -895,6 +897,8 @@ function PeopleDrawer() {
     action: "kick" | "ban";
   } | null>(null);
   const closeKickDialog = useCallback(() => setPendingModeration(null), []);
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
+  const closeReport = useCallback(() => setReporting(null), []);
   const lockRoom = () => {
     if (!room) return;
     useRoomStore.getState().setGovernanceError(null);
@@ -920,6 +924,10 @@ function PeopleDrawer() {
     person: (typeof people)[number],
     action: ParticipantAction,
   ) => {
+    if (action === "report") {
+      setReporting({ type: person.identity_type, id: person.identity_id, name: person.display_name });
+      return;
+    }
     if (action === "transfer") {
       if (room) {
         useRoomStore.getState().setGovernanceError(null);
@@ -1066,15 +1074,15 @@ function PeopleDrawer() {
                   <Crown className="w-3.5 h-3.5" /> {tr("Host")}
                 </span>
               )}
-              {isHost &&
-                person.role !== "host" &&
-                person.connection_id !== self?.connection_id && (
+              {person.connection_id !== self?.connection_id &&
+                person.identity_id !== self?.identity_id && (
                   <ParticipantMenu
                     participant={person}
+                    canModerate={isHost && person.role !== "host"}
                     canTransfer={Boolean(
                       room && person.identity_type === "user",
                     )}
-                    disabled={connection !== "CONNECTED"}
+                    disabled={isHost && connection !== "CONNECTED"}
                     onAction={(action) =>
                       handleParticipantAction(person, action)
                     }
@@ -1084,10 +1092,22 @@ function PeopleDrawer() {
           ))}
         </div>
         <div className="flex items-center gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-4 text-[13px] text-[var(--text-loft-secondary)]">
-          <Settings2 className="w-4 h-4" />{" "}
-          {tr("Presence follows active browser connections.")}
+          <Settings2 className="w-4 h-4 shrink-0" />
+          <span className="min-w-0 flex-1">{tr("Presence follows active browser connections.")}</span>
+          {room && session.credential && (
+            <button
+              type="button"
+              onClick={() => setReporting({ type: "room", id: room.id, name: room.name })}
+              className="btn-press inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[13px] hover-invert"
+            >
+              <Flag className="h-4 w-4" aria-hidden="true" /> {tr("Report room")}
+            </button>
+          )}
         </div>
       </DrawerFrame>
+      {reporting && room && session.credential && (
+        <ReportDialog roomId={room.id} credential={session.credential} target={reporting} onClose={closeReport} />
+      )}
       {pendingModeration && (
         <KickParticipantDialog
           name={pendingModeration.name}

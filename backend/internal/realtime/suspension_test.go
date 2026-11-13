@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
 )
 
@@ -25,7 +26,7 @@ func (s *suspensionStore) ActiveAccountBan(context.Context, string) (*domain.Acc
 }
 func (*suspensionStore) BanAccount(context.Context, domain.AccountBan) error  { return nil }
 func (*suspensionStore) LiftAccountBan(context.Context, string, string) error { return nil }
-func (*suspensionStore) ListAdminAudit(context.Context, int, int) ([]domain.AdminAuditEntry, int, error) {
+func (*suspensionStore) ListAdminAudit(context.Context, domain.AdminAuditFilter, int, int) ([]domain.AdminAuditEntry, int, error) {
 	return nil, 0, nil
 }
 
@@ -37,12 +38,16 @@ func (e *suspensionEvictor) RemoveParticipant(_ context.Context, roomID, identit
 }
 
 func TestSuspensionReachesOtherNodeAndRecoversWithoutBus(t *testing.T) {
-	for _, delivered := range []bool{true, false} {
-		name := "periodic fallback"
-		if delivered {
-			name = "bus delivery"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		delivered, deleted bool
+	}{
+		{"suspension via bus", true, false},
+		{"suspension via periodic check", false, false},
+		{"deletion via bus", true, true},
+		{"deletion via periodic check", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			accepted := make(chan *websocket.Conn, 1)
@@ -62,7 +67,9 @@ func TestSuspensionReachesOtherNodeAndRecoversWithoutBus(t *testing.T) {
 			defer conn.CloseNow()
 			store := &suspensionStore{}
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			a, b := New(store, nil, nil, nil, logger), New(store, nil, nil, nil, logger)
+			users := auth.NewSupabaseVerifier("https://test.supabase.co", "authenticated", "")
+			users.SetAccountLookup(func(context.Context, string) (bool, error) { return !tc.deleted, nil })
+			a, b := New(store, nil, users, nil, logger), New(store, nil, users, nil, logger)
 			actor := domain.Identity{ID: "user", Type: domain.IdentityUser}
 			if err := b.bans.Check(ctx, actor); err != nil {
 				t.Fatal(err)
@@ -73,17 +80,21 @@ func TestSuspensionReachesOtherNodeAndRecoversWithoutBus(t *testing.T) {
 			busA, busB := &memoryBus{instanceID: "a"}, &memoryBus{instanceID: "b", deliver: b.DeliverRemote}
 			busA.peers = []*memoryBus{busB}
 			a.SetBus(busA)
-			store.ban = &domain.AccountBan{UserID: actor.ID}
-			if delivered {
+			code := "UNAUTHORIZED"
+			if !tc.deleted {
+				store.ban = &domain.AccountBan{UserID: actor.ID}
+				code = "ACCOUNT_SUSPENDED"
+			}
+			if tc.delivered {
 				a.DisconnectUser(ctx, actor.ID)
 			} else {
-				_ = b.checkAccountSuspension(ctx, actor)
+				_ = b.checkAccountAccess(ctx, actor)
 			}
 			var event Envelope
 			if err := wsjson.Read(ctx, remote, &event); err != nil {
 				t.Fatal(err)
 			}
-			if event.Type != "error" || !strings.Contains(string(event.Payload), "ACCOUNT_SUSPENDED") {
+			if event.Type != "error" || !strings.Contains(string(event.Payload), code) {
 				t.Fatalf("unexpected event: %+v", event)
 			}
 			if len(evictor.removed) != 1 || evictor.removed[0] != "room:user:user" {

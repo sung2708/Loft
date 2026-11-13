@@ -45,7 +45,7 @@ func TestPostgresModerationAtomicAndImmutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	if _, err = pool.Exec(ctx, `CREATE TYPE identity_type AS ENUM ('user','guest'); CREATE TABLE messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), room_id uuid, sender_user_id uuid, sender_guest_id uuid, sender_type identity_type, sender_display_name text, sender_avatar_url text, content text, created_at timestamptz DEFAULT now()); CREATE TABLE profiles(id uuid PRIMARY KEY, display_name text); CREATE TABLE rooms(id uuid PRIMARY KEY, short_code text, invite_code text, name text, owner_id uuid, allow_guests boolean, is_locked boolean, password_required boolean, created_at timestamptz DEFAULT now()); CREATE TABLE room_endings(room_id uuid PRIMARY KEY REFERENCES rooms(id));`); err != nil {
+	if _, err = pool.Exec(ctx, `CREATE TYPE identity_type AS ENUM ('user','guest'); CREATE TABLE messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), room_id uuid, sender_user_id uuid, sender_guest_id uuid, sender_type identity_type, sender_display_name text, sender_avatar_url text, content text, created_at timestamptz DEFAULT now()); CREATE TABLE profiles(id uuid PRIMARY KEY, display_name text, hide_avatar boolean NOT NULL DEFAULT false); CREATE TABLE rooms(id uuid PRIMARY KEY, short_code text, invite_code text, name text, owner_id uuid, allow_guests boolean, is_locked boolean, password_required boolean, created_at timestamptz DEFAULT now()); CREATE TABLE room_endings(room_id uuid PRIMARY KEY REFERENCES rooms(id));`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"000015_room_moderation", "000017_chat_replies_edits", "000018_account_bans", "000020_message_revision"} {

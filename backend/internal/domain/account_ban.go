@@ -45,7 +45,27 @@ type AccountBanStore interface {
 	ActiveAccountBan(ctx context.Context, userID string) (*AccountBan, error)
 	BanAccount(ctx context.Context, ban AccountBan) error
 	LiftAccountBan(ctx context.Context, userID, actorID string) error
-	ListAdminAudit(ctx context.Context, limit, offset int) ([]AdminAuditEntry, int, error)
+	ListAdminAudit(ctx context.Context, filter AdminAuditFilter, limit, offset int) ([]AdminAuditEntry, int, error)
+}
+
+// AdminAuditFilter narrows the audit log; zero values match everything.
+type AdminAuditFilter struct {
+	Action   string
+	ActorID  string
+	TargetID string
+	From     *time.Time
+	To       *time.Time
+}
+
+// MaxAuditExportRows bounds one CSV export.
+const MaxAuditExportRows = 5000
+
+func ValidAuditAction(action string) bool {
+	switch action {
+	case "", "account.suspend", "account.unsuspend", "room.end", "report.actioned", "report.dismissed":
+		return true
+	}
+	return false
 }
 
 // CanSuspendAccount: only admins act, never on themselves or other admins

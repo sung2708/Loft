@@ -33,3 +33,13 @@ describe("ParticipantMenu", () => {
     expect(html).toContain("disabled");
   });
 });
+
+describe("ParticipantMenu for non-hosts", () => {
+  it("keeps the trigger enabled so anyone can report", () => {
+    const html = renderToStaticMarkup(
+      <ParticipantMenu participant={participant} canTransfer={false} canModerate={false} onAction={() => undefined} />,
+    );
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).not.toContain('disabled=""');
+  });
+});

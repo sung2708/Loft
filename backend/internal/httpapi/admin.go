@@ -61,7 +61,14 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	users, total, err := admin.ListAdminUsers(r.Context(), query, limit, offset)
+	status := domain.AdminUserStatus(r.URL.Query().Get("status"))
+	switch status {
+	case domain.AdminUsersAll, domain.AdminUsersSuspended, domain.AdminUsersDeleting, domain.AdminUsersReported:
+	default:
+		writeError(w, http.StatusBadRequest, "INVALID_STATUS", "Invalid user status")
+		return
+	}
+	users, total, err := admin.ListAdminUsers(r.Context(), query, status, limit, offset)
 	if err != nil {
 		s.internal(w, r, "list admin users", err)
 		return

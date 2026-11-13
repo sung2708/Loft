@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
+	"loft/backend/internal/accounts"
 	"loft/backend/internal/auth"
 	"loft/backend/internal/config"
 	"loft/backend/internal/httpapi"
@@ -46,6 +47,8 @@ func main() {
 	}
 	defer database.Close()
 	users := auth.NewSupabaseVerifier(cfg.SupabaseURL, cfg.SupabaseAudience, cfg.SupabaseJWTSecret)
+	users.SetProfileOverrides(database)
+	users.SetAccountLookup(database.AuthAccountExists)
 	guests := auth.NewGuestTokens(cfg.GuestTokenSecret, cfg.GuestTokenTTL)
 	liveKitService := livekit.New(cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
 	if err := liveKitService.SetURL(cfg.LiveKitURL); err != nil {
@@ -57,6 +60,7 @@ func main() {
 	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, slogLogger, hub)
 	api.ConfigureObservability(logger, observability.NewMetrics())
 	api.ConfigureAdminUserIDs(cfg.AdminUserIDs)
+	api.ConfigureAdminMFA(cfg.AdminRequireMFA)
 	api.ConfigureMetricsBearerToken(cfg.MetricsBearerToken)
 	if cfg.RedisURL != "" {
 		bus, err := realtime.NewRedisBus(cfg.RedisURL, cfg.InstanceID, slogLogger)
@@ -71,7 +75,12 @@ func main() {
 			defer bus.Close()
 		}
 	}
-	server := &http.Server{Addr: cfg.Address, Handler: api.Routes(hub), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	sweeperDone := make(chan struct{})
+	go func() {
+		defer close(sweeperDone)
+		accounts.NewSweeper(database, hub, hub, slogLogger).Run(ctx)
+	}()
+	server := &http.Server{Addr: cfg.Address, Handler: observability.TrustedProxyMiddleware(cfg.TrustedProxyCIDRs)(api.Routes(hub)), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		logger.Info().Str("address", cfg.Address).Msg("Mingly API listening")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -87,5 +96,9 @@ func main() {
 	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error().Err(err).Msg("graceful shutdown failed")
+	}
+	select {
+	case <-sweeperDone:
+	case <-shutdownCtx.Done():
 	}
 }

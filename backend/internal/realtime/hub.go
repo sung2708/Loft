@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"loft/backend/internal/observability"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -596,7 +596,11 @@ func (h *Hub) handleForwardedMedia(ctx context.Context, request mediaRPCRequest)
 	if request.Kind == "internal.account.changed" {
 		var changed accountChanged
 		if json.Unmarshal(request.Payload, &changed) == nil && changed.UserID != "" {
-			_ = h.checkAccountSuspension(ctx, domain.Identity{ID: changed.UserID, Type: domain.IdentityUser})
+			if changed.Profile {
+				h.refreshProfileAvatar(ctx, changed.UserID)
+			} else {
+				_ = h.checkAccountAccess(ctx, domain.Identity{ID: changed.UserID, Type: domain.IdentityUser})
+			}
 		}
 		return mediaRPCResponse{RequestID: request.RequestID}
 	}
@@ -884,7 +888,11 @@ func (h *Hub) DeliverRemote(roomID string, data []byte) {
 			json.Unmarshal(envelope.Payload, &changed) == nil && changed.UserID != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = h.checkAccountSuspension(ctx, domain.Identity{ID: changed.UserID, Type: domain.IdentityUser})
+			if changed.Profile {
+				h.refreshProfileAvatar(ctx, changed.UserID)
+			} else {
+				_ = h.checkAccountAccess(ctx, domain.Identity{ID: changed.UserID, Type: domain.IdentityUser})
+			}
 		}
 		return
 	}
@@ -1143,10 +1151,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.mu.Unlock()
 		h.handlers.Done()
 	}()
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	host := observability.ClientIP(r)
 	if !h.connectionLimit.AllowContext(ctx, host) {
 		http.Error(w, "too many connection attempts", http.StatusTooManyRequests)
 		return
@@ -1292,6 +1297,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.connectionsAccepted.Add(1)
 	h.refreshPresence(ctx, c)
 	participants = h.roomParticipants(ctx, room.ID, participants)
+	profileCtx, stopProfiles := context.WithTimeout(ctx, 750*time.Millisecond)
+	for i := range participants {
+		if participants[i].IdentityType == domain.IdentityUser && participants[i].AvatarURL != "" {
+			participants[i].AvatarURL = h.visibleAvatar(profileCtx, participants[i].IdentityID, participants[i].AvatarURL)
+		}
+	}
+	stopProfiles()
 
 	h.mu.RLock()
 	snapshotHost := domain.HostAuthority{}
@@ -2182,13 +2194,16 @@ func (h *Hub) writePump(ctx context.Context, c *client) error {
 		case <-checks.C:
 			h.reconcileRoomSkipVotes(ctx, c.roomID)
 			banCtx, banCancel := context.WithTimeout(ctx, 5*time.Second)
-			banErr := h.checkAccountSuspension(banCtx, c.identity)
+			banErr := h.checkAccountAccess(banCtx, c.identity)
 			banCancel()
-			if errors.Is(banErr, domain.ErrAccountSuspended) {
+			if errors.Is(banErr, domain.ErrAccountSuspended) || errors.Is(banErr, domain.ErrUnauthorized) {
 				return banErr
 			}
 			if banErr != nil {
-				h.logger.Warn("account suspension check failed", "error", banErr)
+				h.logger.Warn("account access check failed", "error", banErr)
+			}
+			if c.identity.Type == domain.IdentityUser {
+				h.refreshProfileAvatar(ctx, c.identity.ID)
 			}
 			hostCtx, hostCancel := context.WithTimeout(ctx, time.Second)
 			_ = h.syncHost(hostCtx, h.roomSnapshot(c.roomID, domain.Room{ID: c.roomID}), "", "", 0)
@@ -2765,4 +2780,31 @@ func (h *Hub) originAllowed(origin string) bool {
 	}
 	_, ok := h.origins[parsed.Scheme+"://"+parsed.Host]
 	return ok
+}
+
+// ParticipantCounts reports how many distinct people are in each room across
+// instances, for room lists. Local state is copied under the read lock and
+// presence I/O happens after it is released; when ctx expires the remaining
+// rooms report local participants only. Rooms with nobody are omitted.
+func (h *Hub) ParticipantCounts(ctx context.Context, roomIDs []string) map[string]int {
+	counts := make(map[string]int, len(roomIDs))
+	for _, roomID := range roomIDs {
+		h.mu.RLock()
+		var local []domain.Participant
+		if state := h.rooms[roomID]; state != nil {
+			local = make([]domain.Participant, 0, len(state.clients))
+			for _, c := range state.clients {
+				local = append(local, c.participant)
+			}
+		}
+		h.mu.RUnlock()
+		all := local
+		if ctx.Err() == nil {
+			all = h.roomParticipants(ctx, roomID, local)
+		}
+		if len(all) > 0 {
+			counts[roomID] = len(all)
+		}
+	}
+	return counts
 }

@@ -129,7 +129,7 @@ CI runs backend race tests with isolated PostgreSQL/Redis fixtures, vet/build, a
 
 ## Administration
 
-Set `ADMIN_USER_IDS` to comma-separated Supabase user UUIDs and sign in at `/admin`. Admins can end rooms, suspend non-admin accounts temporarily or permanently, lift suspensions, inspect the audit log, and view seven-day call feedback summaries. Admins cannot suspend themselves or other configured admins.
+Set `ADMIN_USER_IDS` to comma-separated Supabase user UUIDs and sign in at `/admin`. Admins can end rooms, suspend non-admin accounts temporarily or permanently, lift suspensions, inspect the audit log, and view seven-day call feedback summaries. Admins cannot suspend themselves or other configured admins. Participants can report people or rooms; admins work the report queue, see per-account history, and filter or export the audit log. Set `ADMIN_REQUIRE_MFA=true` to require an authenticator app for admin access. Members can rename themselves, download their data, and delete their account with a 14-day grace period from Settings.
 
 Account suspensions block authenticated REST requests, WebSocket admission, and media-token issuance. Inter-node notifications disconnect active sessions; existing sockets also recheck every 15 seconds if a notification is missed. Guests have no durable account and use room-level moderation.
 

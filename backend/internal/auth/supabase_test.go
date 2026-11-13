@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"loft/backend/internal/domain"
 )
 
 func TestSupabaseVerifierAcceptsES256JWKS(t *testing.T) {
@@ -51,6 +53,11 @@ func TestSupabaseVerifierAcceptsES256JWKS(t *testing.T) {
 	}
 	if identity.ID != claims.Subject || identity.DisplayName != "minh" {
 		t.Fatalf("unexpected identity: %#v", identity)
+	}
+	deletedVerifier := NewSupabaseVerifier(server.URL, "authenticated", "")
+	deletedVerifier.SetAccountLookup(func(context.Context, string) (bool, error) { return false, nil })
+	if _, err := deletedVerifier.Verify(context.Background(), raw); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("valid token for deleted user was not rejected: %v", err)
 	}
 	for _, test := range []struct {
 		name   string

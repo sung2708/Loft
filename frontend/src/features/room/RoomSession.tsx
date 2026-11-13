@@ -235,6 +235,8 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
         } else if (event.type === "participant.joined") {
           useRoomStore.getState().participantJoined(event.payload);
           playSfx("participant-join");
+        } else if (event.type === "participant.avatar") {
+          useRoomStore.getState().participantAvatar(event.payload.connection_id, event.payload.avatar_url);
         } else if (event.type === "participant.left") {
           useRoomStore.getState().participantLeft(event.payload.connection_id);
           playSfx("participant-leave");

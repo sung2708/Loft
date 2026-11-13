@@ -22,7 +22,7 @@ func (s *stubBans) ActiveAccountBan(context.Context, string) (*domain.AccountBan
 }
 func (s *stubBans) BanAccount(context.Context, domain.AccountBan) error  { return nil }
 func (s *stubBans) LiftAccountBan(context.Context, string, string) error { return nil }
-func (s *stubBans) ListAdminAudit(context.Context, int, int) ([]domain.AdminAuditEntry, int, error) {
+func (s *stubBans) ListAdminAudit(context.Context, domain.AdminAuditFilter, int, int) ([]domain.AdminAuditEntry, int, error) {
 	return nil, 0, nil
 }
 

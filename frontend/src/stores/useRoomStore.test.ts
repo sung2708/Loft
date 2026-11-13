@@ -18,6 +18,17 @@ describe("room social state", () => {
     expect(useRoomStore.getState().self).toMatchObject({ raised_hand: false, social_version: 0 });
   });
 
+  it("keeps a hidden avatar when the update arrives before the join", () => {
+    const store = useRoomStore.getState();
+    store.applySnapshot(snapshot);
+    const joining = { ...snapshot.participants[0], connection_id: "new", identity_id: "new", avatar_url: "https://example.invalid/avatar" };
+    store.participantAvatar("new", "");
+    store.participantJoined(joining);
+    store.participantJoined(joining);
+    expect(useRoomStore.getState().participants.find((p) => p.connection_id === "new")?.avatar_url).toBeUndefined();
+    expect(useRoomStore.getState().pendingAvatars.size).toBe(0);
+  });
+
   it("applies only newer hand facts and removes state with participant", () => {
     useRoomStore.getState().applySnapshot(snapshot);
     useRoomStore.getState().handChanged("conn", true, 2);

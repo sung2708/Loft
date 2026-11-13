@@ -15,11 +15,13 @@ interface RoomStoreState {
   self: ApiParticipant | null;
   host: HostAuthority | null;
   participants: ApiParticipant[];
+  pendingAvatars: Map<string, string>;
   connectionState: ConnectionState;
   connectionError: string | null;
   governanceError: string | null;
   applySnapshot: (snapshot: RoomSnapshot) => void;
   participantJoined: (participant: ApiParticipant) => void;
+  participantAvatar: (connectionId: string, avatarUrl: string) => void;
   participantLeft: (connectionId: string) => void;
   roomLocked: (locked: boolean, version: number) => void;
   roomAppearanceUpdated: (appearance: RoomAppearance) => void;
@@ -36,6 +38,7 @@ const initial = {
   self: null,
   host: null,
   participants: [],
+  pendingAvatars: new Map<string, string>(),
   connectionState: "DISCONNECTED" as ConnectionState,
   connectionError: null,
   governanceError: null,
@@ -51,31 +54,62 @@ export const useRoomStore = create<RoomStoreState>((set, _get, api) => {
       self: snapshot.self ? normalizeParticipant(snapshot.self) : null,
       host: snapshot.host ?? null,
       participants: snapshot.participants.map(normalizeParticipant),
+      pendingAvatars: new Map(),
       connectionState: "CONNECTED",
       connectionError: null,
       governanceError: null,
     }),
   participantJoined: (participant) =>
-    set((state) => ({
-      participants: state.participants.some(
-        (item) =>
-          item.identity_id === participant.identity_id ||
-          item.connection_id === participant.connection_id,
-      )
-        ? state.participants.map((item) =>
-            item.identity_id === participant.identity_id ||
-            item.connection_id === participant.connection_id
-              ? participant
-              : item,
-          )
-        : [...state.participants, participant],
-    })),
+    set((state) => {
+      const pendingAvatars = new Map(state.pendingAvatars);
+      const pending = pendingAvatars.get(participant.connection_id);
+      pendingAvatars.delete(participant.connection_id);
+      const existing = state.participants.find((item) => item.connection_id === participant.connection_id);
+      const updated = pending !== undefined || existing
+        ? { ...participant, avatar_url: pending !== undefined ? pending || undefined : existing?.avatar_url }
+        : participant;
+      const matches = (item: ApiParticipant) =>
+        item.connection_id === updated.connection_id ||
+        (item.identity_id === updated.identity_id && item.identity_type === updated.identity_type);
+      return {
+        pendingAvatars,
+        participants: state.participants.some(matches)
+          ? state.participants.map((item) => matches(item) ? updated : item)
+          : [...state.participants, updated],
+      };
+    }),
+  participantAvatar: (connectionId, avatarUrl) =>
+    set((state) => {
+      if (state.self?.connection_id !== connectionId &&
+          !state.participants.some((item) => item.connection_id === connectionId)) {
+        const pendingAvatars = new Map(state.pendingAvatars);
+        pendingAvatars.delete(connectionId);
+        // shortcut: retain 64 unmatched updates, use versioned snapshots if admission bursts outgrow this.
+        if (pendingAvatars.size >= 64) {
+          const oldest = pendingAvatars.keys().next().value;
+          if (oldest !== undefined) pendingAvatars.delete(oldest);
+        }
+        pendingAvatars.set(connectionId, avatarUrl);
+        return { pendingAvatars };
+      }
+      const update = (participant: ApiParticipant) =>
+        participant.connection_id === connectionId
+          ? { ...participant, avatar_url: avatarUrl || undefined }
+          : participant;
+      return {
+        self: state.self ? update(state.self) : null,
+        participants: state.participants.map(update),
+      };
+    }),
   participantLeft: (connectionId) =>
-    set((state) => ({
-      participants: state.participants.filter(
-        (item) => item.connection_id !== connectionId,
-      ),
-    })),
+    set((state) => {
+      const pendingAvatars = new Map(state.pendingAvatars);
+      pendingAvatars.delete(connectionId);
+      return {
+        pendingAvatars,
+        participants: state.participants.filter((item) => item.connection_id !== connectionId),
+      };
+    }),
   roomLocked: (locked, version) =>
     set((state) => state.room && version > state.room.version
       ? { room: { ...state.room, is_locked: locked, version }, governanceError: null }

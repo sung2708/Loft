@@ -3,11 +3,14 @@
 import Link from "next/link";
 import {
   ArrowUpRight,
+  Check,
   CircleAlert,
   KeyRound,
+  Link2,
   Loader2,
   Lock,
   Plus,
+  Search,
   Settings2,
   Trash2,
   Users,
@@ -18,46 +21,17 @@ import { useRouter } from "next/navigation";
 import { ApiError, api, saveCredential } from "@/lib/api";
 import { useAuth } from "@/lib/auth/useAuth";
 import { useTranslation } from "@/lib/i18n/useTranslation";
-import type { ApiIdentity, ApiRoom } from "@/types/api";
+import type { ApiIdentity, ApiRoom, LiveCounts, OwnSuspension, RecentRoom } from "@/types/api";
 import { LobbyHeader } from "@/components/lobby/LobbyHeader";
 import { LazyCallFeedbackPrompt } from "@/components/feedback/LazyCallFeedbackPrompt";
 import { DeleteRoomDialog } from "@/components/room/DeleteRoomDialog";
 import { useUIText } from "@/lib/i18n/uiText";
 import { RoomSettings } from "@/components/room/RoomSettings";
-
-type SwitchProps = {
-  checked: boolean;
-  disabled?: boolean;
-  label: string;
-  onChange: (checked: boolean) => void;
-};
-
-function Switch({ checked, disabled, label, onChange }: SwitchProps) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:ring-offset-2 focus:ring-offset-[var(--bg-loft-card)] disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked
-          ? "border-[#101113] bg-[#101113] dark:border-[#f4f5f7] dark:bg-[#f4f5f7]"
-          : "border-[#101113] bg-[#d1d5db] dark:border-[#f4f5f7] dark:bg-[#4a4d52]"
-      }`}
-    >
-      <span
-        aria-hidden="true"
-        className={`pointer-events-none inline-block h-5 w-5 rounded-full shadow-md transition-transform duration-200 ease-in-out ${
-          checked
-            ? "translate-x-5 bg-white dark:bg-[#101113]"
-            : "translate-x-0 bg-[#101113] dark:bg-[#f4f5f7]"
-        }`}
-      />
-    </button>
-  );
-}
+import { LiveBadge } from "@/components/home/LiveBadge";
+import { RecentRooms } from "@/components/home/RecentRooms";
+import { DeletionBanner } from "@/components/home/DeletionBanner";
+import { Switch } from "@/components/ui/Switch";
+import { suspensionMessage } from "@/lib/suspension";
 
 function roomActionError(caught: unknown, fallback: string) {
   if (caught instanceof ApiError) {
@@ -97,6 +71,12 @@ export default function HomePage() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsRoom, setSettingsRoom] = useState<ApiRoom | null>(null);
+  const [recent, setRecent] = useState<RecentRoom[]>([]);
+  const [live, setLive] = useState<LiveCounts>({});
+  const [deletionAt, setDeletionAt] = useState<string | null>(null);
+  const [suspension, setSuspension] = useState<{ detail?: OwnSuspension } | null>(null);
+  const [filter, setFilter] = useState("");
+  const [copied, setCopied] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const createDialogRef = useRef<HTMLFormElement>(null);
 
@@ -116,14 +96,20 @@ export default function HomePage() {
 
     void (async () => {
       try {
-        const [me, list] = await Promise.all([
+        const [me, list, visited, account] = await Promise.all([
           authIdentity ? Promise.resolve(authIdentity) : api.me(token),
           api.rooms(token),
+          // Optional extras: the page works without them.
+          api.recentRooms(token).catch(() => null),
+          api.account(token).catch(() => null),
         ]);
         if (!active) return;
 
         setIdentity(me);
         setRooms(list.rooms);
+        setRecent(visited?.rooms ?? []);
+        setLive({ ...(list.live ?? {}), ...(visited?.live ?? {}) });
+        setDeletionAt(account?.deletion_scheduled_for ?? null);
         const query = new URLSearchParams(window.location.search);
         setCreating(query.get("create") === "1");
         const settingsSlug = query.get("settings");
@@ -134,7 +120,11 @@ export default function HomePage() {
         }
       } catch (caught) {
         if (active) {
-          setError(roomActionError(caught, "Could not load home"));
+          if (caught instanceof ApiError && caught.code === "ACCOUNT_SUSPENDED") {
+            setSuspension({ detail: caught.suspension });
+          } else {
+            setError(roomActionError(caught, "Could not load home"));
+          }
         }
       } finally {
         if (active) setIsLoadingRooms(false);
@@ -243,6 +233,33 @@ export default function HomePage() {
     }
   };
 
+  const copyInvite = async (room: ApiRoom) => {
+    try {
+      await navigator.clipboard.writeText(`${location.origin}/join/${room.slug}`);
+      setCopied(room.id);
+      window.setTimeout(() => setCopied((current) => (current === room.id ? null : current)), 1800);
+    } catch {
+      setError(isVietnamese ? "Không sao chép được liên kết." : "Could not copy the link.");
+    }
+  };
+
+  const forgetRecent = async (room: RecentRoom) => {
+    const token = session?.access_token;
+    if (!token) return;
+    setRecent((current) => current.filter((item) => item.id !== room.id));
+    try {
+      await api.forgetRecentRoom(token, room.id);
+    } catch {
+      setRecent((current) => (current.some((item) => item.id === room.id) ? current : [room, ...current]));
+    }
+  };
+
+  const needle = filter.trim().toLocaleLowerCase();
+  const matches = (value: string) => !needle || value.toLocaleLowerCase().includes(needle);
+  const shownRooms = rooms.filter((room) => matches(room.name) || matches(room.slug));
+  const shownRecent = recent.filter((room) => matches(room.name) || matches(room.owner_name));
+  const searchable = rooms.length + recent.length > 6;
+
   const openCreateDialog = () => {
     setError(null);
     setCreating(true);
@@ -280,6 +297,40 @@ export default function HomePage() {
           </button>
         </div>
 
+        {suspension ? (
+          <div role="alert" className="mt-8 flex items-start gap-3 rounded-[10px] border border-[#b42318]/40 bg-[#b42318]/[0.06] px-4 py-3 text-[13px] dark:border-[#ff9b91]/40 dark:bg-[#ff9b91]/[0.08]">
+            <CircleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[#b42318] dark:text-[#ff9b91]" />
+            <p>
+              {suspensionMessage(suspension.detail, locale)}{" "}
+              {isVietnamese ? "Bạn không thể tạo hoặc vào phòng trong thời gian này." : "You can't create or join rooms during this time."}
+            </p>
+          </div>
+        ) : null}
+
+        {deletionAt && session?.access_token ? (
+          <div className="mt-8">
+            <DeletionBanner token={session.access_token} scheduledFor={deletionAt} vi={isVietnamese} onCancelled={() => setDeletionAt(null)} />
+          </div>
+        ) : null}
+
+        {searchable ? (
+          <label className="mt-8 flex h-11 max-w-md items-center gap-2 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-3 text-[var(--text-loft-muted)] focus-within:ring-2 focus-within:ring-[var(--accent-blue)]">
+            <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
+            <span className="sr-only">{isVietnamese ? "Tìm phòng" : "Find a room"}</span>
+            <input
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder={isVietnamese ? "Tìm theo tên phòng, mã hoặc chủ phòng" : "Search by room name, code or host"}
+              className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-loft-primary)] outline-none placeholder:text-[var(--text-loft-muted)]"
+            />
+            {filter ? (
+              <button type="button" onClick={() => setFilter("")} aria-label={isVietnamese ? "Xóa tìm kiếm" : "Clear search"} className="flex h-8 w-8 items-center justify-center rounded-[8px] hover-invert">
+                <X aria-hidden="true" className="h-4 w-4" />
+              </button>
+            ) : null}
+          </label>
+        ) : null}
+
         {error && !creating && !deletingRoom ? (
           <div
             role="alert"
@@ -299,8 +350,8 @@ export default function HomePage() {
               {isVietnamese ? "Phòng bạn làm chủ" : "Rooms you host"}
             </h2>
             {!isLoadingRooms ? (
-              <span className="text-[13px] text-[var(--text-loft-muted)]">
-                {rooms.length}
+              <span className="text-[13px] text-[var(--text-loft-muted)] tabular-nums">
+                {needle ? `${shownRooms.length} / ${rooms.length}` : rooms.length}
               </span>
             ) : null}
           </div>
@@ -318,7 +369,7 @@ export default function HomePage() {
                     <div className="mt-3 h-3 w-full rounded bg-[#101113]/10" />
                   </div>
                 ))
-              : rooms.map((room) => (
+              : shownRooms.map((room) => (
                   <article
                     key={room.id}
                     className="workflow-panel interactive-card group flex min-h-48 flex-col rounded-[10px] p-5"
@@ -327,13 +378,23 @@ export default function HomePage() {
                       <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#101113]/10 text-[var(--text-loft-primary)]">
                         <Users aria-hidden="true" className="h-5 w-5" />
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => void copyInvite(room)}
+                          aria-label={`${isVietnamese ? "Sao chép liên kết mời" : "Copy invite link"} ${room.name}`}
+                          title={copied === room.id ? (isVietnamese ? "Đã sao chép" : "Copied") : isVietnamese ? "Sao chép liên kết mời" : "Copy invite link"}
+                          className="btn-press hover-invert flex h-11 w-11 items-center justify-center rounded-[10px] text-[var(--text-loft-muted)]"
+                        >
+                          {copied === room.id ? <Check aria-hidden="true" className="h-4 w-4" /> : <Link2 aria-hidden="true" className="h-4 w-4" />}
+                          <span className="sr-only" aria-live="polite">{copied === room.id ? (isVietnamese ? "Đã sao chép" : "Copied") : ""}</span>
+                        </button>
                         <button
                           type="button"
                           onClick={() => setSettingsRoom(room)}
                           aria-label={`${isVietnamese ? "Cài đặt" : "Settings"} ${room.name}`}
                           title={isVietnamese ? "Cài đặt" : "Settings"}
-                          className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[10px] text-[var(--text-loft-muted)]"
+                          className="btn-press hover-invert flex h-11 w-11 items-center justify-center rounded-[10px] text-[var(--text-loft-muted)]"
                         >
                           <Settings2 aria-hidden="true" className="h-4 w-4" />
                         </button>
@@ -345,7 +406,7 @@ export default function HomePage() {
                           }}
                           aria-label={`${isVietnamese ? "Xóa phòng" : "Delete room"} ${room.name}`}
                           title={isVietnamese ? "Xóa phòng" : "Delete room"}
-                          className="btn-press hover-invert flex h-8 w-8 items-center justify-center rounded-[10px] text-[var(--text-loft-muted)]"
+                          className="btn-press hover-invert flex h-11 w-11 items-center justify-center rounded-[10px] text-[var(--text-loft-muted)]"
                         >
                           <Trash2 aria-hidden="true" className="h-4 w-4" />
                         </button>
@@ -360,6 +421,11 @@ export default function HomePage() {
                       <h3 className="break-words text-base font-medium tracking-tight">
                         {room.name}
                       </h3>
+                      {live[room.id] ? (
+                        <span className="mt-2">
+                          <LiveBadge count={live[room.id]} vi={isVietnamese} />
+                        </span>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-[var(--text-loft-muted)]">
                         <span className="inline-flex items-center gap-1.5">
                           <Users aria-hidden="true" className="h-3.5 w-3.5" />
@@ -398,6 +464,12 @@ export default function HomePage() {
                   </article>
                 ))}
 
+            {!isLoadingRooms && rooms.length > 0 && shownRooms.length === 0 ? (
+              <p className="py-6 text-[13px] text-[var(--text-loft-muted)] sm:col-span-2 lg:col-span-3">
+                {isVietnamese ? "Không có phòng nào khớp." : "No rooms match."}
+              </p>
+            ) : null}
+
             {!isLoadingRooms && rooms.length === 0 && !creating ? (
               <div className="workflow-panel rounded-[10px] px-6 py-14 text-center sm:col-span-2 lg:col-span-3">
                 <Users aria-hidden="true" className="mx-auto h-5 w-5" />
@@ -423,6 +495,24 @@ export default function HomePage() {
             ) : null}
           </div>
         </section>
+
+        {!isLoadingRooms && recent.length > 0 ? (
+          <section aria-labelledby="recent-rooms-heading" className="mt-12">
+            <div className="flex items-center justify-between border-b border-[var(--border-loft)] pb-3">
+              <h2 id="recent-rooms-heading" className="text-[13px] font-medium">
+                {isVietnamese ? "Phòng đã tham gia gần đây" : "Recently joined"}
+              </h2>
+              <span className="text-[13px] text-[var(--text-loft-muted)] tabular-nums">
+                {needle ? `${shownRecent.length} / ${recent.length}` : recent.length}
+              </span>
+            </div>
+            {shownRecent.length ? (
+              <RecentRooms rooms={shownRecent} live={live} vi={isVietnamese} onForget={(room) => void forgetRecent(room)} />
+            ) : (
+              <p className="py-6 text-[13px] text-[var(--text-loft-muted)]">{isVietnamese ? "Không có phòng nào khớp." : "No rooms match."}</p>
+            )}
+          </section>
+        ) : null}
       </section>
 
       <DeleteRoomDialog

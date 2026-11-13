@@ -112,6 +112,18 @@ LiveKit Cloud revokes existing tokens on `RemoveParticipant`; this implementatio
 
 The `/api/v1/admin/*` endpoints require a valid Supabase user JWT and a matching user UUID in the backend-only `ADMIN_USER_IDS` allowlist. An empty allowlist disables access. Admin responses expose profile names, IDs, account creation dates, room ownership, and room access settings; they do not expose emails, messages, or room password verifiers. The Go API enforces authorization on every request.
 
+Every admin request passes one gate (`adminGate`): authentication, the allowlist (denials are logged with the user ID and path), a per-admin budget (240 reads and 30 writes a minute, shared through Redis), and, when `ADMIN_REQUIRE_MFA=true`, an `aal2` JWT. A session without the second factor gets `ADMIN_MFA_REQUIRED`, and the admin page runs Supabase TOTP enrolment or verification in place rather than signing out.
+
+Admins also see the report queue (`/admin/reports`), per-account history (`/admin/users/{id}`: last active, rooms created and joined, messages sent, reports and audit entries), and can filter and export the audit log as CSV (newest 5,000 rows; free-text cells are prefixed to block spreadsheet formulas). Closing a report is one conditional update plus an audit row in the same transaction, so two admins cannot both resolve it.
+
+### Reports and account self-service
+
+- Any admitted participant, guest or member, can report another participant or the room (`POST /rooms/{id}/reports`). One open report per reporter and target; 10 an hour per identity. Reports have no foreign keys and outlive the room and both accounts.
+- `PATCH /users/me` sets a custom display name or hides the avatar. The choice lives in `profiles` because Google sign-in overwrites Supabase `user_metadata`; the JWT verifier applies it (fresh lookup, omits avatar on lookup failure), so REST and WebSocket agree.
+- `POST /users/me/deletion` (body `{"confirm":"DELETE"}`) schedules deletion after 14 days; `DELETE /users/me/deletion` cancels. A sweeper (`internal/accounts`) purges due accounts: it fences every owned room through the realtime hub, postpones by an hour while any is in use, and waits while the account is suspended so deletion cannot be used to escape a ban. The purge deletes `auth.users` (cascading to the profile and sessions); messages in other people's rooms are kept as "Deleted member".
+- `GET /users/me/export` returns profile, rooms, the newest 10,000 sent messages, call ratings and recent rooms as JSON (4 an hour).
+- A suspended member's `ACCOUNT_SUSPENDED` error carries the reason category and end date, never the admin note.
+
 
 Admin overview counts come from PostgreSQL, including accounts and rooms created in the last seven days. `open_rooms` means rooms without a durable ending record; it does not indicate connected participants. Room lists support `status=open|ended|moderated` and an exact `owner` UUID alongside search and pagination.
 

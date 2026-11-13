@@ -84,6 +84,14 @@ test.beforeEach(async ({ page }) => {
         ended_rooms: 332,
         new_users: 48,
         new_rooms: 19,
+        open_reports: 3,
+        suspended_users: 2,
+        pending_deletions: 1,
+        daily: Array.from({ length: 14 }, (_, i) => ({
+          date: `2026-11-${String(i + 1).padStart(2, "0")}`,
+          users: [3, 5, 4, 8, 6, 2, 1, 7, 9, 6, 4, 8, 11, 5][i],
+          rooms: [1, 2, 1, 3, 2, 0, 1, 2, 4, 2, 1, 3, 5, 2][i],
+        })),
       },
     }),
   );
@@ -120,6 +128,85 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+});
+
+test.beforeEach(async ({ page }) => {
+  await page.route(`**/api/v1/admin/users/${ownerID}`, (route) =>
+    route.fulfill({
+      json: {
+        id: ownerID,
+        display_name: "Minh Nguyen",
+        room_count: 2,
+        open_reports: 1,
+        created_at: "2026-09-01T01:00:00Z",
+        last_seen_at: "2026-11-12T08:00:00Z",
+        member_rooms: 3,
+        messages_sent: 41,
+        total_reports: 1,
+        reports_filed: 0,
+        history: [],
+        recent_reports: [],
+      },
+    }),
+  );
+  await page.route("**/api/v1/admin/reports?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 7,
+            reporter_type: "guest",
+            reporter_id: "44444444-4444-4444-8444-444444444444",
+            reporter_name: "Lan",
+            room_id: rooms[0].id,
+            room_name: rooms[0].name,
+            target_type: "user",
+            target_id: ownerID,
+            target_name: "Minh Nguyen",
+            reason: "spam",
+            details: "Posting links in chat",
+            status: "open",
+            created_at: "2026-11-12T09:00:00Z",
+            target_reports: 2,
+          },
+        ],
+        total: 1,
+        limit: 25,
+        offset: 0,
+      },
+    }),
+  );
+});
+
+test("admin hydrates with a saved English locale", async ({ page }) => {
+  const hydrationErrors: string[] = [];
+  const recordError = (message: string) => {
+    if (/hydration|did not match/i.test(message)) hydrationErrors.push(message);
+  };
+  page.on("pageerror", (error) => recordError(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") recordError(message.text());
+  });
+
+  await page.goto("/admin");
+  await expect(
+    page.locator("header").getByText("Admin", { exact: true }),
+  ).toBeAttached();
+  expect(hydrationErrors).toEqual([]);
+});
+
+test("report queue opens a decision with a required note", async ({ page }) => {
+  await page.goto("/admin?section=reports");
+  await expect(page.getByRole("heading", { name: "Minh Nguyen" })).toBeVisible();
+  await expect(page.getByText("Posting links in chat")).toBeVisible();
+  await page.getByRole("button", { name: "Mark actioned", exact: true }).click();
+  const save = page.getByRole("button", { name: "Save as actioned" });
+  await expect(save).toBeDisabled();
+  await page.getByRole("textbox", { name: /Moderation note/ }).fill("Warned the member about spam links");
+  await expect(save).toBeEnabled();
+  // The filter lives in the URL, so the view survives a reload.
+  await page.getByRole("button", { name: "Dismissed", exact: true }).click();
+  await expect(page).toHaveURL(/section=reports&status=dismissed/);
 });
 
 test("admin filters, owner drilldown, theme persistence and responsive layout", async ({
@@ -352,4 +439,50 @@ test("owner-ended rooms can be moderated and deleted decisions remain readable",
   await expect(
     page.getByRole("button", { name: "End room", exact: true }),
   ).toHaveCount(0);
+});
+
+test("admin can replace an unfinished MFA enrollment after reload", async ({ page }) => {
+  let unfinished: { id: string; friendly_name: string } | undefined;
+  const removed: string[] = [];
+  let enrollments = 0;
+  await page.route("**/api/v1/admin/overview", (route) =>
+    route.fulfill({ status: 403, json: { error: { code: "ADMIN_MFA_REQUIRED" } } }),
+  );
+  await page.route("**/auth/v1/user", (route) =>
+    route.fulfill({ json: {
+      ...user,
+      factors: unfinished ? [{ ...unfinished, factor_type: "totp", status: "unverified" }] : [],
+    } }),
+  );
+  await page.route("**/auth/v1/factors*", (route) => {
+    if (unfinished) {
+      return route.fulfill({ status: 422, json: { code: "mfa_factor_name_conflict" } });
+    }
+    unfinished = {
+      id: `factor-${++enrollments}`,
+      friendly_name: route.request().postDataJSON().friendly_name,
+    };
+    return route.fulfill({ json: {
+      ...unfinished, type: "totp",
+      totp: { qr_code: "<svg xmlns='http://www.w3.org/2000/svg'></svg>", secret: "TEST", uri: "otpauth://totp/test" },
+    } });
+  });
+  await page.route("**/auth/v1/factors/*", (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (route.request().method() !== "DELETE" || !unfinished || id !== unfinished.id) return route.abort();
+    removed.push(unfinished.id);
+    unfinished = undefined;
+    return route.fulfill({ json: { id } });
+  });
+
+  await page.goto("/admin");
+  const create = page.getByRole("button", { name: "Create QR code" });
+  const qr = page.getByRole("img", { name: "QR code to add Mingly to your authenticator app" });
+  await create.click();
+  await expect(qr).toBeVisible();
+  await page.reload();
+  await create.click();
+  await expect(qr).toBeVisible();
+  expect(removed).toEqual(["factor-1"]);
+  expect(enrollments).toBe(2);
 });

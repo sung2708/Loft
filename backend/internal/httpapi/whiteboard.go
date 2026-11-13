@@ -75,6 +75,10 @@ func (s *Server) whiteboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snapshot, err := repo.PatchBoard(r.Context(), room.ID, patch)
+	if errors.Is(err, domain.ErrRoomEnded) || errors.Is(err, domain.ErrNotFound) {
+		writeError(w, 404, "ROOM_NOT_FOUND", "Room not found")
+		return
+	}
 	if errors.Is(err, store.ErrBoardConflict) {
 		writeJSON(w, 409, snapshot)
 		return
