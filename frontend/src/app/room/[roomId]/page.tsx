@@ -5,19 +5,24 @@ import { useParams, useRouter } from "next/navigation";
 import { api, loadCredential, saveCredential } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
 import { RoomSession } from "@/features/room/RoomSession";
-import { PreJoin } from "@/features/room/PreJoin";
+import { PreJoin, type JoinMedia } from "@/features/room/PreJoin";
 import type { RoomCredential } from "@/types/api";
 import { useUIText } from "@/lib/i18n/uiText";
 import Link from "next/link";
 
 export default function ActiveRoomPage() {
+  const identifier = String(useParams<{ roomId: string }>().roomId);
+  return <RoomPage key={identifier} identifier={identifier} />;
+}
+
+function RoomPage({ identifier }: { identifier: string }) {
   const tr = useUIText();
   const router = useRouter();
-  const identifier = String(useParams<{ roomId: string }>().roomId);
+
   const [credential, setCredential] = useState<RoomCredential | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [roomName, setRoomName] = useState<string>();
-  const [joined, setJoined] = useState(false);
+  const [joined, setJoined] = useState<JoinMedia | null>(null);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -67,6 +72,7 @@ export default function ActiveRoomPage() {
           }
         }
 
+        if (!active) return;
         router.replace(`/join/${encodeURIComponent(room.slug)}`);
       } catch (caught) {
         if (active) {
@@ -120,8 +126,8 @@ export default function ActiveRoomPage() {
       <PreJoin
         roomName={roomName}
         displayName={credential.displayName}
-        onJoin={() => setJoined(true)}
+        onJoin={setJoined}
       />
     );
-  return <RoomSession credential={credential} />;
+  return <RoomSession credential={credential} joinMedia={joined} />;
 }

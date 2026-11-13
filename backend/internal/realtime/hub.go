@@ -2184,8 +2184,11 @@ func (h *Hub) writePump(ctx context.Context, c *client) error {
 			banCtx, banCancel := context.WithTimeout(ctx, 5*time.Second)
 			banErr := h.checkAccountSuspension(banCtx, c.identity)
 			banCancel()
-			if banErr != nil {
+			if errors.Is(banErr, domain.ErrAccountSuspended) {
 				return banErr
+			}
+			if banErr != nil {
+				h.logger.Warn("account suspension check failed", "error", banErr)
 			}
 			hostCtx, hostCancel := context.WithTimeout(ctx, time.Second)
 			_ = h.syncHost(hostCtx, h.roomSnapshot(c.roomID, domain.Room{ID: c.roomID}), "", "", 0)

@@ -130,3 +130,66 @@ test('Google login returns through callback to the invited room instead of home'
   await page.goto(`/auth/callback?code=mock-one-time-code`);
   await expect(page).toHaveURL(new RegExp(`/room/${publicRoom.slug}$`),{timeout:15000});
 });
+
+test("late admission response does not redirect after switching rooms", async ({ page }) => {
+  const nextRoom = { ...publicRoom, id: "58bb9fe4-79bc-41c7-9d63-61c04815b669", slug: "000002", name: "Second room" };
+  await signedIn(page);
+  await admissionRoutes(page, nextRoom);
+  await page.route(`**/api/v1/rooms/${publicRoom.slug}`, route => route.fulfill({ json: publicRoom }));
+  await page.route(`**/api/v1/rooms/${nextRoom.id}/join-requests`, route => route.fulfill({ json: { status: "approved" } }));
+
+  let started = false;
+  const release = Promise.withResolvers<void>();
+  await page.route(`**/api/v1/rooms/${publicRoom.id}/join-requests`, async route => {
+    started = true;
+    await release.promise;
+    await route.fulfill({ json: { status: "pending" } });
+  });
+
+  try {
+    await page.goto(`/room/${nextRoom.slug}`);
+    await expect(page.getByText(nextRoom.name, { exact: true })).toBeVisible();
+    await page.evaluate(admissionPath => {
+      const browser = window as unknown as {
+        next: { router: { replace(path: string): void } };
+        lateAdmission?: { handled: boolean; redirects: string[] };
+      };
+      const observation = { handled: false, redirects: [] as string[] };
+      browser.lateAdmission = observation;
+      const router = browser.next.router;
+      const replace = router.replace.bind(router);
+      router.replace = path => {
+        observation.redirects.push(path);
+        replace(path);
+      };
+      const json = Response.prototype.json;
+      Response.prototype.json = async function () {
+        const body = await json.call(this);
+        if (new URL(this.url).pathname === admissionPath) {
+          // Let the application's promise continuations handle the response first.
+          setTimeout(() => { observation.handled = true; }, 0);
+        }
+        return body;
+      };
+    }, `/api/v1/rooms/${publicRoom.id}/join-requests`);
+    await page.evaluate(path => {
+      (window as unknown as { next: { router: { push(path: string): void } } }).next.router.push(path);
+    }, `/room/${publicRoom.slug}`);
+    await expect.poll(() => started).toBe(true);
+    await page.evaluate(path => {
+      (window as unknown as { next: { router: { push(path: string): void } } }).next.router.push(path);
+    }, `/room/${nextRoom.slug}`);
+    await expect(page.getByText(nextRoom.name, { exact: true })).toBeVisible();
+    release.resolve();
+    await page.waitForFunction(() =>
+      (window as unknown as { lateAdmission?: { handled: boolean } }).lateAdmission?.handled,
+    );
+    expect(await page.evaluate(() =>
+      (window as unknown as { lateAdmission: { redirects: string[] } }).lateAdmission.redirects,
+    )).not.toContain(`/join/${publicRoom.slug}`);
+    await expect(page.getByText(nextRoom.name, { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/room/${nextRoom.slug}$`));
+  } finally {
+    release.resolve();
+  }
+});

@@ -1,5 +1,6 @@
 "use client";
 
+import { finishRoomCapture, stopPublishedTracks } from "./roomCapture";
 import {
   createContext,
   useCallback,
@@ -59,7 +60,7 @@ import { hasActiveScreenShare } from "./screenShare";
 import { ScreenShareViewport } from "./ScreenShareViewport";
 import type { RoomCommandType } from "@/types/room";
 import { useMediaPrefsStore } from "@/stores/useMediaPrefsStore";
-import { ROOM_MEDIA_KEY } from "./PreJoin";
+import type { JoinMedia } from "./PreJoin";
 import { usePushToTalk } from "./pushToTalk";
 
 const currentText = (english: string) =>
@@ -104,7 +105,13 @@ const SessionContext = createContext<SessionValue>({
 });
 export const useRoomSession = () => useContext(SessionContext);
 
-export function RoomSession({ credential }: { credential: RoomCredential }) {
+export function RoomSession({ credential, joinMedia }: { credential: RoomCredential; joinMedia: JoinMedia }) {
+  const pendingJoinMedia = useRef<JoinMedia | null>(joinMedia);
+  const consumeJoinMedia = useCallback(() => {
+    const media = pendingJoinMedia.current;
+    pendingJoinMedia.current = null;
+    return media;
+  }, []);
   const router = useRouter();
   const socketRef = useRef<RoomSocket | null>(null);
   const [liveKitToken, setLiveKitToken] = useState<string | null>(null);
@@ -398,10 +405,10 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           dynacast: true,
           videoCaptureDefaults: {
             resolution: { width: 1280, height: 720, frameRate: 30 },
-            deviceId: capture.videoDeviceId,
+            deviceId: capture.videoDeviceId ? { ideal: capture.videoDeviceId } : undefined,
           },
           audioCaptureDefaults: {
-            deviceId: capture.audioDeviceId,
+            deviceId: capture.audioDeviceId ? { ideal: capture.audioDeviceId } : undefined,
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
@@ -421,6 +428,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
         }
       >
         <LiveMediaContext
+          consumeJoinMedia={consumeJoinMedia}
           sendChat={sendChat}
           sendCommand={sendCommand}
           leave={leave}
@@ -459,6 +467,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
 }
 
 function LiveMediaContext({
+  consumeJoinMedia,
   sendChat,
   sendCommand,
   leave,
@@ -470,6 +479,7 @@ function LiveMediaContext({
   SessionValue,
   "sendChat" | "sendCommand" | "leave" | "mediaError" | "token" | "credential"
 > & {
+  consumeJoinMedia: () => JoinMedia | null;
   setMediaError: (message: string | null) => void;
 }) {
   const {
@@ -480,6 +490,23 @@ function LiveMediaContext({
   } = useLocalParticipant();
   const connectionState = useConnectionState();
   const liveRoom = useRoomContext();
+  const captureLifetime = useRef(new AbortController());
+  const stopLocalTracks = useCallback(() => {
+    stopPublishedTracks(liveRoom.localParticipant.trackPublications.values());
+  }, [liveRoom]);
+  const runCapture = useCallback(
+    (capture: Parameters<typeof finishRoomCapture>[1]) =>
+      finishRoomCapture(captureLifetime.current.signal, capture, stopLocalTracks),
+    [stopLocalTracks],
+  );
+  const releaseCapture = useCallback(() => {
+    captureLifetime.current.abort();
+    stopLocalTracks();
+  }, [stopLocalTracks]);
+  useEffect(() => {
+    captureLifetime.current = new AbortController();
+    return releaseCapture;
+  }, [releaseCapture]);
   const initialized = useRef(false);
   const isTogglingMic = useRef(false);
   const isTogglingCamera = useRef(false);
@@ -498,13 +525,13 @@ function LiveMediaContext({
   const setPushToTalkMic = useCallback(
     async (enabled: boolean) => {
       try {
-        await localParticipant.setMicrophoneEnabled(enabled);
+        await runCapture(() => localParticipant.setMicrophoneEnabled(enabled));
       } catch (error) {
         setMediaError(formatMediaError(error, "mic"));
         throw error;
       }
     },
-    [localParticipant, setMediaError],
+    [runCapture, localParticipant, setMediaError],
   );
   usePushToTalk({
     enabled: pushToTalk && connected && isSecureMediaContext(),
@@ -531,30 +558,19 @@ function LiveMediaContext({
     if (initialized.current || connectionState !== ConnectionState.Connected)
       return;
     initialized.current = true;
-    if (!isSecureMediaContext()) {
-      sessionStorage.removeItem(ROOM_MEDIA_KEY);
-      return;
+    const preferences = consumeJoinMedia();
+    if (!preferences || !isSecureMediaContext()) return;
+    if (preferences.mic && !useMediaPrefsStore.getState().pushToTalk) {
+      void runCapture(() => localParticipant.setMicrophoneEnabled(true)).catch((error) => {
+        setMediaError(formatMediaError(error, "mic"));
+      });
     }
-    try {
-      const preferences = JSON.parse(
-        sessionStorage.getItem(ROOM_MEDIA_KEY) ?? "{}",
-      ) as { mic?: boolean; camera?: boolean };
-      if (preferences.mic && !useMediaPrefsStore.getState().pushToTalk) {
-        void localParticipant.setMicrophoneEnabled(true).catch((error) => {
-          sessionStorage.removeItem(ROOM_MEDIA_KEY);
-          setMediaError(formatMediaError(error, "mic"));
-        });
-      }
-      if (preferences.camera) {
-        void localParticipant.setCameraEnabled(true).catch((error) => {
-          sessionStorage.removeItem(ROOM_MEDIA_KEY);
-          setMediaError(formatMediaError(error, "camera"));
-        });
-      }
-    } catch {
-      /* use safe media defaults */
+    if (preferences.camera) {
+      void runCapture(() => localParticipant.setCameraEnabled(true)).catch((error) => {
+        setMediaError(formatMediaError(error, "camera"));
+      });
     }
-  }, [localParticipant, connectionState, setMediaError]);
+  }, [consumeJoinMedia, runCapture, localParticipant, connectionState, setMediaError]);
 
   const value = useMemo<SessionValue>(
     () => ({
@@ -568,17 +584,9 @@ function LiveMediaContext({
       sendChat,
       sendCommand,
       leave: () => {
-        // Once signaling has already failed, LiveKit cannot send a leave
-        // request. Unmounting the provider is enough to close local media;
-        // attempting a second leave only produces a misleading console error.
-        if (connectionState !== ConnectionState.Connected) {
-          leave();
-          return;
-        }
-        void liveRoom
-          .disconnect()
-          .catch(() => undefined)
-          .finally(leave);
+        releaseCapture();
+        void liveRoom.disconnect(true).catch(() => undefined);
+        leave();
       },
       mediaError,
       clearMediaError: () => setMediaError(null),
@@ -598,7 +606,7 @@ function LiveMediaContext({
             );
             return;
           }
-          await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+          await runCapture(() => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled));
           playSfx(isMicrophoneEnabled ? "mute" : "unmute");
           setMediaError(null);
         } catch (error) {
@@ -620,7 +628,7 @@ function LiveMediaContext({
             );
             return;
           }
-          await localParticipant.setCameraEnabled(!isCameraEnabled);
+          await runCapture(() => localParticipant.setCameraEnabled(!isCameraEnabled));
           playSfx(isCameraEnabled ? "camera-off" : "camera-on");
           setMediaError(null);
         } catch (error) {
@@ -644,7 +652,7 @@ function LiveMediaContext({
           }
           const motion =
             useMediaPrefsStore.getState().screenShareMode === "motion";
-          await localParticipant.setScreenShareEnabled(
+          await runCapture(() => localParticipant.setScreenShareEnabled(
             !isScreenShareEnabled,
             {
               audio: true,
@@ -663,7 +671,7 @@ function LiveMediaContext({
               // 540p layer, which makes shared text unreadable.
               simulcast: false,
             },
-          );
+          ));
           playSfx(isScreenShareEnabled ? "screen-end" : "screen-start");
           setMediaError(null);
         } catch (error) {
@@ -674,6 +682,8 @@ function LiveMediaContext({
       },
     }),
     [
+      runCapture,
+      releaseCapture,
       sendChat,
       connectionState,
       liveRoom,
