@@ -486,3 +486,14 @@ test("admin can replace an unfinished MFA enrollment after reload", async ({ pag
   expect(removed).toEqual(["factor-1"]);
   expect(enrollments).toBe(2);
 });
+
+test("admin navigation stays visible while scrolling", async ({ page }) => {
+  await page.goto("/admin");
+  await expect(page.getByRole("navigation", { name: "Administration" })).toBeVisible();
+  await page.addStyleTag({ content: ".admin-layout { min-height: 250vh; }" });
+  await page.evaluate(() => window.scrollTo(0, 400));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect.poll(async () =>
+    Math.round((await page.locator(".admin-sidebar").boundingBox())?.y ?? -1),
+  ).toBe(0);
+});

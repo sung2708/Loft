@@ -120,6 +120,21 @@ export const useAuthStore = create<AuthStore>((set) => ({
         return;
       }
 
+      if (event === "MFA_CHALLENGE_VERIFIED") {
+        authRevision += 1;
+        set(({ authState }) => ({
+          authState: {
+            status: "authenticated",
+            user: session.user,
+            session,
+            identity: authState.status === "authenticated" && authState.user.id === session.user.id
+              ? authState.identity
+              : null,
+          },
+        }));
+        return;
+      }
+
       if (
         event === "SIGNED_IN" ||
         event === "TOKEN_REFRESHED" ||
