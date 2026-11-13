@@ -45,15 +45,17 @@ func TestPostgresModerationAtomicAndImmutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	if _, err = pool.Exec(ctx, `CREATE TYPE identity_type AS ENUM ('user','guest'); CREATE TABLE messages(id uuid DEFAULT gen_random_uuid(), room_id uuid, sender_user_id uuid, sender_guest_id uuid, sender_type identity_type, sender_display_name text, sender_avatar_url text, content text, created_at timestamptz DEFAULT now()); CREATE TABLE profiles(id uuid PRIMARY KEY, display_name text); CREATE TABLE rooms(id uuid PRIMARY KEY, short_code text, invite_code text, name text, owner_id uuid, allow_guests boolean, is_locked boolean, password_required boolean, created_at timestamptz DEFAULT now()); CREATE TABLE room_endings(room_id uuid PRIMARY KEY REFERENCES rooms(id));`); err != nil {
+	if _, err = pool.Exec(ctx, `CREATE TYPE identity_type AS ENUM ('user','guest'); CREATE TABLE messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), room_id uuid, sender_user_id uuid, sender_guest_id uuid, sender_type identity_type, sender_display_name text, sender_avatar_url text, content text, created_at timestamptz DEFAULT now()); CREATE TABLE profiles(id uuid PRIMARY KEY, display_name text); CREATE TABLE rooms(id uuid PRIMARY KEY, short_code text, invite_code text, name text, owner_id uuid, allow_guests boolean, is_locked boolean, password_required boolean, created_at timestamptz DEFAULT now()); CREATE TABLE room_endings(room_id uuid PRIMARY KEY REFERENCES rooms(id));`); err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../migrations/000015_room_moderation.up.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, string(migration)); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"000015_room_moderation", "000017_chat_replies_edits", "000018_account_bans", "000020_message_revision"} {
+		migration, err := os.ReadFile("../../migrations/" + name + ".up.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(migration)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	repo := &Postgres{pool: pool}
 	room, actor := uuid.NewString(), uuid.NewString()
@@ -68,8 +70,24 @@ func TestPostgresModerationAtomicAndImmutable(t *testing.T) {
 		t.Fatal("invalid decision ended room", err)
 	}
 	guest := domain.Identity{ID: uuid.NewString(), Type: domain.IdentityGuest, DisplayName: "Guest"}
-	if _, err = repo.InsertMessage(ctx, room, guest, "before closure"); err != nil {
+	message, err := repo.InsertMessage(ctx, room, guest, "before closure")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if message.Revision != 0 {
+		t.Fatalf("initial revision: %d", message.Revision)
+	}
+	edited, err := repo.EditMessage(ctx, room, message.ID, guest, "edited")
+	if err != nil || edited.Revision != 1 {
+		t.Fatalf("edit revision: %+v, %v", edited, err)
+	}
+	deleted, err := repo.DeleteMessage(ctx, room, message.ID, guest)
+	if err != nil || deleted.Revision != 2 || !deleted.Deleted || deleted.Content != "" {
+		t.Fatalf("delete revision: %+v, %v", deleted, err)
+	}
+	history, err := repo.RecentMessages(ctx, room, 10)
+	if err != nil || len(history) != 1 || history[0].Revision != 2 {
+		t.Fatalf("snapshot revision: %+v, %v", history, err)
 	}
 	if err = repo.ModerateRoom(ctx, room, actor, "policy", "Documented policy violation"); err != nil {
 		t.Fatal(err)

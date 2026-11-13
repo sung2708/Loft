@@ -31,6 +31,10 @@ type mediaState struct {
 	Version     uint64         `json:"version"`
 	Autoplay    bool           `json:"autoplay"`
 	Unavailable string         `json:"unavailable,omitempty"`
+	// SkipVotes holds LiveKit identities voting to skip SkipVotesFor (a track
+	// id). Votes for any other track are stale and ignored.
+	SkipVotes    []string `json:"skip_votes,omitempty"`
+	SkipVotesFor string   `json:"skip_votes_for,omitempty"`
 }
 
 type mediaCommand struct {
@@ -64,6 +68,7 @@ func parseYouTubeID(raw string) (string, error) {
 
 func (m mediaState) snapshot() mediaState {
 	m.Queue = append([]youtubeTrack{}, m.Queue...)
+	m.SkipVotes = append([]string(nil), m.SkipVotes...)
 	if m.Current != nil {
 		current := *m.Current
 		m.Current = &current
@@ -319,6 +324,7 @@ func (m *mediaState) applyMedia(kind string, raw json.RawMessage, room domain.Ro
 }
 
 func (m *mediaState) advance(now time.Time) {
+	m.SkipVotes, m.SkipVotesFor = nil, ""
 	if len(m.Queue) == 0 {
 		m.Current = nil
 		m.Status = "IDLE"

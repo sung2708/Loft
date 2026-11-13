@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { LazyCallFeedbackPrompt } from "@/components/feedback/LazyCallFeedbackPrompt";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -133,6 +134,7 @@ export default function LobbyPage() {
 
   return (
     <div className="app-canvas lobby-canvas min-h-screen w-full flex flex-col text-[var(--text-loft-primary)] overflow-x-hidden selection:bg-[#101113]/30">
+      <LazyCallFeedbackPrompt />
       {/* Top Shared Lobby Header */}
       <LobbyHeader />
 

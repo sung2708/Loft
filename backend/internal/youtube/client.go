@@ -38,6 +38,9 @@ func (c Client) Search(ctx context.Context, query string) (SearchResponse, error
 	v := u.Query()
 	v.Set("part", "snippet")
 	v.Set("type", "video")
+	// Videos that refuse embedding fail in the room player (errors 101/150).
+	v.Set("videoEmbeddable", "true")
+	v.Set("videoSyndicated", "true")
 	v.Set("maxResults", strconv.Itoa(limit))
 	v.Set("q", q)
 	v.Set("key", c.APIKey)

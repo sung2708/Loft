@@ -280,3 +280,43 @@ func TestLiveHostRecoveryAfterLeaseExpiry(t *testing.T) {
 		t.Fatalf("reconciliation changed host: %+v, %v", again, err)
 	}
 }
+
+func TestSlowSuspensionDoesNotBlockRoomEvents(t *testing.T) {
+	b, err := NewRedisBus("redis://localhost:6379", "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	entered := make(chan struct{}, 1)
+	b.mediaHandler = func(ctx context.Context, request mediaRPCRequest) mediaRPCResponse {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return mediaRPCResponse{}
+	}
+	b.wg.Add(1)
+	go b.rpcWorker(ctx)
+	defer func() { cancel(); b.wg.Wait() }()
+	packet := interNodeEvent{RoomID: accountModerationScope, Data: event("account.changed", accountModerationScope, accountChanged{UserID: "user"})}
+	delivered := 0
+	deliver := func(string, []byte) { delivered++ }
+	b.dispatchEvent(packet, deliver)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+	for i := 0; i < 140; i++ {
+		b.dispatchEvent(packet, deliver)
+	}
+	b.dispatchEvent(interNodeEvent{RoomID: "room", Data: event("chat.message", "room", domain.Message{})}, deliver)
+	if delivered != 1 {
+		t.Fatal("room event blocked")
+	}
+	if len(b.rpcRequests) != cap(b.rpcRequests) {
+		t.Fatal("notification queue was not bounded")
+	}
+}

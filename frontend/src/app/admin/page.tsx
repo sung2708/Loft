@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  ScrollText,
   Users,
   X,
 } from "lucide-react";
@@ -21,11 +22,14 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { ApiError, api } from "@/lib/api";
 import { useTranslation } from "@/lib/i18n/useTranslation";
 import { useUIStore } from "@/stores/useUIStore";
-import type { AdminOverview, AdminRoom, AdminUser } from "@/types/api";
+import type { AdminAuditEntry, AdminOverview, AdminRoom, AdminUser, CallQualitySummary } from "@/types/api";
 import "./admin.css";
 
-type Section = "overview" | "rooms" | "users";
+type Section = "overview" | "rooms" | "users" | "audit";
 const PAGE_SIZE = 25;
+
+const activeUserFor = (item: AdminRoom | AdminUser | null): item is AdminUser =>
+  !!item && "display_name" in item;
 
 export default function AdminPage() {
   const {
@@ -50,6 +54,10 @@ export default function AdminPage() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [rooms, setRooms] = useState<AdminRoom[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [audit, setAudit] = useState<AdminAuditEntry[]>([]);
+  const [quality, setQuality] = useState<CallQualitySummary | null>(null);
+  const [suspendDays, setSuspendDays] = useState(7);
+  const [confirmSuspend, setConfirmSuspend] = useState(false);
   const [total, setTotal] = useState(0);
   const [updated, setUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState(true);
@@ -88,13 +96,22 @@ export default function AdminPage() {
       setError(null);
       try {
         if (section === "overview") {
-          const [summary, recent] = await Promise.all([
+          const [summary, recent, callQuality] = await Promise.all([
             api.adminOverview(token),
             api.adminRooms(token, "", 6),
+            // Optional: the dashboard still loads if feedback is unavailable.
+            api.adminCallQuality(token).catch(() => null),
           ]);
           if (active) {
             setOverview(summary);
             setRooms(recent.items);
+            setQuality(callQuality);
+          }
+        } else if (section === "audit") {
+          const result = await api.adminAudit(token, PAGE_SIZE, page * PAGE_SIZE);
+          if (active) {
+            setAudit(result.items);
+            setTotal(result.total);
           }
         } else if (section === "users") {
           const result = await api.adminUsers(
@@ -167,9 +184,47 @@ export default function AdminPage() {
     setReason("");
     setNote("");
     setConfirmEnd(false);
+    setConfirmSuspend(false);
+    setSuspendDays(7);
     setActionError("");
     setNotice("");
   };
+  const suspendUser = async () => {
+    if (!activeUserFor(selected) || !token || pending || !reason || note.trim().length < 10) return;
+    setPending(true);
+    setActionError("");
+    try {
+      await api.adminSuspendUser(token, selected!.id, reason, note.trim(), suspendDays);
+      setSelected(null);
+      setRevision((v) => v + 1);
+      setNotice(t("Đã tạm khóa tài khoản", "Account suspended"));
+    } catch {
+      setActionError(t("Không tạm khóa được. Hãy thử lại.", "Could not suspend. Try again."));
+    } finally {
+      setPending(false);
+    }
+  };
+  const liftSuspension = async () => {
+    if (!activeUserFor(selected) || !token || pending) return;
+    setPending(true);
+    setActionError("");
+    try {
+      await api.adminLiftSuspension(token, selected!.id);
+      setSelected(null);
+      setRevision((v) => v + 1);
+      setNotice(t("Đã gỡ tạm khóa", "Suspension lifted"));
+    } catch {
+      setActionError(t("Không gỡ được. Hãy thử lại.", "Could not lift. Try again."));
+    } finally {
+      setPending(false);
+    }
+  };
+  const auditAction = (action: string) =>
+    ({
+      "account.suspend": t("Tạm khóa tài khoản", "Suspended account"),
+      "account.unsuspend": t("Gỡ tạm khóa", "Lifted suspension"),
+      "room.end": t("Kết thúc phòng", "Ended room"),
+    })[action] ?? action;
   const date = (value: string) =>
     new Intl.DateTimeFormat(locale, {
       day: "numeric",
@@ -241,6 +296,7 @@ export default function AdminPage() {
     },
     { id: "rooms" as const, label: t("Phòng", "Rooms"), icon: DoorOpen },
     { id: "users" as const, label: t("Người dùng", "Users"), icon: Users },
+    { id: "audit" as const, label: t("Nhật ký", "Audit log"), icon: ScrollText },
   ];
   const activeRoom = selected && "code" in selected ? selected : null;
   const activeUser = selected && "display_name" in selected ? selected : null;
@@ -515,6 +571,39 @@ export default function AdminPage() {
                       ),
                     )}
                   </section>
+                  {quality && (
+                    <section className="admin-panel">
+                      <div className="admin-panel-heading">
+                        <div>
+                          <h2>{t("Chất lượng cuộc gọi", "Call quality")}</h2>
+                          <p>{t("7 ngày gần nhất", "Last 7 days")}</p>
+                        </div>
+                      </div>
+                      <dl className="admin-details">
+                        <dt>{t("Lượt đánh giá", "Ratings")}</dt>
+                        <dd className="tabular-nums">{quality.responses.toLocaleString(locale)}</dd>
+                        <dt>{t("Điểm trung bình", "Average rating")}</dt>
+                        <dd className="tabular-nums">
+                          {quality.responses ? `${quality.average_rating.toFixed(2)} / 5` : "—"}
+                        </dd>
+                        <dt>{t("Đánh giá thấp (≤2)", "Low ratings (≤2)")}</dt>
+                        <dd className="tabular-nums">{quality.low_ratings.toLocaleString(locale)}</dd>
+                        <dt>{t("Thời gian mạng kém", "Time on poor network")}</dt>
+                        <dd className="tabular-nums">{(quality.poor_share * 100).toFixed(1)}%</dd>
+                        {Object.keys(quality.tags).length > 0 && (
+                          <>
+                            <dt>{t("Vấn đề hay gặp", "Reported issues")}</dt>
+                            <dd>
+                              {Object.entries(quality.tags)
+                                .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))
+                                .map(([tag, count]) => `${tag} (${count})`)
+                                .join(" · ")}
+                            </dd>
+                          </>
+                        )}
+                      </dl>
+                    </section>
+                  )}
                   <section className="admin-panel">
                     <div className="admin-panel-heading">
                       <div>
@@ -610,7 +699,47 @@ export default function AdminPage() {
                       </button>
                     </div>
                   )}
-                  {section === "rooms" ? (
+                  {section === "audit" ? (
+                    <div className="admin-table-wrap">
+                      <table className="admin-table">
+                        <caption className="sr-only">{t("Nhật ký quản trị", "Admin audit log")}</caption>
+                        <thead>
+                          <tr>
+                            <th>{t("Thao tác", "Action")}</th>
+                            <th>{t("Đối tượng", "Target")}</th>
+                            <th>{t("Người xử lý", "Administrator")}</th>
+                            <th>{t("Thời điểm", "When")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {audit.map((entry) => (
+                            <tr key={entry.id}>
+                              <td>
+                                <span className="admin-truncate">{auditAction(entry.action)}</span>
+                                {entry.reason && (
+                                  <span className="admin-sub">
+                                    {reasons.find(([id]) => id === entry.reason)?.[1] ?? entry.reason}
+                                  </span>
+                                )}
+                              </td>
+                              <td>
+                                <span className="admin-sub mono">{entry.target_id}</span>
+                              </td>
+                              <td>
+                                <span className="admin-truncate">{entry.actor_name || "—"}</span>
+                              </td>
+                              <td>
+                                <time dateTime={entry.created_at}>{date(entry.created_at)}</time>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {!audit.length && (
+                        <p className="admin-empty">{t("Chưa có thao tác nào.", "No actions yet.")}</p>
+                      )}
+                    </div>
+                  ) : section === "rooms" ? (
                     roomTable()
                   ) : (
                     <div className="admin-table-wrap">
@@ -640,6 +769,12 @@ export default function AdminPage() {
                                 >
                                   {user.display_name}
                                 </button>
+                                {user.suspension && (
+                                  <span className="admin-badge ml-2">
+                                    <span />
+                                    {t("Tạm khóa", "Suspended")}
+                                  </span>
+                                )}
                                 <span className="admin-sub mono">
                                   {user.id}
                                 </span>
@@ -790,6 +925,23 @@ export default function AdminPage() {
                 <>
                   <dt>{t("Phòng đã tạo", "Rooms created")}</dt>
                   <dd>{activeUser?.room_count}</dd>
+                  {activeUser.suspension && (
+                    <>
+                      <dt>{t("Tạm khóa đến", "Suspended until")}</dt>
+                      <dd>
+                        {activeUser.suspension.expires_at
+                          ? date(activeUser.suspension.expires_at)
+                          : t("Vĩnh viễn", "Permanent")}
+                      </dd>
+                      <dt>{t("Lý do", "Reason")}</dt>
+                      <dd>
+                        {reasons.find(([id]) => id === activeUser.suspension?.reason)?.[1] ??
+                          activeUser.suspension.reason}
+                      </dd>
+                      <dt>{t("Ghi chú", "Note")}</dt>
+                      <dd className="whitespace-pre-wrap">{activeUser.suspension.note}</dd>
+                    </>
+                  )}
                 </>
               ) : null}
               <dt>
@@ -816,6 +968,86 @@ export default function AdminPage() {
                 {t("Xem phòng", "View rooms")}
                 <ArrowUpRight size={15} />
               </button>
+            )}
+            {activeUser && (
+              <div className="admin-danger-zone">
+                {activeUser.suspension ? (
+                  <button
+                    className="admin-button"
+                    disabled={pending}
+                    onClick={() => void liftSuspension()}
+                  >
+                    {pending ? t("Đang gỡ…", "Lifting…") : t("Gỡ tạm khóa", "Lift suspension")}
+                  </button>
+                ) : confirmSuspend ? (
+                  <>
+                    <h3>{t("Tạm khóa tài khoản này?", "Suspend this account?")}</h3>
+                    <p>
+                      {t(
+                        "Người dùng bị ngắt khỏi mọi phòng và không thể đăng nhập dùng dịch vụ cho đến khi hết hạn hoặc được gỡ.",
+                        "The user is disconnected from every room and blocked until the suspension ends or is lifted.",
+                      )}
+                    </p>
+                    <label className="block mb-4">
+                      {t("Thời hạn", "Duration")}
+                      <select
+                        className="admin-select block w-full mt-2"
+                        value={suspendDays}
+                        disabled={pending}
+                        onChange={(e) => setSuspendDays(Number(e.target.value))}
+                      >
+                        <option value={1}>{t("1 ngày", "1 day")}</option>
+                        <option value={7}>{t("7 ngày", "7 days")}</option>
+                        <option value={30}>{t("30 ngày", "30 days")}</option>
+                        <option value={0}>{t("Vĩnh viễn", "Permanent")}</option>
+                      </select>
+                    </label>
+                    <label className="block mb-4">
+                      {t("Lý do xử lý", "Moderation reason")}
+                      <select
+                        className="admin-select block w-full mt-2"
+                        value={reason}
+                        disabled={pending}
+                        onChange={(e) => setReason(e.target.value)}
+                      >
+                        <option value="">{t("Chọn lý do", "Select reason")}</option>
+                        {reasons.map(([id, label]) => (
+                          <option key={id} value={id}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block mb-4">
+                      {t("Ghi chú xử lý", "Moderation note")}
+                      <textarea
+                        className="block w-full mt-2 rounded-lg border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3 text-[var(--text-loft-primary)]"
+                        value={note}
+                        disabled={pending}
+                        minLength={10}
+                        maxLength={1000}
+                        rows={3}
+                        onChange={(e) => setNote(e.target.value)}
+                      />
+                    </label>
+                    <div className="flex gap-2">
+                      <button className="admin-button" disabled={pending} onClick={() => setConfirmSuspend(false)}>
+                        {t("Hủy", "Cancel")}
+                      </button>
+                      <button
+                        className="admin-button admin-danger"
+                        disabled={pending || !reason || note.trim().length < 10}
+                        onClick={() => void suspendUser()}
+                      >
+                        {pending ? t("Đang khóa…", "Suspending…") : t("Tạm khóa", "Suspend")}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button className="admin-button admin-danger" onClick={() => setConfirmSuspend(true)}>
+                    {t("Tạm khóa", "Suspend")}
+                  </button>
+                )}
+                {actionError && <p role="alert">{actionError}</p>}
+              </div>
             )}
             {activeRoom?.moderation && (
               <section

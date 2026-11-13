@@ -201,14 +201,19 @@ type HostAuthority struct {
 }
 
 type Message struct {
-	ID                string       `json:"id"`
-	RoomID            string       `json:"room_id"`
-	SenderID          string       `json:"sender_id"`
-	SenderType        IdentityType `json:"sender_type"`
-	SenderDisplayName string       `json:"sender_display_name"`
-	SenderAvatarURL   string       `json:"sender_avatar_url,omitempty"`
-	Content           string       `json:"content"`
-	CreatedAt         time.Time    `json:"created_at"`
+	Revision          uint64        `json:"revision"`
+	ID                string        `json:"id"`
+	RoomID            string        `json:"room_id"`
+	SenderID          string        `json:"sender_id"`
+	SenderType        IdentityType  `json:"sender_type"`
+	SenderDisplayName string        `json:"sender_display_name"`
+	SenderAvatarURL   string        `json:"sender_avatar_url,omitempty"`
+	Content           string        `json:"content"`
+	CreatedAt         time.Time     `json:"created_at"`
+	ReplyTo           *MessageReply `json:"reply_to,omitempty"`
+	EditedAt          *time.Time    `json:"edited_at,omitempty"`
+	// Deleted messages keep their row (and history) but never expose content.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 type CreateRoomParams struct {
@@ -240,10 +245,11 @@ type AdminOverview struct {
 }
 
 type AdminUser struct {
-	ID          string    `json:"id"`
-	DisplayName string    `json:"display_name"`
-	CreatedAt   time.Time `json:"created_at"`
-	RoomCount   int       `json:"room_count"`
+	ID          string      `json:"id"`
+	DisplayName string      `json:"display_name"`
+	CreatedAt   time.Time   `json:"created_at"`
+	RoomCount   int         `json:"room_count"`
+	Suspension  *AccountBan `json:"suspension,omitempty"`
 }
 
 type RoomModeration struct {

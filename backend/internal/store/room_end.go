@@ -21,7 +21,8 @@ func (p *Postgres) ModerateRoom(ctx context.Context, roomID, actorID, reason, no
 	var exists bool
 	err := p.pool.QueryRow(ctx, `WITH target AS (SELECT id FROM rooms WHERE id=$1 FOR UPDATE),
  decision AS (INSERT INTO room_moderation(room_id,actor_id,reason,note) SELECT id,$2,$3,$4 FROM target ON CONFLICT DO NOTHING),
- ending AS (INSERT INTO room_endings(room_id) SELECT id FROM target ON CONFLICT DO NOTHING)
+ ending AS (INSERT INTO room_endings(room_id) SELECT id FROM target ON CONFLICT DO NOTHING),
+ audit AS (INSERT INTO admin_audit_log(actor_id,action,target_type,target_id,reason,note) SELECT $2,'room.end','room',id::text,$3,$4 FROM target)
  SELECT EXISTS(SELECT 1 FROM target)`, roomID, actorID, reason, note).Scan(&exists)
 	if err != nil {
 		return err

@@ -120,6 +120,12 @@ replay missed access events.
 - **Validation**: 1–2000 runes, trimmed. Rate limit: 5 msgs / 3s.
 - **Source of Truth**: PostgreSQL `messages` table.
 
+#### `chat.edit` / `chat.delete` → `chat.updated`
+- Edit payload: `{ "message_id": "uuid", "content": "Updated text" }`; delete payload: `{ "message_id": "uuid" }`.
+- PostgreSQL increments each message's `revision` on edit or deletion, in the same transaction as the audit record.
+- Message snapshots and quoted parents include `revision`. Clients ignore older revisions, retain deleted state, and reconcile updates that arrive before the original message.
+- Deleted messages expose empty content. Only the author may edit; the author or room owner may delete.
+
 #### `reaction.send` → `reaction.sent`
 - **Direction**: `reaction.send` (Client → Server) → `reaction.sent` (Server → Client Broadcast)
 - **Payload**: `{ "emoji": "🔥" }`
@@ -252,3 +258,11 @@ Domain Hierarchy:
 ### Room ending
 
 Only the durable owner can call `POST /api/v1/rooms/{roomID}/end`. PostgreSQL records the ending without deleting room/history/board rows. `room.ended` has an empty typed payload and is terminal: clients close signaling and unmount media, then show the ended-room page. Redis distributes the terminal event; a PostgreSQL check on heartbeat repairs a missed notification. `room.leave` remains local to the caller and never ends the room. Ended invite lookups and token/session issuance return `410 ROOM_ENDED`.
+
+### Skip vote reconciliation
+
+`media.skip_vote` names the current `track_id`. Votes count only identities in
+the current presence list. The media owner rechecks the majority after departures
+and on periodic connection checks; followers forward reconciliation to that owner.
+A failed distributed presence lookup leaves votes unchanged instead of counting
+only the local node's participants.

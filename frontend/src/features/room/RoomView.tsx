@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Pencil,
+  Reply,
+  Trash2,
   Check,
   Copy,
   Crown,
@@ -27,7 +29,8 @@ import {
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/AppHeader";
-import { useChatStore } from "@/stores/useChatStore";
+import { activeTypers, useChatStore } from "@/stores/useChatStore";
+import type { ApiMessage } from "@/types/api";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { EmptyStage, MediaStage, useRoomSession } from "./RoomSession";
@@ -48,6 +51,8 @@ import { RoomAtmosphere } from "./RoomAtmosphere";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { api, clearCredential } from "@/lib/api";
 import { useMobileDrawerFocus } from "./useMobileDrawerFocus";
+import { useMediaPrefsStore } from "@/stores/useMediaPrefsStore";
+import { isEditableTarget } from "./pushToTalk";
 
 const Whiteboard = dynamic(() => import("./Whiteboard"), { ssr: false });
 
@@ -356,7 +361,11 @@ function RoomHeader() {
 
 function ConnectionBadge() {
   const tr = useUIText();
-  const state = useRoomStore((item) => item.connectionState);
+  const socketState = useRoomStore((item) => item.connectionState);
+  const { mediaReconnecting } = useRoomSession();
+  // The room socket and the call reconnect independently; show whichever is down.
+  const state =
+    socketState === "CONNECTED" && mediaReconnecting ? "RECONNECTING" : socketState;
   const visible = state !== "CONNECTED";
   if (!visible) return null;
   const failed = state === "FAILED";
@@ -409,6 +418,7 @@ function CallDock({boardOpen,toggleBoard}:{boardOpen:boolean;toggleBoard:()=>voi
   const tr = useUIText();
   const locale=useI18nStore(state=>state.locale);
   const room=useRoomStore(state=>state.room);
+  const pushToTalk=useMediaPrefsStore(state=>state.pushToTalk);
   const [leaving,setLeaving]=useState(false);
   const [ending,setEnding]=useState(false);
   const [endError,setEndError]=useState<string|null>(null);
@@ -435,6 +445,21 @@ function CallDock({boardOpen,toggleBoard}:{boardOpen:boolean;toggleBoard:()=>voi
       raised: !(self?.raised_hand ?? false),
       expected_social_version: self?.social_version ?? 0,
     });
+  // Single-key shortcuts (Meet/Zoom style). Never fire while typing.
+  const mediaRef = useRef(media);
+  useEffect(() => { mediaRef.current = media; });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+      const current = mediaRef.current;
+      if (!current.mediaConnected) return;
+      if (event.code === "KeyM") { event.preventDefault(); void current.toggleMic(); }
+      else if (event.code === "KeyV") { event.preventDefault(); void current.toggleCamera(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const control =
     "room-dock-control btn-press relative shrink-0 !h-10 !w-10 rounded-full flex items-center justify-center border border-[var(--border-loft)]";
   return (<>
@@ -445,7 +470,7 @@ function CallDock({boardOpen,toggleBoard}:{boardOpen:boolean;toggleBoard:()=>voi
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleMic()}
           className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.micEnabled ? "" : "bg-[#101113] text-white"}`}
-          title={tr("Microphone")}
+          title={pushToTalk ? tr("Hold Space to talk") : `${tr("Microphone")} (M)`}
           aria-label={tr("Microphone")}
         >
           {media.micEnabled ? (
@@ -458,7 +483,7 @@ function CallDock({boardOpen,toggleBoard}:{boardOpen:boolean;toggleBoard:()=>voi
           disabled={!media.mediaConnected}
           onClick={() => void media.toggleCamera()}
           className={`${control} disabled:opacity-40 disabled:cursor-not-allowed ${media.cameraEnabled ? "" : "bg-[#101113] text-white"}`}
-          title={tr("Camera")}
+          title={`${tr("Camera")} (V)`}
           aria-label={tr("Camera")}
         >
           {media.cameraEnabled ? (
@@ -612,24 +637,88 @@ function renderMessageContent(content: string, isMine?: boolean) {
   });
 }
 
+const TYPING_SEND_INTERVAL_MS = 3000;
+
 function ChatDrawer() {
   const tr = useUIText();
   const locale = useI18nStore((state) => state.locale);
   const messages = useChatStore((state) => state.messages);
   const error = useChatStore((state) => state.sendError);
+  const typing = useChatStore((state) => state.typing);
   const self = useRoomStore((state) => state.self);
+  const room = useRoomStore((state) => state.room);
   const session = useRoomSession();
   const [input, setInput] = useState("");
+  const [replyTo, setReplyTo] = useState<ApiMessage | null>(null);
+  const [editing, setEditing] = useState<ApiMessage | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const lastTypingSent = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
   const end = useRef<HTMLDivElement>(null);
+  const isOwner =
+    self?.identity_type === "user" && !!room && self.identity_id === room.owner_id;
+  const isMine = (message: ApiMessage) =>
+    !!self &&
+    message.sender_id === self.identity_id &&
+    message.sender_type === self.identity_type;
+  const typers = activeTypers(typing, now);
+
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+  // Expire stale typing indicators without a server round trip.
+  useEffect(() => {
+    if (Object.keys(typing).length === 0) return;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      useChatStore.getState().pruneTyping();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [typing]);
+
+  const resetComposer = () => {
+    setInput("");
+    setReplyTo(null);
+    setEditing(null);
+  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const value = input.trim();
     if (!value || value.length > 2000) return;
-    if (session.sendChat(value)) setInput("");
+    if (editing) {
+      if (value === editing.content) return resetComposer();
+      if (session.sendCommand("chat.edit", { message_id: editing.id, content: value }))
+        resetComposer();
+      return;
+    }
+    if (session.sendChat(value, replyTo?.id)) resetComposer();
   };
+  const onInput = (value: string) => {
+    setInput(value);
+    const at = Date.now();
+    if (!editing && value.trim() && at - lastTypingSent.current > TYPING_SEND_INTERVAL_MS) {
+      lastTypingSent.current = at;
+      session.sendCommand("chat.typing", {});
+    }
+  };
+  const startReply = (message: ApiMessage) => {
+    setEditing(null);
+    setReplyTo(message);
+    inputRef.current?.focus();
+  };
+  const startEdit = (message: ApiMessage) => {
+    setReplyTo(null);
+    setEditing(message);
+    setInput(message.content);
+    inputRef.current?.focus();
+  };
+  const remove = (message: ApiMessage) => {
+    if (!window.confirm(tr("Delete this message?"))) return;
+    session.sendCommand("chat.delete", { message_id: message.id });
+  };
+  const action =
+    "flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-loft-muted)] hover:bg-[var(--border-loft-light)] hover:text-[var(--text-loft-primary)]";
+
   return (
     <DrawerFrame title={tr("Room chat")}>
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
@@ -651,11 +740,12 @@ function ChatDrawer() {
             );
           }
 
-          const mine = message.sender_id === self?.identity_id;
+          const mine = isMine(message);
+          const canDelete = !message.deleted && (mine || isOwner);
           return (
             <div
               key={message.id}
-              className={`flex flex-col ${mine ? "items-end" : "items-start"}`}
+              className={`group flex flex-col ${mine ? "items-end" : "items-start"}`}
             >
               <div
                 className={`flex items-center gap-2 mb-1 px-1 text-[13px] text-[var(--text-loft-muted)] ${
@@ -672,34 +762,97 @@ function ChatDrawer() {
                     minute: "2-digit",
                   })}
                 </span>
+                {message.edited_at && !message.deleted && (
+                  <span>· {tr("edited")}</span>
+                )}
               </div>
-              <div
-                className={`max-w-[85%] px-4 py-2 rounded-[10px] text-[13px] break-words whitespace-pre-wrap leading-relaxed ${
-                  mine
-                    ? "bg-[#101113] text-white rounded-br-[6px] shadow-sm"
-                    : "border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] rounded-bl-[6px] shadow-sm"
-                }`}
-              >
-                {renderMessageContent(message.content, mine)}
+              <div className={`flex max-w-[92%] items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
+                <div
+                  className={`min-w-0 px-4 py-2 rounded-[10px] text-[13px] break-words whitespace-pre-wrap leading-relaxed ${
+                    message.deleted
+                      ? "border border-dashed border-[var(--border-loft)] text-[var(--text-loft-muted)] italic"
+                      : mine
+                        ? "bg-[#101113] text-white rounded-br-[6px] shadow-sm"
+                        : "border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] rounded-bl-[6px] shadow-sm"
+                  }`}
+                >
+                  {message.reply_to && !message.deleted && (
+                    <div
+                      className={`mb-1.5 border-l-2 pl-2 text-[12px] leading-snug ${mine ? "border-white/40 text-white/70" : "border-[var(--border-loft)] text-[var(--text-loft-muted)]"}`}
+                    >
+                      <span className="font-medium">{message.reply_to.sender_display_name}</span>
+                      <span className="line-clamp-2">
+                        {message.reply_to.deleted ? tr("Message deleted") : message.reply_to.content}
+                      </span>
+                    </div>
+                  )}
+                  {message.deleted
+                    ? tr("Message deleted")
+                    : renderMessageContent(message.content, mine)}
+                </div>
+                {!message.deleted && (
+                  <div className="flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+                    <button type="button" className={action} onClick={() => startReply(message)} aria-label={tr("Reply")} title={tr("Reply")}>
+                      <Reply className="h-3.5 w-3.5" />
+                    </button>
+                    {mine && (
+                      <button type="button" className={action} onClick={() => startEdit(message)} aria-label={tr("Edit")} title={tr("Edit")}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button type="button" className={action} onClick={() => remove(message)} aria-label={tr("Delete")} title={tr("Delete")}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );
         })}
         <div ref={end} />
       </div>
+      <p aria-live="polite" className="h-5 truncate px-4 text-[12px] text-[var(--text-loft-muted)]">
+        {typers.length === 1
+          ? `${typers[0]} ${tr("is typing…")}`
+          : typers.length > 1
+            ? tr("Several people are typing…")
+            : ""}
+      </p>
       {error && (
         <p className="px-4 pb-1 text-[13px] text-[var(--text-loft-primary)]">
           {tr(error)}
         </p>
+      )}
+      {(replyTo || editing) && (
+        <div className="flex items-center gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 pt-2 text-[12px] text-[var(--text-loft-muted)]">
+          {replyTo ? <Reply className="h-3.5 w-3.5 shrink-0" /> : <Pencil className="h-3.5 w-3.5 shrink-0" />}
+          <span className="min-w-0 flex-1 truncate">
+            {replyTo
+              ? `${tr("Replying to")} ${replyTo.sender_display_name}: ${replyTo.content}`
+              : tr("Editing message")}
+          </span>
+          <button type="button" onClick={resetComposer} className={action} aria-label={tr("Cancel")} title={tr("Cancel")}>
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       )}
       <form
         onSubmit={submit}
         className="flex gap-2 border-t border-[var(--border-loft)] bg-[var(--bg-loft-surface)] p-3"
       >
         <input
+          ref={inputRef}
           value={input}
           maxLength={2000}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => onInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && (replyTo || editing)) {
+              event.stopPropagation();
+              resetComposer();
+            }
+          }}
           aria-label={tr("Message")}
           placeholder={tr("Send a message…")}
           className="min-w-0 flex-1 rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-4 py-3 text-[13px] outline-none focus:border-[var(--accent-blue)]"
@@ -708,7 +861,7 @@ function ChatDrawer() {
           disabled={!input.trim()}
           className="px-4 rounded-[10px] border border-transparent bg-[#101113] text-white text-[13px] transition-colors disabled:cursor-not-allowed disabled:border-[var(--border-loft)] disabled:bg-[var(--bg-loft-card)] disabled:text-[var(--text-loft-primary)] disabled:opacity-100"
         >
-          {tr("Send")}
+          {tr(editing ? "Save" : "Send")}
         </button>
       </form>
     </DrawerFrame>

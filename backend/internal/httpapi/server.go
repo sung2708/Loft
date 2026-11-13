@@ -20,6 +20,7 @@ import (
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
 	"loft/backend/internal/livekit"
+	"loft/backend/internal/moderation"
 	"loft/backend/internal/observability"
 	"loft/backend/internal/ratelimit"
 )
@@ -40,8 +41,10 @@ type Server struct {
 	youtubePickLimit    *ratelimit.Limiter
 	youtubeSearchLimit  *ratelimit.Limiter
 	youtubeSearchBudget *ratelimit.Limiter
+	feedbackLimit       *ratelimit.Limiter
 	origins             map[string]struct{}
 	logger              *slog.Logger
+	bans                *moderation.BanGate
 	metrics             *observability.Metrics
 	httpLogger          *zerolog.Logger
 }
@@ -94,8 +97,12 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 	if len(deletion) > 0 {
 		guard = deletion[0]
 	}
-	return &Server{store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		boardLimit: ratelimit.New(20, time.Second, 20), lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), youtubeSearchLimit: ratelimit.New(20, time.Minute, 5), youtubeSearchBudget: ratelimit.New(300, time.Hour, 30), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
+	var bans *moderation.BanGate
+	if banStore, ok := store.(domain.AccountBanStore); ok {
+		bans = moderation.NewBanGate(banStore)
+	}
+	return &Server{bans: bans, store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
+		boardLimit: ratelimit.New(20, time.Second, 20), lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), youtubeSearchLimit: ratelimit.New(20, time.Minute, 5), youtubeSearchBudget: ratelimit.New(300, time.Hour, 30), feedbackLimit: ratelimit.New(10, time.Minute, 5), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
 // ConfigureObservability is called once during process bootstrap before routes
@@ -174,11 +181,16 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Get("/ready", s.ready)
 		r.Get("/readyz", s.ready)
 		r.Route("/api/v1", func(r chi.Router) {
+			r.Use(s.suspensionGate)
 			r.Route("/admin", func(r chi.Router) {
 				r.Get("/overview", s.adminOverview)
 				r.Get("/users", s.adminUsers)
 				r.Get("/rooms", s.adminRooms)
 				r.Post("/rooms/{roomID}/end", s.adminEndRoom)
+				r.Post("/users/{userID}/suspension", s.adminSuspendUser)
+				r.Delete("/users/{userID}/suspension", s.adminLiftSuspension)
+				r.Get("/audit", s.adminAudit)
+				r.Get("/call-quality", s.adminCallQuality)
 			})
 			r.Get("/youtube/search", s.youtubeSearch)
 			r.Get("/rooms/{roomID}/whiteboard", s.whiteboard)
@@ -197,6 +209,7 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 			r.Patch("/rooms/{roomID}", s.updateRoom)
 			r.Get("/rooms/{roomID}/messages", s.messages)
 			r.Post("/rooms/{roomID}/livekit-token", s.liveKitToken)
+			r.Post("/rooms/{roomID}/call-feedback", s.callFeedback)
 			r.Get("/users/me", s.me)
 			r.Get("/rooms", s.listRooms)
 			r.Post("/rooms", s.createRoom)
@@ -736,7 +749,29 @@ func (s *Server) authenticatedUser(r *http.Request) (domain.Identity, error) {
 	if !strings.HasPrefix(header, "Bearer ") {
 		return domain.Identity{}, domain.ErrUnauthorized
 	}
-	return s.users.Verify(r.Context(), strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")))
+	identity, err := s.users.Verify(r.Context(), strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")))
+	if err != nil {
+		return identity, err
+	}
+	// Suspended accounts are rejected at every authenticated REST entry point.
+	if err := s.bans.Check(r.Context(), identity); err != nil {
+		return domain.Identity{}, err
+	}
+	return identity, nil
+}
+
+// suspensionGate turns a suspended bearer into a clear 403 before any handler
+// runs, so clients can show a specific message instead of a sign-in loop.
+func (s *Server) suspensionGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.bans != nil && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			if _, err := s.authenticatedUser(r); errors.Is(err, domain.ErrAccountSuspended) {
+				writeError(w, http.StatusForbidden, "ACCOUNT_SUSPENDED", "This account is suspended")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {

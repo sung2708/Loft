@@ -20,6 +20,7 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { useTranslation } from "@/lib/i18n/useTranslation";
 import type { ApiIdentity, ApiRoom } from "@/types/api";
 import { LobbyHeader } from "@/components/lobby/LobbyHeader";
+import { LazyCallFeedbackPrompt } from "@/components/feedback/LazyCallFeedbackPrompt";
 import { DeleteRoomDialog } from "@/components/room/DeleteRoomDialog";
 import { useUIText } from "@/lib/i18n/uiText";
 import { RoomSettings } from "@/components/room/RoomSettings";
@@ -257,6 +258,7 @@ export default function HomePage() {
   return (
     <main className="app-canvas page-scroll min-h-dvh text-[var(--text-loft-primary)]">
       <LobbyHeader />
+      <LazyCallFeedbackPrompt />
       <div aria-hidden="true" className="h-14" />
 
       <section className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 sm:py-16 lg:px-8">

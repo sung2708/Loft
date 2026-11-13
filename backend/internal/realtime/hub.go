@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"loft/backend/internal/auth"
 	"loft/backend/internal/domain"
+	"loft/backend/internal/moderation"
 	"loft/backend/internal/ratelimit"
 	"loft/backend/internal/store"
 	"loft/backend/internal/telemetry"
@@ -52,7 +53,19 @@ type pongPayload struct {
 	ServerTime int64 `json:"server_time"`
 }
 type chatPayload struct {
-	Content string `json:"content"`
+	Content   string `json:"content"`
+	ReplyToID string `json:"reply_to_id,omitempty"`
+}
+type chatEditPayload struct {
+	MessageID string `json:"message_id"`
+	Content   string `json:"content"`
+}
+type chatDeletePayload struct {
+	MessageID string `json:"message_id"`
+}
+type chatTypingEvent struct {
+	ConnectionID string `json:"connection_id"`
+	DisplayName  string `json:"display_name"`
 }
 type reactionPayload struct {
 	Emoji string `json:"emoji"`
@@ -186,6 +199,8 @@ type Hub struct {
 	mediaLimit            *ratelimit.Limiter
 	queueLimit            *ratelimit.Limiter
 	chatLimit             *ratelimit.Limiter
+	bans                  *moderation.BanGate
+	typingLimit           *ratelimit.Limiter
 	reactionLimit         *ratelimit.Limiter
 	bus                   roomBus
 	evictor               participantEvictor
@@ -231,7 +246,11 @@ func New(store domain.Store, guests *auth.GuestTokens, users *auth.SupabaseVerif
 	for _, origin := range origins {
 		allowed[origin] = struct{}{}
 	}
-	return &Hub{boardLimit: ratelimit.New(30, time.Second, 30),
+	var bans *moderation.BanGate
+	if banStore, ok := store.(domain.AccountBanStore); ok {
+		bans = moderation.NewBanGate(banStore)
+	}
+	return &Hub{bans: bans, boardLimit: ratelimit.New(30, time.Second, 30),
 		cancels:               make(map[string]context.CancelFunc),
 		idleTimeout:           30 * time.Second,
 		disconnectGracePeriod: 3 * time.Second,
@@ -247,6 +266,7 @@ func New(store domain.Store, guests *auth.GuestTokens, users *auth.SupabaseVerif
 		mediaLimit:            ratelimit.New(10, 10*time.Second, 10),
 		queueLimit:            ratelimit.New(10, time.Minute, 10),
 		chatLimit:             ratelimit.New(20, time.Minute, 5),
+		typingLimit:           ratelimit.New(20, time.Minute, 2),
 		reactionLimit:         ratelimit.New(30, time.Minute, 4),
 	}
 }
@@ -573,6 +593,28 @@ func (h *Hub) SetRoomAutoplay(ctx context.Context, room domain.Room, actor domai
 }
 
 func (h *Hub) handleForwardedMedia(ctx context.Context, request mediaRPCRequest) mediaRPCResponse {
+	if request.Kind == "internal.account.changed" {
+		var changed accountChanged
+		if json.Unmarshal(request.Payload, &changed) == nil && changed.UserID != "" {
+			_ = h.checkAccountSuspension(ctx, domain.Identity{ID: changed.UserID, Type: domain.IdentityUser})
+		}
+		return mediaRPCResponse{RequestID: request.RequestID}
+	}
+	if request.Kind == "internal.skip.reconcile" {
+		h.mu.RLock()
+		state := h.rooms[request.RoomID]
+		active := !h.closing && state != nil && len(state.media.SkipVotes) > 0
+		h.mu.RUnlock()
+		if !active {
+			return mediaRPCResponse{RequestID: request.RequestID}
+		}
+		if authority, ok := h.mediaAuthorityForRoom(request.RoomID); ok {
+			owner, _, err := authority.MediaOwner(ctx, request.RoomID)
+			if err != nil || !owner {
+				return mediaRPCResponse{RequestID: request.RequestID}
+			}
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if request.Kind == "settings.autoplay" {
@@ -598,6 +640,15 @@ func (h *Hub) handleForwardedMedia(ctx context.Context, request mediaRPCRequest)
 	defer release()
 	if err := h.resolvePendingMedia(ctx, request.RoomID); err != nil {
 		return mediaRPCResponse{RequestID: request.RequestID, Error: store.ErrSelectionCommitPending.Error()}
+	}
+	// Skip votes need the room's head count; presence lookup is I/O, so it
+	// runs before taking the room mutex.
+	var listeners []domain.Participant
+	if request.Kind == "media.skip_vote" || request.Kind == "internal.skip.reconcile" {
+		listeners, err = h.skipParticipants(ctx, request.RoomID)
+		if err != nil {
+			return mediaRPCResponse{RequestID: request.RequestID, Error: err.Error()}
+		}
 	}
 	h.mu.Lock()
 	state := h.rooms[request.RoomID]
@@ -641,7 +692,18 @@ func (h *Hub) handleForwardedMedia(ctx context.Context, request mediaRPCRequest)
 		kind = "media.play_now"
 		payload, _ = json.Marshal(mediaCommand{URL: "https://www.youtube.com/watch?v=" + promoted.VideoID, Title: promoted.Title, Channel: promoted.Channel})
 	}
-	err = state.media.applyMedia(kind, payload, state.room, request.Actor, time.Now().UTC())
+	if kind == "internal.skip.reconcile" {
+		state.media.reconcileSkipVotes(listeners, time.Now().UTC())
+	} else if kind == "media.skip_vote" {
+		var command mediaCommand
+		if json.Unmarshal(payload, &command) != nil {
+			err = errInvalidMedia
+		} else {
+			err = state.media.voteSkip(state.room, request.Actor, command.TrackID, listeners, time.Now().UTC())
+		}
+	} else {
+		err = state.media.applyMedia(kind, payload, state.room, request.Actor, time.Now().UTC())
+	}
 	if err == nil && state.media.Version != previous && promoted == nil {
 		promoted = state.promoteAutoplay(time.Now().UTC())
 	}
@@ -815,6 +877,17 @@ func (h *Hub) NotifyPickVote(roomID, id string, votes int) {
 }
 
 func (h *Hub) DeliverRemote(roomID string, data []byte) {
+	if roomID == accountModerationScope {
+		var envelope Envelope
+		var changed accountChanged
+		if json.Unmarshal(data, &envelope) == nil && envelope.Type == "account.changed" &&
+			json.Unmarshal(envelope.Payload, &changed) == nil && changed.UserID != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = h.checkAccountSuspension(ctx, domain.Identity{ID: changed.UserID, Type: domain.IdentityUser})
+		}
+		return
+	}
 	var terminal Envelope
 	if json.Unmarshal(data, &terminal) == nil && terminal.Type == "room.ended" {
 		h.endRoomLocal(roomID)
@@ -1096,6 +1169,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = conn.Write(writeCtx, websocket.MessageText, event("room.ended", room.ID, struct{}{}))
 			stop()
 		}
+		if errors.Is(err, domain.ErrAccountSuspended) {
+			writeCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+			_ = conn.Write(writeCtx, websocket.MessageText, event("error", room.ID, errorPayload{"ACCOUNT_SUSPENDED", "This account is suspended"}))
+			stop()
+		}
 		if errors.Is(err, domain.ErrBanned) {
 			writeCtx, stop := context.WithTimeout(ctx, 2*time.Second)
 			_ = conn.Write(writeCtx, websocket.MessageText, event("error", room.ID, errorPayload{"ROOM_KICKED", "Removed from room by host"}))
@@ -1282,6 +1360,9 @@ func (h *Hub) authenticate(ctx context.Context, conn *websocket.Conn) (domain.Id
 		identity, err = h.users.Verify(authCtx, payload.Token)
 	}
 	if err != nil {
+		return domain.Identity{}, domain.Room{}, "", err
+	}
+	if err := h.bans.Check(authCtx, identity); err != nil {
 		return domain.Identity{}, domain.Room{}, "", err
 	}
 	room, err := h.store.GetRoom(authCtx, payload.RoomID)
@@ -1680,7 +1761,21 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				h.sendError(c, "INVALID_MESSAGE", "Message must be 1–2000 characters")
 				continue
 			}
-			message, err := h.store.InsertMessage(ctx, c.roomID, c.identity, content)
+			var message domain.Message
+			if payload.ReplyToID != "" {
+				messages, ok := h.store.(domain.MessageStore)
+				if _, parseErr := uuid.Parse(payload.ReplyToID); !ok || parseErr != nil {
+					h.sendError(c, "INVALID_PAYLOAD", "Invalid reply target")
+					continue
+				}
+				message, err = messages.InsertMessageReply(ctx, c.roomID, c.identity, content, payload.ReplyToID)
+				if errors.Is(err, domain.ErrNotFound) {
+					h.sendError(c, "MESSAGE_NOT_FOUND", "Message not found")
+					continue
+				}
+			} else {
+				message, err = h.store.InsertMessage(ctx, c.roomID, c.identity, content)
+			}
 			if errors.Is(err, domain.ErrRoomEnded) {
 				h.endRoomLocal(c.roomID)
 				return nil
@@ -1691,6 +1786,25 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				continue
 			}
 			h.broadcast(c.roomID, event("chat.message", c.roomID, message), "")
+		case "chat.edit", "chat.delete":
+			key := c.roomID + ":" + c.identity.LiveKitIdentity()
+			if !h.chatLimit.AllowContext(ctx, key) {
+				h.sendError(c, "RATE_LIMITED", "Too many messages")
+				continue
+			}
+			if !h.reviseChat(ctx, c, envelope) {
+				return nil
+			}
+		case "chat.typing":
+			// Ephemeral: never persisted; dropped silently when over budget.
+			key := c.roomID + ":" + c.identity.LiveKitIdentity()
+			if !h.typingLimit.AllowContext(ctx, key) {
+				continue
+			}
+			h.mu.RLock()
+			typing := chatTypingEvent{ConnectionID: c.participant.ConnectionID, DisplayName: c.identity.DisplayName}
+			h.mu.RUnlock()
+			h.broadcast(c.roomID, event("chat.typing", c.roomID, typing), c.id)
 		case "reaction.send":
 			key := c.roomID + ":" + c.identity.LiveKitIdentity()
 			if !h.reactionLimit.AllowContext(ctx, key) {
@@ -1891,7 +2005,7 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				h.NotifyPickVote(c.roomID, cmd.PickID, persistedVotes)
 
 			}
-		case "youtube.pick.promote", "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play_now", "media.play", "media.restart", "media.pause", "media.seek", "media.duration", "media.repeat", "media.autoplay.set", "media.unavailable", "media.ended":
+		case "youtube.pick.promote", "queue.add", "queue.next", "queue.select", "queue.remove", "queue.clear", "queue.shuffle", "queue.reorder", "media.play_now", "media.play", "media.restart", "media.pause", "media.seek", "media.duration", "media.repeat", "media.autoplay.set", "media.unavailable", "media.ended", "media.skip_vote":
 			key := c.roomID + ":" + c.identity.LiveKitIdentity()
 			limiter := h.mediaLimit
 			if envelope.Type == "queue.add" || envelope.Type == "queue.remove" || envelope.Type == "queue.clear" || envelope.Type == "queue.shuffle" || envelope.Type == "queue.reorder" {
@@ -2066,6 +2180,13 @@ func (h *Hub) writePump(ctx context.Context, c *client) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-checks.C:
+			h.reconcileRoomSkipVotes(ctx, c.roomID)
+			banCtx, banCancel := context.WithTimeout(ctx, 5*time.Second)
+			banErr := h.checkAccountSuspension(banCtx, c.identity)
+			banCancel()
+			if banErr != nil {
+				return banErr
+			}
 			hostCtx, hostCancel := context.WithTimeout(ctx, time.Second)
 			_ = h.syncHost(hostCtx, h.roomSnapshot(c.roomID, domain.Room{ID: c.roomID}), "", "", 0)
 			hostCancel()
@@ -2463,6 +2584,7 @@ func (h *Hub) remove(c *client) {
 				ConnectionID string `json:"connection_id"`
 			}{c.participant.ConnectionID}), c.id)
 		}
+		h.reconcileRoomSkipVotes(context.Background(), c.roomID)
 		h.logger.Info("websocket left (explicit)", "connection_id", c.id, "participant_conn_id", c.participant.ConnectionID, "room_id", c.roomID)
 		return
 	}
@@ -2535,7 +2657,9 @@ func (h *Hub) remove(c *client) {
 			if hostData != nil {
 				h.broadcast(roomID, hostData, "")
 			}
+			h.releasePresence(c)
 			h.broadcast(roomID, leftData, "")
+			h.reconcileRoomSkipVotes(context.Background(), roomID)
 			h.logger.Info("websocket left (grace period expired)", "connection_id", c.id, "participant_conn_id", participantConnID, "room_id", roomID)
 		}
 	})

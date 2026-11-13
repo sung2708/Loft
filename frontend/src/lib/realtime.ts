@@ -122,6 +122,11 @@ export class RoomSocket {
               : "You were removed from this room");
           return;
         }
+        if (event.type === "error" && event.payload.code === "ACCOUNT_SUSPENDED") {
+          this.close();
+          this.callbacks.onState("FAILED", "This account is suspended");
+          return;
+        }
         if (event.type === "error" && event.payload.code === "DUPLICATE_SESSION") {
           this.retryError = "This room is open in another tab. Close that tab to join here.";
           this.callbacks.onState("RECONNECTING", this.retryError);

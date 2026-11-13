@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { api, loadCredential, saveCredential } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
 import { RoomSession } from "@/features/room/RoomSession";
+import { PreJoin } from "@/features/room/PreJoin";
 import type { RoomCredential } from "@/types/api";
 import { useUIText } from "@/lib/i18n/uiText";
 import Link from "next/link";
@@ -15,6 +16,8 @@ export default function ActiveRoomPage() {
   const identifier = String(useParams<{ roomId: string }>().roomId);
   const [credential, setCredential] = useState<RoomCredential | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [roomName, setRoomName] = useState<string>();
+  const [joined, setJoined] = useState(false);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -25,6 +28,7 @@ export default function ActiveRoomPage() {
           router.replace(`/room/${encodeURIComponent(room.slug)}`);
           return;
         }
+        setRoomName(room.name);
         const existing = loadCredential(room.id);
         if (existing) {
           setCredential(existing);
@@ -110,6 +114,14 @@ export default function ActiveRoomPage() {
           </p>
         </div>
       </main>
+    );
+  if (!joined)
+    return (
+      <PreJoin
+        roomName={roomName}
+        displayName={credential.displayName}
+        onJoin={() => setJoined(true)}
+      />
     );
   return <RoomSession credential={credential} />;
 }

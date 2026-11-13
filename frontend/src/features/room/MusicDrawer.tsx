@@ -45,7 +45,7 @@ export function MusicDrawer({
   onClose: () => void;
   onPlayerSurfaceReady: (surface: HTMLDivElement | null) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { session: authSession } = useAuth();
   const mq = t.mediaQueue;
 
@@ -143,6 +143,21 @@ export function MusicDrawer({
   const canControl = Boolean(
     self?.identity_type === "user" && room?.owner_id === self.identity_id,
   );
+  const listenerCount = useRoomStore((state) => state.participants.length);
+  const skipVotes =
+    media.current && media.skip_votes_for === media.current.id
+      ? (media.skip_votes ?? [])
+      : [];
+  const skipNeeded = Math.floor(Math.max(1, listenerCount) / 2) + 1;
+  const votedSkip = !!self && skipVotes.includes(self.livekit_identity);
+  const nextTrack = () => {
+    if (canControl) return control("queue.next");
+    if (!media.current || votedSkip) return;
+    session.sendCommand("media.skip_vote", { track_id: media.current.id });
+  };
+  const nextLabel = canControl
+    ? mq.next
+    : `${locale === "vi" ? "Bỏ phiếu chuyển bài" : "Vote to skip"} (${skipVotes.length}/${skipNeeded})`;
   const setPlayerSurface = useCallback(
     (surface: HTMLDivElement | null) => {
       playerSurfaceRef.current = surface;
@@ -686,12 +701,19 @@ export function MusicDrawer({
 
                   {/* Next Track */}
                   <button
-                    onClick={() => control("queue.next")}
-                    disabled={!canControl}
-                    className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer"
-                    title={mq.next}
+                    onClick={nextTrack}
+                    disabled={!media.current || (!canControl && votedSkip)}
+                    aria-pressed={!canControl ? votedSkip : undefined}
+                    aria-label={nextLabel}
+                    className="relative w-8 h-8 rounded-[10px] flex items-center justify-center text-[var(--text-loft-secondary)] hover:text-[var(--bg-loft-base)] hover-invert hover:bg-[var(--border-loft)] hover:text-[var(--bg-loft-base)] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-default"
+                    title={nextLabel}
                   >
                     <SkipForward className="w-4 h-4" />
+                    {!canControl && skipVotes.length > 0 && (
+                      <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[#101113] px-1 text-[10px] leading-4 text-white dark:bg-[#f4f5f7] dark:text-[#101113]">
+                        {skipVotes.length}/{skipNeeded}
+                      </span>
+                    )}
                   </button>
                 </div>
 

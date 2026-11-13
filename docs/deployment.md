@@ -78,6 +78,24 @@ Apply in order:
 12. `000012_remove_spotify.up.sql`
 13. `000013_room_whiteboards.up.sql`
 14. `000014_room_endings.up.sql`
+15. `000015_room_moderation.up.sql`
+16. `000016_guest_room_picks.up.sql`
+17. `000017_chat_replies_edits.up.sql`
+18. `000018_account_bans.up.sql`
+19. `000019_call_feedback.up.sql`
+20. `000020_message_revision.up.sql`
+
+Migrations 000017–000020 must be applied **before** rolling out the backend that
+uses them: chat history reads the new `messages` columns, the admin user list joins
+`account_bans`, and every authenticated request checks suspensions. All three are
+additive (new columns/tables only). `admin_audit_log` rejects UPDATE and DELETE via
+a trigger. Migration 000020 adds the message revision used to reject stale chat events.
+
+Account suspension notifications use the reserved `room:account-moderation:events`
+bus scope. Notifications run on the existing bounded Redis workers, outside the
+subscription loop. Every node rechecks PostgreSQL before disconnecting the account and
+removing its media participant. Existing sockets also recheck every 15 seconds
+so a missed notification does not leave an account connected indefinitely.
 
 Do not edit applied migration files. Use a new numbered migration for schema changes.
 
