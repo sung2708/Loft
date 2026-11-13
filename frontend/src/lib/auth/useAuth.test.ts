@@ -1,7 +1,9 @@
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({
   session: null as { access_token: string; user: { id: string } } | null,
+  onChange: undefined as ((event: AuthChangeEvent, session: Session | null) => void) | undefined,
   unsubscribe: vi.fn(),
   signOut: vi.fn(async () => ({ error: null as Error | null })),
 }));
@@ -10,7 +12,10 @@ vi.mock("@/lib/supabase/client", () => ({
   getSupabase: () => ({
     auth: {
       getSession: async () => ({ data: { session: auth.session }, error: null }),
-      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: auth.unsubscribe } } }),
+      onAuthStateChange: (callback: NonNullable<typeof auth.onChange>) => {
+        auth.onChange = callback;
+        return { data: { subscription: { unsubscribe: auth.unsubscribe } } };
+      },
       signOut: auth.signOut,
     },
   }),
@@ -45,6 +50,23 @@ describe("auth restoration", () => {
 
     await vi.waitFor(() => expect(useAuthStore.getState().authState.status).toBe("authenticated"));
     cleanup();
+  });
+
+  it("publishes the verified MFA token before admin retries its request", async () => {
+    vi.stubGlobal("window", new EventTarget());
+    auth.session = { access_token: "aal1-token", user: { id: "user" } };
+    const cleanup = useAuthStore.getState().initializeAuth();
+    try {
+      await vi.waitFor(() => expect(useAuthStore.getState().authState).toMatchObject({
+        session: { access_token: "aal1-token" },
+      }));
+      auth.onChange?.("MFA_CHALLENGE_VERIFIED", { ...auth.session, access_token: "aal2-token" } as Session);
+      expect(useAuthStore.getState().authState).toMatchObject({
+        session: { access_token: "aal2-token" },
+      });
+    } finally {
+      cleanup();
+    }
   });
 
   it("removes the pageshow listener after the last subscriber leaves", async () => {
