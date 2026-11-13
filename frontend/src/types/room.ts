@@ -11,6 +11,9 @@ export type ThemeMode = "system" | "dark" | "light";
  */
 export type RoomSocketMessageType =
   | "chat.send"
+  | "chat.edit"
+  | "chat.delete"
+  | "chat.typing"
   | "connection.ping"
   | "room.leave"
   | "queue.add"
@@ -30,6 +33,7 @@ export type RoomSocketMessageType =
   | "media.autoplay.set"
   | "media.ended"
   | "media.unavailable"
+  | "media.skip_vote"
   | "youtube.pick.create"
   | "youtube.pick.vote"
   | "youtube.pick.promote"

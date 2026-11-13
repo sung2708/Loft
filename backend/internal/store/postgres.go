@@ -32,10 +32,13 @@ func (p *Postgres) ListAdminUsers(ctx context.Context, query string, limit, offs
 	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM profiles WHERE $1 = '' OR strpos(lower(display_name), $1) > 0 OR id::text = $1`, query).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := p.pool.Query(ctx, `SELECT p.id, p.display_name, p.created_at, COUNT(r.id)::int
-		FROM profiles p LEFT JOIN rooms r ON r.owner_id=p.id
+	rows, err := p.pool.Query(ctx, `SELECT p.id, p.display_name, p.created_at,
+		(SELECT COUNT(*)::int FROM rooms r WHERE r.owner_id = p.id),
+		b.actor_id, b.reason, b.note, b.expires_at, b.created_at
+		FROM profiles p
+		LEFT JOIN account_bans b ON b.user_id = p.id AND (b.expires_at IS NULL OR b.expires_at > NOW())
 		WHERE $1 = '' OR strpos(lower(p.display_name), $1) > 0 OR p.id::text = $1
-		GROUP BY p.id ORDER BY p.created_at DESC, p.id LIMIT $2 OFFSET $3`, query, limit, offset)
+		ORDER BY p.created_at DESC, p.id LIMIT $2 OFFSET $3`, query, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -43,8 +46,13 @@ func (p *Postgres) ListAdminUsers(ctx context.Context, query string, limit, offs
 	users := make([]domain.AdminUser, 0)
 	for rows.Next() {
 		var user domain.AdminUser
-		if err := rows.Scan(&user.ID, &user.DisplayName, &user.CreatedAt, &user.RoomCount); err != nil {
+		var actorID, reason, note *string
+		var expiresAt, bannedAt *time.Time
+		if err := rows.Scan(&user.ID, &user.DisplayName, &user.CreatedAt, &user.RoomCount, &actorID, &reason, &note, &expiresAt, &bannedAt); err != nil {
 			return nil, 0, err
+		}
+		if actorID != nil && reason != nil && note != nil && bannedAt != nil {
+			user.Suspension = &domain.AccountBan{UserID: user.ID, ActorID: *actorID, Reason: *reason, Note: *note, ExpiresAt: expiresAt, CreatedAt: *bannedAt}
 		}
 		users = append(users, user)
 	}
@@ -529,55 +537,187 @@ func (p *Postgres) DeleteOwnedRoom(ctx context.Context, roomID, ownerID string) 
 }
 
 func (p *Postgres) InsertMessage(ctx context.Context, roomID string, identity domain.Identity, content string) (domain.Message, error) {
+	return p.InsertMessageReply(ctx, roomID, identity, content, "")
+}
+
+// messageColumns projects a message plus its quoted parent. Deleted rows never
+// expose their text; the original stays in message_revisions for moderation.
+const messageColumns = `m.id, m.room_id, COALESCE(m.sender_user_id, m.sender_guest_id), m.sender_type,
+	m.sender_display_name, COALESCE(m.sender_avatar_url, ''),
+	CASE WHEN m.deleted_at IS NULL THEN m.content ELSE '' END, m.created_at, m.edited_at, m.deleted_at IS NOT NULL, m.revision,
+	parent.id, parent.sender_display_name, parent.revision,
+	CASE WHEN parent.deleted_at IS NULL THEN left(parent.content, 140) ELSE '' END, parent.deleted_at IS NOT NULL`
+
+type rowScanner interface{ Scan(...any) error }
+
+func scanMessage(row rowScanner) (domain.Message, error) {
+	var message domain.Message
+	var parentID, parentName, parentContent *string
+	var parentDeleted *bool
+	var parentRevision *uint64
+	err := row.Scan(&message.ID, &message.RoomID, &message.SenderID, &message.SenderType,
+		&message.SenderDisplayName, &message.SenderAvatarURL, &message.Content, &message.CreatedAt,
+		&message.EditedAt, &message.Deleted, &message.Revision, &parentID, &parentName, &parentRevision, &parentContent, &parentDeleted)
+	if err != nil {
+		return message, err
+	}
+	if parentID != nil {
+		reply := &domain.MessageReply{ID: *parentID}
+		if parentRevision != nil {
+			reply.Revision = *parentRevision
+		}
+		if parentName != nil {
+			reply.SenderDisplayName = *parentName
+		}
+		if parentContent != nil {
+			reply.Content = *parentContent
+		}
+		if parentDeleted != nil {
+			reply.Deleted = *parentDeleted
+		}
+		message.ReplyTo = reply
+	}
+	return message, nil
+}
+
+// lockOpenRoom serializes chat writes with room closure.
+func lockOpenRoom(ctx context.Context, tx pgx.Tx, roomID string) error {
+	var id string
+	if err := tx.QueryRow(ctx, `SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, roomID).Scan(&id); err != nil {
+		return err
+	}
+	var ended bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_endings WHERE room_id=$1)`, roomID).Scan(&ended); err != nil {
+		return err
+	}
+	if ended {
+		return domain.ErrRoomEnded
+	}
+	return nil
+}
+
+func getMessageTx(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, roomID, messageID string) (domain.Message, error) {
+	message, err := scanMessage(q.QueryRow(ctx, `SELECT `+messageColumns+`
+		FROM messages m LEFT JOIN messages parent ON parent.id = m.reply_to_id
+		WHERE m.id = $1 AND m.room_id = $2`, messageID, roomID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return message, domain.ErrNotFound
+	}
+	return message, err
+}
+
+func (p *Postgres) InsertMessageReply(ctx context.Context, roomID string, identity domain.Identity, content, replyToID string) (domain.Message, error) {
 	var message domain.Message
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return message, err
 	}
 	defer tx.Rollback(ctx)
-	// Serialize chat with room closure; recheck the ending after acquiring the lock.
+	if err = lockOpenRoom(ctx, tx, roomID); err != nil {
+		return message, err
+	}
+	if replyToID != "" {
+		// A reply must target a message in the same room.
+		var exists bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE id=$1 AND room_id=$2)`, replyToID, roomID).Scan(&exists); err != nil {
+			return message, err
+		}
+		if !exists {
+			return message, domain.ErrNotFound
+		}
+	}
 	var id string
-	if err = tx.QueryRow(ctx, `SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, roomID).Scan(&id); err != nil {
-		return message, err
-	}
-	var ended bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_endings WHERE room_id=$1)`, roomID).Scan(&ended); err != nil {
-		return message, err
-	}
-	if ended {
-		return message, domain.ErrRoomEnded
-	}
 	err = tx.QueryRow(ctx, `INSERT INTO messages
-		(room_id, sender_user_id, sender_guest_id, sender_type, sender_display_name, sender_avatar_url, content)
-		VALUES ($1, CASE WHEN $2 = 'user' THEN $3::uuid END, CASE WHEN $2 = 'guest' THEN $3::uuid END, $2::identity_type, $4, NULLIF($5, ''), $6)
-		RETURNING id, room_id, COALESCE(sender_user_id, sender_guest_id), sender_type, sender_display_name, COALESCE(sender_avatar_url, ''), content, created_at`,
-		roomID, identity.Type, identity.ID, identity.DisplayName, identity.AvatarURL, content).Scan(
-		&message.ID, &message.RoomID, &message.SenderID, &message.SenderType, &message.SenderDisplayName, &message.SenderAvatarURL, &message.Content, &message.CreatedAt)
+		(room_id, sender_user_id, sender_guest_id, sender_type, sender_display_name, sender_avatar_url, content, reply_to_id)
+		VALUES ($1, CASE WHEN $2 = 'user' THEN $3::uuid END, CASE WHEN $2 = 'guest' THEN $3::uuid END, $2::identity_type, $4, NULLIF($5, ''), $6, NULLIF($7, '')::uuid)
+		RETURNING id`,
+		roomID, identity.Type, identity.ID, identity.DisplayName, identity.AvatarURL, content, replyToID).Scan(&id)
 	if err != nil {
 		return message, err
 	}
+	if message, err = getMessageTx(ctx, tx, roomID, id); err != nil {
+		return message, err
+	}
 	return message, tx.Commit(ctx)
+}
+
+func (p *Postgres) GetMessage(ctx context.Context, roomID, messageID string) (domain.Message, error) {
+	return getMessageTx(ctx, p.pool, roomID, messageID)
+}
+
+// reviseMessage records the previous text, then applies an edit or soft delete.
+// Authorization is decided by the domain layer before calling.
+func (p *Postgres) reviseMessage(ctx context.Context, roomID, messageID string, actor domain.Identity, action, content string) (domain.Message, error) {
+	var message domain.Message
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return message, err
+	}
+	defer tx.Rollback(ctx)
+	if err = lockOpenRoom(ctx, tx, roomID); err != nil {
+		return message, err
+	}
+	var previous string
+	err = tx.QueryRow(ctx, `SELECT content FROM messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL FOR UPDATE`, messageID, roomID).Scan(&previous)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return message, domain.ErrNotFound
+	}
+	if err != nil {
+		return message, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO message_revisions (message_id, action, previous_content, actor_type, actor_id)
+		VALUES ($1, $2, $3, $4::identity_type, $5::uuid)`, messageID, action, previous, actor.Type, actor.ID); err != nil {
+		return message, err
+	}
+	if action == "edit" {
+		_, err = tx.Exec(ctx, `UPDATE messages SET content=$2, edited_at=NOW(), revision=revision+1 WHERE id=$1`, messageID, content)
+	} else {
+		_, err = tx.Exec(ctx, `UPDATE messages SET deleted_at=NOW(), revision=revision+1 WHERE id=$1`, messageID)
+	}
+	if err != nil {
+		return message, err
+	}
+	if message, err = getMessageTx(ctx, tx, roomID, messageID); err != nil {
+		return message, err
+	}
+	return message, tx.Commit(ctx)
+}
+
+func (p *Postgres) EditMessage(ctx context.Context, roomID, messageID string, actor domain.Identity, content string) (domain.Message, error) {
+	return p.reviseMessage(ctx, roomID, messageID, actor, "edit", content)
+}
+
+func (p *Postgres) DeleteMessage(ctx context.Context, roomID, messageID string, actor domain.Identity) (domain.Message, error) {
+	return p.reviseMessage(ctx, roomID, messageID, actor, "delete", "")
 }
 
 func (p *Postgres) RecentMessages(ctx context.Context, roomID string, limit int) ([]domain.Message, error) {
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
-	rows, err := p.pool.Query(ctx, `SELECT id, room_id, COALESCE(sender_user_id, sender_guest_id), sender_type,
-		sender_display_name, COALESCE(sender_avatar_url, ''), content, created_at FROM
-		(SELECT * FROM messages WHERE room_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2) recent
-		ORDER BY created_at ASC, id ASC`, roomID, limit)
+	// Newest first for the LIMIT, reversed below to chronological order.
+	rows, err := p.pool.Query(ctx, `SELECT `+messageColumns+`
+		FROM messages m LEFT JOIN messages parent ON parent.id = m.reply_to_id
+		WHERE m.room_id = $1 ORDER BY m.created_at DESC, m.id DESC LIMIT $2`, roomID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	messages := make([]domain.Message, 0, limit)
 	for rows.Next() {
-		var message domain.Message
-		if err := rows.Scan(&message.ID, &message.RoomID, &message.SenderID, &message.SenderType, &message.SenderDisplayName, &message.SenderAvatarURL, &message.Content, &message.CreatedAt); err != nil {
+		message, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
 		messages = append(messages, message)
 	}
-	return messages, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+	return messages, nil
 }

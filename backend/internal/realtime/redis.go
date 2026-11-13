@@ -193,7 +193,7 @@ func (b *RedisBus) Start(parent context.Context, deliver func(string, []byte)) {
 				if packet.Host != nil {
 					packet.Data = hostEvent(packet.RoomID, *packet.Host, "presence-reconciled")
 				}
-				deliver(packet.RoomID, packet.Data)
+				b.dispatchEvent(packet, deliver)
 			}
 			_ = pubsub.Close()
 			if ctx.Err() != nil {
@@ -219,4 +219,28 @@ func (b *RedisBus) Close() {
 	}
 	b.wg.Wait()
 	_ = b.client.Close()
+}
+
+// Notifications share the existing bounded workers; periodic checks recover drops.
+func (b *RedisBus) enqueueNotification(request mediaRPCRequest) {
+	select {
+	case b.rpcRequests <- request:
+	default:
+		b.logger.Warn("notification queue full", "kind", request.Kind)
+	}
+}
+
+func (b *RedisBus) dispatchEvent(packet interNodeEvent, deliver func(string, []byte)) {
+	if packet.RoomID == accountModerationScope {
+		var envelope Envelope
+		if json.Unmarshal(packet.Data, &envelope) == nil && envelope.Type == "account.changed" {
+			b.enqueueNotification(mediaRPCRequest{RoomID: packet.RoomID, Kind: "internal.account.changed", Payload: envelope.Payload})
+		}
+		return
+	}
+	deliver(packet.RoomID, packet.Data)
+	var envelope Envelope
+	if json.Unmarshal(packet.Data, &envelope) == nil && envelope.Type == "participant.left" {
+		b.enqueueNotification(mediaRPCRequest{RoomID: packet.RoomID, Kind: "internal.skip.reconcile"})
+	}
 }

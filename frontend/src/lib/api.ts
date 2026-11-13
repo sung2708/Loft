@@ -3,6 +3,10 @@ import { API_URL } from "./config";
 import { translateUI } from "./i18n/uiText";
 import { useI18nStore } from "./i18n/useTranslation";
 import type {
+  AccountSuspension,
+  CallFeedbackPayload,
+  CallQualitySummary,
+  AdminAuditEntry,
   AdminOverview,
   AdminPage,
   AdminRoom,
@@ -73,6 +77,14 @@ async function request<T>(
 
 export const api = {
   adminEndRoom: (token: string, id: string, reason: string, note: string) => request<void>(`/api/v1/admin/rooms/${encodeURIComponent(id)}/end`, { method: "POST", body: JSON.stringify({ reason, note }) }, token),
+  adminSuspendUser: (token: string, id: string, reason: string, note: string, days: number) =>
+    request<AccountSuspension>(`/api/v1/admin/users/${encodeURIComponent(id)}/suspension`, { method: "POST", body: JSON.stringify({ reason, note, days }) }, token),
+  adminLiftSuspension: (token: string, id: string) =>
+    request<void>(`/api/v1/admin/users/${encodeURIComponent(id)}/suspension`, { method: "DELETE" }, token),
+  adminAudit: (token: string, limit = 25, offset = 0) =>
+    request<{ items: AdminAuditEntry[]; total: number; limit: number; offset: number }>(`/api/v1/admin/audit?limit=${limit}&offset=${offset}`, {}, token),
+  adminCallQuality: (token: string) =>
+    request<CallQualitySummary>("/api/v1/admin/call-quality", {}, token),
   adminOverview: (token: string) =>
     request<AdminOverview>("/api/v1/admin/overview", {}, token),
   adminUsers: (token: string, query = "", limit = 25, offset = 0) =>
@@ -183,6 +195,12 @@ export const api = {
     request<{ messages: ApiMessage[] }>(
       `/api/v1/rooms/${encodeURIComponent(id)}/messages`,
       {},
+      credential,
+    ),
+  callFeedback: (id: string, credential: RoomCredential, feedback: CallFeedbackPayload) =>
+    request<void>(
+      `/api/v1/rooms/${encodeURIComponent(id)}/call-feedback`,
+      { method: "POST", body: JSON.stringify(feedback) },
       credential,
     ),
   liveKitToken: (id: string, credential: RoomCredential) =>

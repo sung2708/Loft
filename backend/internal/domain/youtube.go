@@ -6,3 +6,6 @@ func CanCreateRoomPick(room Room, identity Identity) bool  { return CanJoin(room
 func CanVoteRoomPick(room Room, identity Identity) bool    { return CanJoin(room, identity) }
 func CanPromoteRoomPick(room Room, identity Identity) bool { return CanControlMedia(room, identity) }
 func CanChangeAutoplay(room Room, identity Identity) bool  { return CanControlMedia(room, identity) }
+
+// CanVoteSkip lets any admitted participant vote to skip the current track.
+func CanVoteSkip(room Room, identity Identity) bool { return CanJoin(room, identity) }

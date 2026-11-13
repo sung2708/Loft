@@ -20,7 +20,14 @@ import {
   useTracks,
   VideoTrack,
 } from "@livekit/components-react";
-import { Track, ConnectionState, ConnectionQuality } from "livekit-client";
+import { Track, ConnectionState, ConnectionQuality, RoomEvent } from "livekit-client";
+import {
+  finishCallStats,
+  noteCallReconnect,
+  sampleCallQuality,
+  startCallStats,
+  type QualitySample,
+} from "@/lib/callStats";
 import { motion } from "framer-motion";
 import { Hand, MicOff } from "lucide-react";
 import { api, clearCredential } from "@/lib/api";
@@ -51,6 +58,9 @@ import { isFrontCameraSelfView } from "./cameraOrientation";
 import { hasActiveScreenShare } from "./screenShare";
 import { ScreenShareViewport } from "./ScreenShareViewport";
 import type { RoomCommandType } from "@/types/room";
+import { useMediaPrefsStore } from "@/stores/useMediaPrefsStore";
+import { ROOM_MEDIA_KEY } from "./PreJoin";
+import { usePushToTalk } from "./pushToTalk";
 
 const currentText = (english: string) =>
   translateUI(useI18nStore.getState().locale, english);
@@ -59,8 +69,10 @@ interface SessionValue {
   token?: string;
   credential?: RoomCredential;
   mediaConnected: boolean;
+  /** LiveKit is re-establishing voice/video (separate from the room socket). */
+  mediaReconnecting: boolean;
   screenShareActive: boolean;
-  sendChat: (content: string) => boolean;
+  sendChat: (content: string, replyToId?: string) => boolean;
   sendCommand: (type: RoomCommandType, payload: object) => boolean;
   leave: () => void;
   mediaError: string | null;
@@ -76,6 +88,7 @@ interface SessionValue {
 const noMedia = async () => undefined;
 const SessionContext = createContext<SessionValue>({
   mediaConnected: false,
+  mediaReconnecting: false,
   screenShareActive: false,
   sendChat: () => false,
   sendCommand: () => false,
@@ -99,6 +112,16 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
   const activeDrawer = useUIStore((state) => state.activeDrawer);
   const connectionState = useRoomStore((state) => state.connectionState);
   const enteredRoom = useRef(false);
+  // Snapshot once: LiveKitRoom builds its Room from the first options only.
+  const [capture] = useState(() => {
+    const prefs = useMediaPrefsStore.getState();
+    prefs.hydrate();
+    const { audioDeviceId, videoDeviceId } = useMediaPrefsStore.getState();
+    return {
+      audioDeviceId: audioDeviceId || undefined,
+      videoDeviceId: videoDeviceId || undefined,
+    };
+  });
   const previousConnectionState = useRef(connectionState);
 
   useEffect(() => {
@@ -219,6 +242,12 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           useRoomStore.getState().roomUpdated(event.payload);
         else if (event.type === "room.appearance.updated")
           useRoomStore.getState().roomAppearanceUpdated(event.payload);
+        else if (event.type === "chat.updated")
+          useChatStore.getState().update(event.payload);
+        else if (event.type === "chat.typing")
+          useChatStore
+            .getState()
+            .setTyping(event.payload.connection_id, event.payload.display_name);
         else if (event.type === "chat.message")
           useChatStore
             .getState()
@@ -299,9 +328,13 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
   useEffect(() => {
     if (activeDrawer === "chat") useChatStore.getState().clearUnread();
   }, [activeDrawer]);
-  const sendChat = useCallback((content: string) => {
+  const sendChat = useCallback((content: string, replyToId?: string) => {
     useChatStore.getState().setSendError(null);
-    const sent = socketRef.current?.send("chat.send", { content }) ?? false;
+    const sent =
+      socketRef.current?.send(
+        "chat.send",
+        replyToId ? { content, reply_to_id: replyToId } : { content },
+      ) ?? false;
     if (!sent)
       useChatStore
         .getState()
@@ -342,10 +375,11 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     [],
   );
   const leave = useCallback(() => {
+    finishCallStats(credential);
     socketRef.current?.close(true);
     clearCredential(credential.roomId);
     router.replace(credential.type === "user" ? "/home" : "/");
-  }, [credential.roomId, credential.type, router]);
+  }, [credential, router]);
 
   // A kicked or otherwise permanently rejected application session must also
   // tear down the LiveKit tree. Keeping the media provider mounted while the
@@ -364,6 +398,13 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
           dynacast: true,
           videoCaptureDefaults: {
             resolution: { width: 1280, height: 720, frameRate: 30 },
+            deviceId: capture.videoDeviceId,
+          },
+          audioCaptureDefaults: {
+            deviceId: capture.audioDeviceId,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
           },
           publishDefaults: {
             simulcast: true,
@@ -396,6 +437,7 @@ export function RoomSession({ credential }: { credential: RoomCredential }) {
     token: credential.token,
     credential,
     mediaConnected: false,
+    mediaReconnecting: false,
     screenShareActive: false,
     sendChat,
     sendCommand,
@@ -450,28 +492,62 @@ function LiveMediaContext({
     { onlySubscribed: false },
   );
   const screenShareActive = hasActiveScreenShare(tracks);
+  const pushToTalk = useMediaPrefsStore((state) => state.pushToTalk);
+  const connected = connectionState === ConnectionState.Connected;
+
+  const setPushToTalkMic = useCallback(
+    async (enabled: boolean) => {
+      try {
+        await localParticipant.setMicrophoneEnabled(enabled);
+      } catch (error) {
+        setMediaError(formatMediaError(error, "mic"));
+        throw error;
+      }
+    },
+    [localParticipant, setMediaError],
+  );
+  usePushToTalk({
+    enabled: pushToTalk && connected && isSecureMediaContext(),
+    micEnabled: isMicrophoneEnabled,
+    setMic: setPushToTalkMic,
+  });
+
+  // Coarse call-quality sampling for the post-call rating (no raw stats).
+  useEffect(() => {
+    if (!connected || !credential) return;
+    startCallStats(credential.roomId);
+    const timer = setInterval(
+      () => sampleCallQuality(localParticipant.connectionQuality as QualitySample),
+      5000,
+    );
+    liveRoom.on(RoomEvent.Reconnecting, noteCallReconnect);
+    return () => {
+      clearInterval(timer);
+      liveRoom.off(RoomEvent.Reconnecting, noteCallReconnect);
+    };
+  }, [connected, credential, liveRoom, localParticipant]);
 
   useEffect(() => {
     if (initialized.current || connectionState !== ConnectionState.Connected)
       return;
     initialized.current = true;
     if (!isSecureMediaContext()) {
-      sessionStorage.removeItem("loft.room.media");
+      sessionStorage.removeItem(ROOM_MEDIA_KEY);
       return;
     }
     try {
       const preferences = JSON.parse(
-        sessionStorage.getItem("loft.room.media") ?? "{}",
+        sessionStorage.getItem(ROOM_MEDIA_KEY) ?? "{}",
       ) as { mic?: boolean; camera?: boolean };
-      if (preferences.mic) {
+      if (preferences.mic && !useMediaPrefsStore.getState().pushToTalk) {
         void localParticipant.setMicrophoneEnabled(true).catch((error) => {
-          sessionStorage.removeItem("loft.room.media");
+          sessionStorage.removeItem(ROOM_MEDIA_KEY);
           setMediaError(formatMediaError(error, "mic"));
         });
       }
       if (preferences.camera) {
         void localParticipant.setCameraEnabled(true).catch((error) => {
-          sessionStorage.removeItem("loft.room.media");
+          sessionStorage.removeItem(ROOM_MEDIA_KEY);
           setMediaError(formatMediaError(error, "camera"));
         });
       }
@@ -485,6 +561,9 @@ function LiveMediaContext({
       token: token ?? credential?.token,
       credential,
       mediaConnected: connectionState === ConnectionState.Connected,
+      mediaReconnecting:
+        connectionState === ConnectionState.Reconnecting ||
+        connectionState === ConnectionState.SignalReconnecting,
       screenShareActive,
       sendChat,
       sendCommand,
@@ -563,15 +642,23 @@ function LiveMediaContext({
             );
             return;
           }
+          const motion =
+            useMediaPrefsStore.getState().screenShareMode === "motion";
           await localParticipant.setScreenShareEnabled(
             !isScreenShareEnabled,
             {
               audio: true,
-              contentHint: "detail",
-              resolution: { width: 1920, height: 1080, frameRate: 15 },
+              contentHint: motion ? "motion" : "detail",
+              resolution: {
+                width: 1920,
+                height: 1080,
+                frameRate: motion ? 30 : 15,
+              },
             },
             {
-              degradationPreference: "maintain-resolution",
+              degradationPreference: motion
+                ? "maintain-framerate"
+                : "maintain-resolution",
               // One full-resolution layer: simulcast lets small tiles pull a
               // 540p layer, which makes shared text unreadable.
               simulcast: false,
@@ -832,13 +919,38 @@ function ParticipantMediaTile({
             </span>
           )}
           <span className="truncate">{name}</span>
-          <span
-            aria-label={`Connection quality: ${quality}`}
-            className={`w-2 h-2 rounded-full ${quality === ConnectionQuality.Excellent ? "bg-[#101113]" : quality === ConnectionQuality.Good ? "bg-[#101113]" : quality === ConnectionQuality.Poor ? "bg-[#101113]" : "bg-white/40"}`}
-          />
+          <SignalBars quality={quality} />
         </div>
       )}
     </motion.div>
+  );
+}
+
+const SIGNAL_LEVEL: Partial<Record<ConnectionQuality, number>> = {
+  [ConnectionQuality.Excellent]: 3,
+  [ConnectionQuality.Good]: 2,
+  [ConnectionQuality.Poor]: 1,
+};
+
+/** Monochrome signal bars: the level is carried by how many bars are lit, not by hue. */
+export function SignalBars({ quality }: { quality: ConnectionQuality }) {
+  const level = SIGNAL_LEVEL[quality] ?? 0;
+  return (
+    <span
+      role="img"
+      aria-label={`Connection quality: ${quality}`}
+      title={quality}
+      data-level={level}
+      className="inline-flex h-2.5 shrink-0 items-end gap-[2px]"
+    >
+      {[1, 2, 3].map((bar) => (
+        <span
+          key={bar}
+          className={`w-[3px] rounded-[1px] ${bar <= level ? "bg-white" : "bg-white/25"}`}
+          style={{ height: `${bar * 33}%` }}
+        />
+      ))}
+    </span>
   );
 }
 

@@ -53,6 +53,30 @@ export interface AdminUser {
   display_name: string;
   created_at: string;
   room_count: number;
+  suspension?: AccountSuspension;
+}
+
+export interface AccountSuspension {
+  user_id: string;
+  actor_id: string;
+  reason: string;
+  note: string;
+  /** Absent for a permanent suspension. */
+  expires_at?: string;
+  created_at: string;
+}
+
+export interface AdminAuditEntry {
+  id: number;
+  actor_id: string;
+  actor_name?: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  reason?: string;
+  note?: string;
+  expires_at?: string;
+  created_at: string;
 }
 
 export interface AdminRoom {
@@ -100,6 +124,7 @@ export interface HostAuthority {
 }
 
 export interface ApiMessage {
+  revision?: number;
   id: string;
   room_id: string;
   sender_id: string;
@@ -108,6 +133,18 @@ export interface ApiMessage {
   sender_avatar_url?: string;
   content: string;
   created_at: string;
+  reply_to?: ApiMessageReply;
+  edited_at?: string;
+  /** Deleted messages arrive with empty content. */
+  deleted?: boolean;
+}
+
+export interface ApiMessageReply {
+  revision?: number;
+  id: string;
+  sender_display_name: string;
+  content: string;
+  deleted?: boolean;
 }
 
 export type ConnectionState =
@@ -147,6 +184,9 @@ export interface RoomMediaState {
   position_ms: number;
   started_at: string;
   version: number;
+  /** LiveKit identities voting to skip the track whose id is skip_votes_for. */
+  skip_votes?: string[];
+  skip_votes_for?: string;
 }
 
 export type ServerEvent =
@@ -203,11 +243,18 @@ export type ServerEvent =
       payload: ApiRoom;
     }
   | {
-      type: "chat.message";
+      type: "chat.message" | "chat.updated";
       version: 1;
       event_id: string;
       room_id: string;
       payload: ApiMessage;
+    }
+  | {
+      type: "chat.typing";
+      version: 1;
+      event_id: string;
+      room_id: string;
+      payload: { connection_id: string; display_name: string };
     }
   | {
       type: "media.state";
@@ -259,6 +306,32 @@ export type ServerEvent =
       room_id: string;
       payload: { code: string; message: string };
     };
+
+export type CallFeedbackTag =
+  | "echo"
+  | "choppy_audio"
+  | "frozen_video"
+  | "lag"
+  | "disconnects"
+  | "other";
+
+export interface CallFeedbackPayload {
+  rating: number;
+  tags: CallFeedbackTag[];
+  duration_seconds: number;
+  samples_good: number;
+  samples_poor: number;
+  samples_lost: number;
+  reconnects: number;
+}
+
+export interface CallQualitySummary {
+  responses: number;
+  average_rating: number;
+  low_ratings: number;
+  poor_share: number;
+  tags: Partial<Record<CallFeedbackTag, number>>;
+}
 
 export interface RoomCredential {
   token: string;

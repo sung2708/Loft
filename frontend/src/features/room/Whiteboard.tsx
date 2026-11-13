@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
 import {
   AlignLeft,
   ArrowUpRight,
@@ -22,6 +24,7 @@ import {
   Triangle,
   Type,
   Undo2,
+  Download,
 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -42,6 +45,7 @@ import {
   type VecPoint,
 } from "@/lib/whiteboard";
 import { useBoardStore } from "@/stores/useBoardStore";
+import { createBoardHistory } from "@/lib/boardHistory";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useRoomSession } from "./RoomSession";
 import { useUIStore } from "@/stores/useUIStore";
@@ -460,10 +464,12 @@ export default function Whiteboard({ active }: { active: boolean }) {
     text: string;
   } | null>(null);
 
-  const historyRef = useRef<{ past: TLShape[][]; future: TLShape[][] }>({
-    past: [],
-    future: [],
-  });
+  // Per-user history: only this client's own edits can be undone.
+  const [history] = useState(() => createBoardHistory());
+  useEffect(
+    () => store.listen((entry) => history.record(entry), { source: "user" }),
+    [store, history],
+  );
   const dragRef = useRef<{
     kind: "pan" | "move" | "create" | "erase";
     sx: number;
@@ -820,40 +826,13 @@ export default function Whiteboard({ active }: { active: boolean }) {
     return () => clearInterval(timer);
   }, [updateCursorViews]);
 
-  const pushHistory = useCallback(() => {
-    const current = store
-      .allRecords()
-      .filter((r): r is TLShape => r.typeName === "shape");
-    historyRef.current.past.push(structuredClone(current));
-    if (historyRef.current.past.length > 40) historyRef.current.past.shift();
-    historyRef.current.future = [];
-  }, [store]);
-
+  const pushHistory = useCallback(() => history.begin(), [history]);
   const handleUndo = useCallback(() => {
-    const prev = historyRef.current.past.pop();
-    if (!prev) return;
-    const current = store
-      .allRecords()
-      .filter((r): r is TLShape => r.typeName === "shape");
-    historyRef.current.future.push(structuredClone(current));
-    const nextIds = new Set(prev.map((s) => s.id));
-    const toRemove = current.filter((s) => !nextIds.has(s.id)).map((s) => s.id);
-    if (toRemove.length) store.remove(toRemove, "user");
-    if (prev.length) store.put(prev, "user");
-  }, [store]);
-
+    history.undo(store);
+  }, [history, store]);
   const handleRedo = useCallback(() => {
-    const next = historyRef.current.future.pop();
-    if (!next) return;
-    const current = store
-      .allRecords()
-      .filter((r): r is TLShape => r.typeName === "shape");
-    historyRef.current.past.push(structuredClone(current));
-    const nextIds = new Set(next.map((s) => s.id));
-    const toRemove = current.filter((s) => !nextIds.has(s.id)).map((s) => s.id);
-    if (toRemove.length) store.remove(toRemove, "user");
-    if (next.length) store.put(next, "user");
-  }, [store]);
+    history.redo(store);
+  }, [history, store]);
 
   const handleDelete = useCallback(() => {
     if (!selectedIds.length) return;
@@ -1159,6 +1138,68 @@ export default function Whiteboard({ active }: { active: boolean }) {
     }
   };
 
+  const [exporting, setExporting] = useState(false);
+  // Rasterizes only committed shapes (no grid, cursors or selection) at 2x.
+  const exportPng = async () => {
+    if (!shapes.length || exporting) return;
+    setExporting(true);
+    try {
+      const pad = 32;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const shape of shapes) {
+        const b = shapeBounds(shape);
+        minX = Math.min(minX, b.x);
+        minY = Math.min(minY, b.y);
+        maxX = Math.max(maxX, b.x + b.w);
+        maxY = Math.max(maxY, b.y + b.h);
+      }
+      const width = Math.max(1, Math.ceil(maxX - minX + pad * 2));
+      const height = Math.max(1, Math.ceil(maxY - minY + pad * 2));
+      const host = document.createElement("div");
+      const root = createRoot(host);
+      flushSync(() =>
+        root.render(
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width={width}
+            height={height}
+            viewBox={`${minX - pad} ${minY - pad} ${width} ${height}`}
+          >
+            <rect x={minX - pad} y={minY - pad} width={width} height={height} fill="#ffffff" />
+            {shapes.map((shape) => renderShapeNode(shape, false))}
+          </svg>,
+        ),
+      );
+      const markup = host.innerHTML;
+      root.unmount();
+      const image = new Image();
+      image.decoding = "async";
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+      await image.decode();
+      // Stay under common canvas limits on large boards.
+      const scale = Math.min(2, 8192 / Math.max(width, height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(height * scale);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("canvas unavailable");
+      context.scale(scale, scale);
+      context.drawImage(image, 0, 0, width, height);
+      const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/png"));
+      if (!blob) throw new Error("export failed");
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `loft-board-${new Date().toISOString().slice(0, 10)}.png`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError(locale === "vi" ? "Không thể xuất ảnh bảng trắng" : "Couldn’t export the whiteboard");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const renderShapeNode = (s: TLShape, isDraft = false) => {
     const pal = PALETTE[s.props?.color ?? "black"] ?? PALETTE.black;
     const sz = STROKE_SIZES[s.props?.size ?? "m"] ?? STROKE_SIZES.m;
@@ -1447,6 +1488,16 @@ export default function Whiteboard({ active }: { active: boolean }) {
             className={`flex h-9 w-9 shrink-0 items-center justify-center ${LOFT_BTN}`}
           >
             <Redo2 className="h-4 w-4" strokeWidth={1.85} />
+          </button>
+          <button
+            type="button"
+            onClick={() => void exportPng()}
+            disabled={!shapes.length || exporting}
+            aria-label={locale === "vi" ? "Xuất PNG" : "Export PNG"}
+            title={locale === "vi" ? "Xuất PNG" : "Export PNG"}
+            className={`flex h-9 w-9 shrink-0 items-center justify-center disabled:opacity-40 ${LOFT_BTN}`}
+          >
+            <Download className="h-4 w-4" strokeWidth={1.85} />
           </button>
           {selectedIds.length > 0 && (
             <button

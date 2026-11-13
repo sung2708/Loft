@@ -24,6 +24,7 @@ import { getSupabase } from "@/lib/supabase/client";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useSfxStore } from "@/stores/useSfxStore";
+import { useMediaPrefsStore } from "@/stores/useMediaPrefsStore";
 import { useRoomSession } from "./RoomSession";
 import { useI18nStore } from "@/lib/i18n/useTranslation";
 import type { RoomAccent, RoomAtmosphere } from "@/types/api";
@@ -63,6 +64,9 @@ function Switch({
 }
 
 export function SettingsDrawer() {
+  const pushToTalk = useMediaPrefsStore((state) => state.pushToTalk);
+  const screenShareMode = useMediaPrefsStore((state) => state.screenShareMode);
+  const updateMediaPrefs = useMediaPrefsStore((state) => state.update);
   const reducedMotion = useReducedMotion();
   const { closeButtonRef, isModal, panelRef } = useMobileDrawerFocus(true);
   const room = useRoomStore((state) => state.room);
@@ -604,6 +608,44 @@ export function SettingsDrawer() {
                   onChange={setRoomSoundsEnabled}
                   aria-label={vi ? "Âm thanh trong phòng" : "Room sounds"}
                 />
+              </div>
+
+              {/* Push-to-talk */}
+              <div className="flex items-center justify-between pt-3 border-t border-[var(--border-loft)]">
+                <div className="min-w-0 pr-2">
+                  <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
+                    {vi ? "Bấm giữ để nói" : "Push to talk"}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-[var(--text-loft-muted)]">
+                    {vi ? "Giữ phím Space" : "Hold Space"}
+                  </div>
+                </div>
+                <Switch
+                  checked={pushToTalk}
+                  onChange={(next) => updateMediaPrefs({ pushToTalk: next })}
+                  aria-label={vi ? "Bấm giữ để nói" : "Push to talk"}
+                />
+              </div>
+
+              {/* Screen share quality */}
+              <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--border-loft)]">
+                <div className="min-w-0 text-[13px] font-medium text-[var(--text-loft-primary)]">
+                  {vi ? "Chia sẻ màn hình" : "Screen share"}
+                </div>
+                <div role="radiogroup" aria-label={vi ? "Chia sẻ màn hình" : "Screen share"} className="flex shrink-0 rounded-[10px] border border-[var(--border-loft)] p-0.5">
+                  {(["detail", "motion"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={screenShareMode === mode}
+                      onClick={() => updateMediaPrefs({ screenShareMode: mode })}
+                      className={`rounded-[8px] px-3 py-1 text-[12px] font-medium ${screenShareMode === mode ? "bg-[#101113] text-white dark:bg-[#f4f5f7] dark:text-[#101113]" : "text-[var(--text-loft-secondary)]"}`}
+                    >
+                      {mode === "detail" ? (vi ? "Văn bản" : "Text") : (vi ? "Chuyển động" : "Motion")}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Effects volume slider */}
