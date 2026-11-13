@@ -60,7 +60,7 @@ func (s *membershipStore) ResolveJoinRequest(_ context.Context, _, ownerID, user
 	return nil
 }
 
-func (f *fakeStore) Ping(context.Context) error                           { return nil }
+func (f *fakeStore) CheckReady(context.Context) error                     { return nil }
 func (f *fakeStore) UpsertProfile(context.Context, domain.Identity) error { return nil }
 func (f *fakeStore) CreateRoom(_ context.Context, params domain.CreateRoomParams) (domain.Room, error) {
 	f.created = params

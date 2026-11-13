@@ -56,14 +56,31 @@ func TestEndingRoomDisconnectsEveryoneAndStopsMedia(t *testing.T) {
 
 type endFallbackStore struct {
 	realtimeStore
-	ended atomic.Bool
+	ended     atomic.Bool
+	roomReads atomic.Int64
 }
 
 func (s *endFallbackStore) GetRoom(_ context.Context, _ string) (domain.Room, error) {
+	s.roomReads.Add(1)
 	if s.ended.Load() {
 		return s.room, domain.ErrRoomEnded
 	}
 	return s.room, nil
+}
+
+func TestRoomEndChecksShareReadPerRoom(t *testing.T) {
+	room := domain.Room{ID: "shared-check"}
+	repo := &endFallbackStore{realtimeStore: realtimeStore{room: room}}
+	hub := New(repo, nil, nil, nil, nil)
+	hub.rooms[room.ID] = &roomState{}
+	for i := 0; i < 50; i++ {
+		if hub.checkRoomEnded(context.Background(), room.ID) {
+			t.Fatal("open room reported as ended")
+		}
+	}
+	if got := repo.roomReads.Load(); got != 1 {
+		t.Fatalf("room reads = %d, want 1", got)
+	}
 }
 func TestRoomEndRecoversFromMissedNotificationOnHeartbeat(t *testing.T) {
 	room := domain.Room{ID: "missed-end", AllowGuests: true, MaxParticipants: 12}

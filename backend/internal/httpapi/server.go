@@ -323,8 +323,8 @@ func (s *Server) resolveRoom(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if err := s.store.Ping(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Database is unavailable")
+	if err := s.store.CheckReady(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "NOT_READY", "Database is unavailable or missing required migrations")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})

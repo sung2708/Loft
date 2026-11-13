@@ -8,6 +8,7 @@ import {
   DoorOpen,
   Flag,
   LayoutDashboard,
+  LogOut,
   RefreshCw,
   ScrollText,
   ShieldCheck,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { LocaleToggle } from "@/components/i18n/LocaleToggle";
-import { useAuth } from "@/lib/auth/useAuth";
+import { useAuth, useAuthStore } from "@/lib/auth/useAuth";
 import { useUIStore } from "@/stores/useUIStore";
 import { useAdminText } from "./shared";
 import {
@@ -52,12 +53,13 @@ const PARAM_KEYS = [
   "to",
 ] as const;
 
-export function AdminPage() {
+export function AdminPage({ homeHref }: { homeHref: string }) {
   const {
     isAuthenticated,
     isLoading: authLoading,
     session,
     signInWithGoogle,
+    signOut,
   } = useAuth();
   const { t } = useAdminText();
   const router = useRouter();
@@ -79,7 +81,28 @@ export function AdminPage() {
   const [revision, setRevision] = useState(0);
   const [gate, setGate] = useState<AdminGateError | null>(null);
   const [notice, setNotice] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
   const [inspecting, setInspecting] = useState<Inspecting | null>(null);
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    setNotice("");
+    try {
+      await signOut();
+    } catch {
+      setNotice(
+        useAuthStore.getState().authState.status === "anonymous"
+          ? t("Đã đăng xuất trên trình duyệt. Máy chủ chưa xác nhận kết thúc phiên.", "Signed out in this browser. The server could not confirm the session ended.")
+          : t("Không thể đăng xuất. Vui lòng thử lại.", "Could not sign out. Try again."),
+      );
+    } finally {
+      if (useAuthStore.getState().authState.status === "anonymous") {
+        setGate(null);
+        setInspecting(null);
+      }
+      setSigningOut(false);
+    }
+  }
 
   const write = useCallback(
     (next: Section, nextParams: AdminParams) => {
@@ -231,6 +254,7 @@ export function AdminPage() {
     <div className="app-canvas admin-shell min-h-dvh text-[var(--text-loft-primary)]">
       <AppHeader
         fixed={false}
+        homeHref={homeHref}
         title="Mingly"
         subtitle={t("Quản trị", "Admin")}
         actions={
@@ -249,13 +273,25 @@ export function AdminPage() {
             </label>
             <LocaleToggle />
             <Link
-              href="/"
+              href={homeHref}
               className="admin-button"
               aria-label={t("Về Mingly", "Back to Mingly")}
             >
               <ArrowLeft size={16} aria-hidden="true" />
               <span className="hidden sm:inline">Mingly</span>
             </Link>
+            {isAuthenticated && (
+              <button
+                type="button"
+                className="admin-button"
+                aria-label={t("Đăng xuất", "Sign out")}
+                disabled={signingOut}
+                onClick={handleSignOut}
+              >
+                <LogOut size={16} aria-hidden="true" />
+                <span className="hidden sm:inline">{t("Đăng xuất", "Sign out")}</span>
+              </button>
+            )}
           </>
         }
       />

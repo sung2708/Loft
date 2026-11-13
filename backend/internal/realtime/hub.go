@@ -163,6 +163,7 @@ type client struct {
 
 type roomState struct {
 	ended            bool
+	nextRoomCheck    time.Time
 	clients          map[string]*client
 	mediaCommands    chan struct{}
 	pendingSelection *pendingMediaSelection
@@ -1745,11 +1746,7 @@ func (h *Hub) readPump(ctx context.Context, c *client) error {
 				cancel()
 			}
 		case "connection.ping":
-			checkCtx, stop := context.WithTimeout(ctx, 750*time.Millisecond)
-			_, roomErr := h.store.GetRoom(checkCtx, c.roomID)
-			stop()
-			if errors.Is(roomErr, domain.ErrRoomEnded) {
-				h.endRoomLocal(c.roomID)
+			if h.checkRoomEnded(ctx, c.roomID) {
 				return nil
 			}
 
@@ -2184,8 +2181,35 @@ func (h *Hub) roomParticipants(parent context.Context, roomID string, local []do
 	return all
 }
 
+const roomCheckInterval = 15 * time.Second
+
+func (h *Hub) checkRoomEnded(ctx context.Context, roomID string) bool {
+	h.mu.Lock()
+	state := h.rooms[roomID]
+	if state == nil || state.ended {
+		h.mu.Unlock()
+		return true
+	}
+	now := time.Now()
+	if now.Before(state.nextRoomCheck) {
+		h.mu.Unlock()
+		return false
+	}
+	state.nextRoomCheck = now.Add(roomCheckInterval)
+	h.mu.Unlock()
+
+	checkCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancel()
+	_, err := h.store.GetRoom(checkCtx, roomID)
+	if errors.Is(err, domain.ErrRoomEnded) || errors.Is(err, domain.ErrNotFound) {
+		h.endRoomLocal(roomID)
+		return true
+	}
+	return false
+}
+
 func (h *Hub) writePump(ctx context.Context, c *client) error {
-	checks := time.NewTicker(15 * time.Second)
+	checks := time.NewTicker(roomCheckInterval)
 	defer checks.Stop()
 	for {
 		select {
@@ -2208,14 +2232,8 @@ func (h *Hub) writePump(ctx context.Context, c *client) error {
 			hostCtx, hostCancel := context.WithTimeout(ctx, time.Second)
 			_ = h.syncHost(hostCtx, h.roomSnapshot(c.roomID, domain.Room{ID: c.roomID}), "", "", 0)
 			hostCancel()
-			checkCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
-			_, err := h.store.GetRoom(checkCtx, c.roomID)
-			cancel()
-			if err != nil {
-				if errors.Is(err, domain.ErrRoomEnded) || errors.Is(err, domain.ErrNotFound) {
-					h.endRoomLocal(c.roomID)
-				}
-				return err
+			if h.checkRoomEnded(ctx, c.roomID) {
+				return domain.ErrRoomEnded
 			}
 		case data, ok := <-c.send:
 			if !ok {

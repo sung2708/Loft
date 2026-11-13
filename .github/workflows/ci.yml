@@ -112,6 +112,14 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
         run: pnpm exec playwright test e2e/spec001_room_access.spec.ts --project=chromium -g "late admission response"
 
+      - name: Admin browser tests
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_SITE_URL: https://mingly.site/
+          NEXT_PUBLIC_SUPABASE_URL: https://admin-test.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+        run: pnpm exec playwright test e2e/admin.spec.ts
+
       - name: Build
         working-directory: frontend
         run: pnpm build

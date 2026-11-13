@@ -228,7 +228,7 @@ type CreateRoomParams struct {
 }
 
 type Store interface {
-	Ping(context.Context) error
+	CheckReady(context.Context) error
 	UpsertProfile(context.Context, Identity) error
 	CreateRoom(context.Context, CreateRoomParams) (Room, error)
 	GetRoom(context.Context, string) (Room, error)
