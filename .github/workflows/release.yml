@@ -111,6 +111,14 @@ jobs:
         working-directory: backend
         run: go test -race ./...
 
+      - name: Test accounts and reports against migrated PostgreSQL
+        run: |
+          for file in backend/migrations/*.up.sql; do
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+          done
+          cd backend
+          LOFT_STORE_DB_TEST=1 go test -race -count=1 ./internal/store -run 'TestAccount|TestReportsQueueAndAdminViews'
+
       - name: Build
         working-directory: backend
         run: go build ./...

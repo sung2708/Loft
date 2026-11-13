@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -19,7 +20,9 @@ type Config struct {
 	LiveKitAPIKey      string
 	LiveKitAPISecret   string
 	FrontendOrigins    []string
+	TrustedProxyCIDRs  []netip.Prefix
 	AdminUserIDs       []string
+	AdminRequireMFA    bool
 	MetricsBearerToken string
 	GuestTokenSecret   string
 	GuestTokenTTL      time.Duration
@@ -42,6 +45,7 @@ func Load() (Config, error) {
 		LiveKitAPISecret:   os.Getenv("LIVEKIT_API_SECRET"),
 		FrontendOrigins:    splitCSV(env("FRONTEND_ORIGINS", "http://localhost:3000")),
 		AdminUserIDs:       splitCSV(os.Getenv("ADMIN_USER_IDS")),
+		AdminRequireMFA:    env("ADMIN_REQUIRE_MFA", "false") == "true",
 		MetricsBearerToken: os.Getenv("METRICS_BEARER_TOKEN"),
 		GuestTokenSecret:   os.Getenv("GUEST_TOKEN_SECRET"),
 		GuestTokenTTL:      12 * time.Hour,
@@ -59,6 +63,13 @@ func Load() (Config, error) {
 	}
 	if cfg.MetricsBearerToken != "" && len(cfg.MetricsBearerToken) < 32 {
 		return Config{}, errors.New("METRICS_BEARER_TOKEN must contain at least 32 characters when configured")
+	}
+	for _, value := range splitCSV(os.Getenv("TRUSTED_PROXY_CIDRS")) {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix.Bits() == 0 || prefix.Addr().Is4In6() {
+			return Config{}, errors.New("TRUSTED_PROXY_CIDRS must contain explicit IPv4 or IPv6 proxy CIDRs")
+		}
+		cfg.TrustedProxyCIDRs = append(cfg.TrustedProxyCIDRs, prefix.Masked())
 	}
 	for i, id := range cfg.AdminUserIDs {
 		parsed, err := uuid.Parse(id)

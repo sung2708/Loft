@@ -24,6 +24,7 @@ import (
 type userClaims struct {
 	Email        string `json:"email"`
 	Role         string `json:"role"`
+	AAL          string `json:"aal"`
 	UserMetadata struct {
 		Name      string `json:"name"`
 		FullName  string `json:"full_name"`
@@ -53,6 +54,8 @@ type SupabaseVerifier struct {
 	keysExpireAt     time.Time
 	refreshAfter     time.Time
 	refreshing       chan struct{}
+	overrides        ProfileOverrideSource
+	accountExists    func(context.Context, string) (bool, error)
 }
 
 func NewSupabaseVerifier(url, audience, hmacSecret string) *SupabaseVerifier {
@@ -60,6 +63,27 @@ func NewSupabaseVerifier(url, audience, hmacSecret string) *SupabaseVerifier {
 		issuer: strings.TrimRight(url, "/") + "/auth/v1", audience: audience,
 		hmacSecret: []byte(hmacSecret), client: &http.Client{Timeout: 5 * time.Second}, keys: make(map[string]any),
 	}
+}
+
+// SetAccountLookup configures the authoritative lookup before serving requests.
+func (v *SupabaseVerifier) SetAccountLookup(lookup func(context.Context, string) (bool, error)) {
+	v.accountExists = lookup
+}
+
+func (v *SupabaseVerifier) CheckAccount(ctx context.Context, userID string) error {
+	if v == nil || v.accountExists == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	exists, err := v.accountExists(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return domain.ErrUnauthorized
+	}
+	return nil
 }
 
 func (v *SupabaseVerifier) Verify(ctx context.Context, raw string) (domain.Identity, error) {
@@ -87,6 +111,9 @@ func (v *SupabaseVerifier) Verify(ctx context.Context, raw string) (domain.Ident
 	if _, err := uuid.Parse(claims.Subject); err != nil {
 		return domain.Identity{}, domain.ErrUnauthorized
 	}
+	if err := v.CheckAccount(ctx, claims.Subject); err != nil {
+		return domain.Identity{}, err
+	}
 	name := claims.UserMetadata.FullName
 	if name == "" {
 		name = claims.UserMetadata.Name
@@ -98,7 +125,11 @@ func (v *SupabaseVerifier) Verify(ctx context.Context, raw string) (domain.Ident
 	if err != nil {
 		name = "Loft member"
 	}
-	return domain.Identity{ID: claims.Subject, Type: domain.IdentityUser, DisplayName: name, AvatarURL: claims.UserMetadata.AvatarURL}, nil
+	identity := domain.Identity{ID: claims.Subject, Type: domain.IdentityUser, DisplayName: name, AvatarURL: claims.UserMetadata.AvatarURL, AAL: claims.AAL, ProviderName: name, ProviderAvatar: claims.UserMetadata.AvatarURL}
+	if identity.AAL == "" {
+		identity.AAL = "aal1"
+	}
+	return v.applyProfileOverrides(ctx, identity), nil
 }
 
 func (v *SupabaseVerifier) key(ctx context.Context, kid string) (any, error) {

@@ -1,30 +1,26 @@
 package observability
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 )
 
-func TestClientIPUsesValidForwardedAddress(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		xff    string
-		xReal  string
-		remote string
-		want   string
-	}{
-		{name: "forwarded first hop", xff: "203.0.113.8, 10.0.0.1", remote: "10.0.0.2:443", want: "203.0.113.8"},
-		{name: "valid real IP fallback", xff: "invalid", xReal: "203.0.113.9", remote: "10.0.0.2:443", want: "203.0.113.9"},
-		{name: "peer fallback", xff: "invalid", xReal: "invalid", remote: "10.0.0.2:443", want: "10.0.0.2"},
+func TestClientIPTrustsOnlyConfiguredProxies(t *testing.T) {
+	for _, tc := range []struct{ peer, forwarded, want string }{
+		{"192.0.2.5:443", "203.0.113.1", "192.0.2.5"},
+		{"10.0.0.2:443", "203.0.113.1, 192.0.2.5, 10.0.0.1", "192.0.2.5"},
+		{"10.0.0.2:443", "203.0.113.1, invalid", "10.0.0.2"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			request := httptest.NewRequest("GET", "/", nil)
-			request.RemoteAddr = tc.remote
-			request.Header.Set("X-Forwarded-For", tc.xff)
-			request.Header.Set("X-Real-IP", tc.xReal)
-			if got := ClientIP(request); got != tc.want {
-				t.Fatalf("got %q, want %q", got, tc.want)
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = tc.peer
+		req.Header.Set("X-Forwarded-For", tc.forwarded)
+		req.Header.Set("X-Real-IP", "203.0.113.9")
+		TrustedProxyMiddleware([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")})(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			if got := ClientIP(r); got != tc.want {
+				t.Fatalf("peer %s: got %s, want %s", tc.peer, got, tc.want)
 			}
-		})
+		})).ServeHTTP(httptest.NewRecorder(), req)
 	}
 }

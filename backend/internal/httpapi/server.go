@@ -42,6 +42,12 @@ type Server struct {
 	youtubeSearchLimit  *ratelimit.Limiter
 	youtubeSearchBudget *ratelimit.Limiter
 	feedbackLimit       *ratelimit.Limiter
+	adminLimit          *ratelimit.Limiter
+	adminWriteLimit     *ratelimit.Limiter
+	adminRequireMFA     bool
+	accountLimit        *ratelimit.Limiter
+	exportLimit         *ratelimit.Limiter
+	reportLimit         *ratelimit.Limiter
 	origins             map[string]struct{}
 	logger              *slog.Logger
 	bans                *moderation.BanGate
@@ -102,7 +108,10 @@ func New(store domain.Store, users *auth.SupabaseVerifier, guests *auth.GuestTok
 		bans = moderation.NewBanGate(banStore)
 	}
 	return &Server{bans: bans, store: store, deletion: guard, users: users, guests: guests, livekit: livekitService,
-		boardLimit: ratelimit.New(20, time.Second, 20), lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), youtubeSearchLimit: ratelimit.New(20, time.Minute, 5), youtubeSearchBudget: ratelimit.New(300, time.Hour, 30), feedbackLimit: ratelimit.New(10, time.Minute, 5), origins: allowed, logger: logger, metrics: observability.NewMetrics()}
+		boardLimit: ratelimit.New(20, time.Second, 20), lookupLimit: ratelimit.New(30, time.Minute, 10), guestLimit: ratelimit.New(10, time.Minute, 5), passwordLimit: ratelimit.New(5, time.Minute, 3), roomLimit: ratelimit.New(10, time.Minute, 3), youtubePickLimit: ratelimit.New(10, time.Minute, 3), youtubeSearchLimit: ratelimit.New(20, time.Minute, 5), youtubeSearchBudget: ratelimit.New(300, time.Hour, 30), feedbackLimit: ratelimit.New(10, time.Minute, 5),
+		adminLimit: ratelimit.New(240, time.Minute, 60), adminWriteLimit: ratelimit.New(30, time.Minute, 10),
+		accountLimit: ratelimit.New(20, time.Hour, 5), exportLimit: ratelimit.New(4, time.Hour, 2), reportLimit: ratelimit.New(10, time.Hour, 5),
+		origins: allowed, logger: logger, metrics: observability.NewMetrics()}
 }
 
 // ConfigureObservability is called once during process bootstrap before routes
@@ -137,6 +146,11 @@ func (s *Server) ConfigureDistributedRateLimits(remote ratelimit.Distributed) {
 	s.youtubeSearchLimit.SetDistributed("youtube_search_user", remote)
 	s.youtubeSearchBudget.SetDistributed("youtube_search_shared", remote)
 	s.boardLimit.SetDistributed("board_write", remote)
+	s.adminLimit.SetDistributed("admin_read", remote)
+	s.adminWriteLimit.SetDistributed("admin_write", remote)
+	s.accountLimit.SetDistributed("account_update", remote)
+	s.exportLimit.SetDistributed("account_export", remote)
+	s.reportLimit.SetDistributed("content_report", remote)
 }
 
 func (s *Server) Routes(ws http.Handler) http.Handler {
@@ -183,13 +197,18 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Use(s.suspensionGate)
 			r.Route("/admin", func(r chi.Router) {
+				r.Use(s.adminGate)
 				r.Get("/overview", s.adminOverview)
 				r.Get("/users", s.adminUsers)
+				r.Get("/users/{userID}", s.adminUserDetail)
 				r.Get("/rooms", s.adminRooms)
 				r.Post("/rooms/{roomID}/end", s.adminEndRoom)
 				r.Post("/users/{userID}/suspension", s.adminSuspendUser)
 				r.Delete("/users/{userID}/suspension", s.adminLiftSuspension)
 				r.Get("/audit", s.adminAudit)
+				r.Get("/audit/export", s.adminAuditExport)
+				r.Get("/reports", s.adminReports)
+				r.Patch("/reports/{reportID}", s.adminResolveReport)
 				r.Get("/call-quality", s.adminCallQuality)
 			})
 			r.Get("/youtube/search", s.youtubeSearch)
@@ -210,7 +229,15 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 			r.Get("/rooms/{roomID}/messages", s.messages)
 			r.Post("/rooms/{roomID}/livekit-token", s.liveKitToken)
 			r.Post("/rooms/{roomID}/call-feedback", s.callFeedback)
+			r.Post("/rooms/{roomID}/reports", s.createReport)
+			r.Delete("/rooms/{roomID}/visit", s.forgetRoomVisit)
 			r.Get("/users/me", s.me)
+			r.Patch("/users/me", s.updateAccount)
+			r.Get("/users/me/account", s.account)
+			r.Get("/users/me/export", s.exportAccount)
+			r.Post("/users/me/deletion", s.scheduleAccountDeletion)
+			r.Delete("/users/me/deletion", s.cancelAccountDeletion)
+			r.Get("/rooms/recent", s.recentRooms)
 			r.Get("/rooms", s.listRooms)
 			r.Post("/rooms", s.createRoom)
 			r.Delete("/rooms/{roomID}", s.deleteRoom)
@@ -476,7 +503,11 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, "list rooms", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms})
+	ids := make([]string, len(rooms))
+	for i, room := range rooms {
+		ids[i] = room.ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms, "live": s.liveCounts(r.Context(), ids)})
 }
 
 func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
@@ -589,6 +620,7 @@ func (s *Server) liveKitToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "LIVEKIT_TOKEN_FAILED", "Voice and video are temporarily unavailable")
 		return
 	}
+	s.recordVisit(r, identity, room.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
@@ -744,7 +776,17 @@ func (s *Server) resolveJoinRequest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"approved": input.Approve})
 }
 
+type requestAuthKey struct{}
+
+type requestAuth struct {
+	identity domain.Identity
+	err      error
+}
+
 func (s *Server) authenticatedUser(r *http.Request) (domain.Identity, error) {
+	if result, ok := r.Context().Value(requestAuthKey{}).(requestAuth); ok {
+		return result.identity, result.err
+	}
 	header := r.Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {
 		return domain.Identity{}, domain.ErrUnauthorized
@@ -755,7 +797,7 @@ func (s *Server) authenticatedUser(r *http.Request) (domain.Identity, error) {
 	}
 	// Suspended accounts are rejected at every authenticated REST entry point.
 	if err := s.bans.Check(r.Context(), identity); err != nil {
-		return domain.Identity{}, err
+		return identity, err
 	}
 	return identity, nil
 }
@@ -764,14 +806,32 @@ func (s *Server) authenticatedUser(r *http.Request) (domain.Identity, error) {
 // runs, so clients can show a specific message instead of a sign-in loop.
 func (s *Server) suspensionGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.bans != nil && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-			if _, err := s.authenticatedUser(r); errors.Is(err, domain.ErrAccountSuspended) {
-				writeError(w, http.StatusForbidden, "ACCOUNT_SUSPENDED", "This account is suspended")
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			identity, err := s.authenticatedUser(r)
+			if errors.Is(err, domain.ErrAccountSuspended) {
+				s.writeSuspended(w, r, identity.ID)
 				return
 			}
+			r = r.WithContext(context.WithValue(r.Context(), requestAuthKey{}, requestAuth{identity, err}))
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// writeSuspended tells a member their own suspension's reason category and end
+// date. The admin's note stays internal.
+func (s *Server) writeSuspended(w http.ResponseWriter, r *http.Request, userID string) {
+	type suspension struct {
+		Reason    string     `json:"reason"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	body := map[string]any{"code": "ACCOUNT_SUSPENDED", "message": "This account is suspended"}
+	if bans, ok := s.store.(domain.AccountBanStore); ok {
+		if ban, err := bans.ActiveAccountBan(r.Context(), userID); err == nil && ban != nil {
+			body["suspension"] = suspension{Reason: ban.Reason, ExpiresAt: ban.ExpiresAt}
+		}
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{"error": body})
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {

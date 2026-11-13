@@ -6,6 +6,8 @@ import (
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"strings"
+
+	"loft/backend/internal/domain"
 )
 
 const MaxBoardRecords = 1500
@@ -103,6 +105,12 @@ func (p *Postgres) PatchBoard(ctx context.Context, roomID string, patch BoardPat
 		return BoardSnapshot{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockOpenRoom(ctx, tx, roomID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = domain.ErrNotFound
+		}
+		return BoardSnapshot{}, err
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO room_whiteboards(room_id) VALUES($1) ON CONFLICT DO NOTHING`, roomID)
 	if err != nil {
 		return BoardSnapshot{}, err

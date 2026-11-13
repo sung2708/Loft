@@ -62,7 +62,7 @@ type adminFixture struct {
 func (*adminFixture) AdminOverview(context.Context) (domain.AdminOverview, error) {
 	return domain.AdminOverview{}, nil
 }
-func (*adminFixture) ListAdminUsers(context.Context, string, int, int) ([]domain.AdminUser, int, error) {
+func (*adminFixture) ListAdminUsers(context.Context, string, domain.AdminUserStatus, int, int) ([]domain.AdminUser, int, error) {
 	return []domain.AdminUser{}, 0, nil
 }
 func (f *adminFixture) ListAdminRooms(_ context.Context, query, status, owner string, _, _ int) ([]domain.AdminRoom, int, error) {

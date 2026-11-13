@@ -51,7 +51,7 @@ func (f *banFixture) LiftAccountBan(_ context.Context, userID, _ string) error {
 	f.audit = append(f.audit, domain.AdminAuditEntry{Action: "account.unsuspend", TargetID: userID})
 	return nil
 }
-func (f *banFixture) ListAdminAudit(context.Context, int, int) ([]domain.AdminAuditEntry, int, error) {
+func (f *banFixture) ListAdminAudit(context.Context, domain.AdminAuditFilter, int, int) ([]domain.AdminAuditEntry, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]domain.AdminAuditEntry(nil), f.audit...), len(f.audit), nil
@@ -120,6 +120,10 @@ func TestAccountSuspensionLifecycle(t *testing.T) {
 	w := do("GET", "/api/v1/users/me", token(userID), "")
 	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "ACCOUNT_SUSPENDED") {
 		t.Fatalf("suspended user not blocked: %d %s", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, `"reason":"spam"`) ||
+		!strings.Contains(body, `"expires_at":`) || strings.Contains(body, "repeated scam links") {
+		t.Fatalf("incorrect suspension details: %s", body)
 	}
 	if w := do("DELETE", "/api/v1/admin/users/"+userID+"/suspension", token(adminID), ""); w.Code != http.StatusNoContent {
 		t.Fatalf("lift failed: %d", w.Code)

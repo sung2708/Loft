@@ -15,11 +15,9 @@ interface I18nStore {
   initLocale: () => void;
 }
 
-export const useI18nStore = create<I18nStore>((set, _get, api) => {
-  api.getInitialState = () => api.getState();
-  return {
-    locale: "vi",
-    t: vi,
+export const useI18nStore = create<I18nStore>((set) => ({
+  locale: "vi",
+  t: vi,
   setLocale: (locale: Locale) => {
     if (typeof document !== "undefined") document.documentElement.lang = locale;
     try {
@@ -53,8 +51,7 @@ export const useI18nStore = create<I18nStore>((set, _get, api) => {
       // Ignore storage errors
     }
   },
-  };
-});
+}));
 
 export function useTranslation() {
   const { locale, t, setLocale, toggleLocale } = useI18nStore();

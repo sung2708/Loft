@@ -89,15 +89,11 @@ describe("SettingsDrawer", () => {
     expect(html).toContain("Âm thanh");
   });
 
-  it("renders with English labels when locale is en", () => {
+  it("renders the default locale on the server even if the live store is English", () => {
     useI18nStore.getState().setLocale("en");
     const html = renderToStaticMarkup(<SettingsDrawer />);
 
-    expect(html).toContain("Room settings");
-    expect(html).toContain("General");
-    expect(html).toContain("Room name");
-    expect(html).toContain("Allow guests");
-    expect(html).toContain("Require password");
-    expect(html).toContain("Audio &amp; SFX");
+    expect(html).toContain("Cài đặt phòng");
+    expect(html).not.toContain("Room settings");
   });
 });

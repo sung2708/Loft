@@ -3,7 +3,18 @@ import { API_URL } from "./config";
 import { translateUI } from "./i18n/uiText";
 import { useI18nStore } from "./i18n/useTranslation";
 import type {
+  AccountProfile,
   AccountSuspension,
+  AdminAuditFilter,
+  AdminReport,
+  AdminUserDetail,
+  AdminUserStatus,
+  LiveCounts,
+  ModerationReason,
+  OwnSuspension,
+  RecentRoom,
+  ReportStatus,
+  ReportTargetType,
   CallFeedbackPayload,
   CallQualitySummary,
   AdminAuditEntry,
@@ -19,7 +30,7 @@ import type {
 } from "@/types/api";
 
 interface ApiErrorBody {
-  error?: { code?: string; message?: string };
+  error?: { code?: string; message?: string; suspension?: OwnSuspension };
 }
 
 export class ApiError extends Error {
@@ -27,9 +38,45 @@ export class ApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly status: number,
+    /** Present on ACCOUNT_SUSPENDED: the member's own suspension. */
+    public readonly suspension?: OwnSuspension,
   ) {
     super(message);
   }
+}
+
+const query = (params: Record<string, string | number | undefined>) =>
+  new URLSearchParams(
+    Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== "")
+      .map(([key, value]) => [key, String(value)]),
+  ).toString();
+
+/** Downloads an authenticated response as a file, keeping the server's name. */
+async function download(path: string, token: string, fallbackName: string) {
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+    throw new ApiError(
+      body.error?.code ?? "REQUEST_FAILED",
+      translateUI(useI18nStore.getState().locale, body.error?.message ?? "Request failed"),
+      response.status,
+    );
+  }
+  const name =
+    /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ??
+    fallbackName;
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function request<T>(
@@ -69,6 +116,7 @@ async function request<T>(
         body.error?.message ?? "Request failed",
       ),
       response.status,
+      body.error?.suspension,
     );
   }
   if (response.status === 204) return undefined as T;
@@ -81,18 +129,22 @@ export const api = {
     request<AccountSuspension>(`/api/v1/admin/users/${encodeURIComponent(id)}/suspension`, { method: "POST", body: JSON.stringify({ reason, note, days }) }, token),
   adminLiftSuspension: (token: string, id: string) =>
     request<void>(`/api/v1/admin/users/${encodeURIComponent(id)}/suspension`, { method: "DELETE" }, token),
-  adminAudit: (token: string, limit = 25, offset = 0) =>
-    request<{ items: AdminAuditEntry[]; total: number; limit: number; offset: number }>(`/api/v1/admin/audit?limit=${limit}&offset=${offset}`, {}, token),
+  adminAudit: (token: string, filter: AdminAuditFilter = {}, limit = 25, offset = 0) =>
+    request<AdminPage<AdminAuditEntry>>(`/api/v1/admin/audit?${query({ ...filter, limit, offset })}`, {}, token),
+  adminAuditExport: (token: string, filter: AdminAuditFilter = {}) =>
+    download(`/api/v1/admin/audit/export?${query({ ...filter })}`, token, "mingly-audit.csv"),
+  adminReports: (token: string, status: ReportStatus = "open", limit = 25, offset = 0) =>
+    request<AdminPage<AdminReport>>(`/api/v1/admin/reports?${query({ status, limit, offset })}`, {}, token),
+  adminResolveReport: (token: string, id: number, status: Exclude<ReportStatus, "open">, note = "") =>
+    request<AdminReport>(`/api/v1/admin/reports/${id}`, { method: "PATCH", body: JSON.stringify({ status, note }) }, token),
+  adminUser: (token: string, id: string) =>
+    request<AdminUserDetail>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {}, token),
   adminCallQuality: (token: string) =>
     request<CallQualitySummary>("/api/v1/admin/call-quality", {}, token),
   adminOverview: (token: string) =>
     request<AdminOverview>("/api/v1/admin/overview", {}, token),
-  adminUsers: (token: string, query = "", limit = 25, offset = 0) =>
-    request<AdminPage<AdminUser>>(
-      `/api/v1/admin/users?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`,
-      {},
-      token,
-    ),
+  adminUsers: (token: string, q = "", limit = 25, offset = 0, status: AdminUserStatus = "") =>
+    request<AdminPage<AdminUser>>(`/api/v1/admin/users?${query({ q, limit, offset, status })}`, {}, token),
   adminRooms: (token: string, query = "", limit = 25, offset = 0, status = "", owner = "") =>
     request<AdminPage<AdminRoom>>(
       `/api/v1/admin/rooms?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}&status=${encodeURIComponent(status)}&owner=${encodeURIComponent(owner)}`,
@@ -146,8 +198,30 @@ export const api = {
       token,
     ),
   me: (token: string) => request<ApiIdentity>("/api/v1/users/me", {}, token),
+  account: (token: string) => request<AccountProfile>("/api/v1/users/me/account", {}, token),
+  updateAccount: (token: string, input: { display_name: string | null; hide_avatar: boolean }) =>
+    request<AccountProfile>("/api/v1/users/me", { method: "PATCH", body: JSON.stringify(input) }, token),
+  scheduleAccountDeletion: (token: string) =>
+    request<{ deletion_scheduled_for: string }>("/api/v1/users/me/deletion", { method: "POST", body: JSON.stringify({ confirm: "DELETE" }) }, token),
+  cancelAccountDeletion: (token: string) =>
+    request<void>("/api/v1/users/me/deletion", { method: "DELETE" }, token),
+  exportAccount: (token: string) => download("/api/v1/users/me/export", token, "mingly-data.json"),
   rooms: (token: string) =>
-    request<{ rooms: ApiRoom[] }>("/api/v1/rooms", {}, token),
+    request<{ rooms: ApiRoom[]; live?: LiveCounts }>("/api/v1/rooms", {}, token),
+  recentRooms: (token: string) =>
+    request<{ rooms: RecentRoom[]; live?: LiveCounts }>("/api/v1/rooms/recent", {}, token),
+  forgetRecentRoom: (token: string, id: string) =>
+    request<void>(`/api/v1/rooms/${encodeURIComponent(id)}/visit`, { method: "DELETE" }, token),
+  report: (
+    id: string,
+    credential: RoomCredential,
+    input: { target_type: ReportTargetType; target_id: string; target_name: string; reason: ModerationReason; details: string },
+  ) =>
+    request<{ id: number; status: ReportStatus }>(
+      `/api/v1/rooms/${encodeURIComponent(id)}/reports`,
+      { method: "POST", body: JSON.stringify(input) },
+      credential,
+    ),
   createRoom: (
     token: string,
     name: string,

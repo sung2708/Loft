@@ -36,6 +36,10 @@ type Identity struct {
 	DisplayName string       `json:"display_name"`
 	AvatarURL   string       `json:"avatar_url,omitempty"`
 	RoomID      string       `json:"-"`
+	// AAL is the Supabase authenticator assurance level ("aal1" or "aal2").
+	AAL            string `json:"-"`
+	ProviderName   string `json:"-"`
+	ProviderAvatar string `json:"-"`
 }
 
 func (i Identity) LiveKitIdentity() string { return string(i.Type) + ":" + i.ID }
@@ -235,22 +239,59 @@ type Store interface {
 	Close()
 }
 
+type AdminDailyCount struct {
+	Date  string `json:"date"`
+	Users int    `json:"users"`
+	Rooms int    `json:"rooms"`
+}
+
+// AdminTrendDays is the length of the daily signup and room series.
+const AdminTrendDays = 14
+
 type AdminOverview struct {
-	Users      int `json:"users"`
-	Rooms      int `json:"rooms"`
-	OpenRooms  int `json:"open_rooms"`
-	EndedRooms int `json:"ended_rooms"`
-	NewUsers   int `json:"new_users"`
-	NewRooms   int `json:"new_rooms"`
+	Users            int               `json:"users"`
+	Rooms            int               `json:"rooms"`
+	OpenRooms        int               `json:"open_rooms"`
+	EndedRooms       int               `json:"ended_rooms"`
+	NewUsers         int               `json:"new_users"`
+	NewRooms         int               `json:"new_rooms"`
+	OpenReports      int               `json:"open_reports"`
+	SuspendedUsers   int               `json:"suspended_users"`
+	PendingDeletions int               `json:"pending_deletions"`
+	Daily            []AdminDailyCount `json:"daily"`
 }
 
 type AdminUser struct {
-	ID          string      `json:"id"`
-	DisplayName string      `json:"display_name"`
-	CreatedAt   time.Time   `json:"created_at"`
-	RoomCount   int         `json:"room_count"`
-	Suspension  *AccountBan `json:"suspension,omitempty"`
+	ID                   string      `json:"id"`
+	DisplayName          string      `json:"display_name"`
+	CreatedAt            time.Time   `json:"created_at"`
+	RoomCount            int         `json:"room_count"`
+	Suspension           *AccountBan `json:"suspension,omitempty"`
+	DeletionScheduledFor *time.Time  `json:"deletion_scheduled_for,omitempty"`
+	OpenReports          int         `json:"open_reports"`
 }
+
+// AdminUserDetail adds history to one account. It never carries email,
+// message content or room passwords.
+type AdminUserDetail struct {
+	AdminUser
+	LastSeenAt    time.Time         `json:"last_seen_at"`
+	MemberRooms   int               `json:"member_rooms"`
+	MessagesSent  int               `json:"messages_sent"`
+	TotalReports  int               `json:"total_reports"`
+	ReportsFiled  int               `json:"reports_filed"`
+	History       []AdminAuditEntry `json:"history"`
+	RecentReports []Report          `json:"recent_reports"`
+}
+
+type AdminUserStatus string
+
+const (
+	AdminUsersAll       AdminUserStatus = ""
+	AdminUsersSuspended AdminUserStatus = "suspended"
+	AdminUsersDeleting  AdminUserStatus = "deleting"
+	AdminUsersReported  AdminUserStatus = "reported"
+)
 
 type RoomModeration struct {
 	ActorID   string    `json:"actor_id"`
@@ -284,8 +325,13 @@ type AdminRoom struct {
 
 type AdminStore interface {
 	AdminOverview(context.Context) (AdminOverview, error)
-	ListAdminUsers(context.Context, string, int, int) ([]AdminUser, int, error)
+	ListAdminUsers(context.Context, string, AdminUserStatus, int, int) ([]AdminUser, int, error)
 	ListAdminRooms(context.Context, string, string, string, int, int) ([]AdminRoom, int, error)
+}
+
+// AdminUserDetailStore returns ErrNotFound for an unknown account.
+type AdminUserDetailStore interface {
+	AdminUserDetail(context.Context, string) (AdminUserDetail, error)
 }
 
 func ValidateDisplayName(value string) (string, error) {

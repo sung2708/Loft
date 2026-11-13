@@ -39,6 +39,13 @@ export interface ApiIdentity {
   avatar_url?: string;
 }
 
+export interface AdminDailyCount {
+  /** UTC calendar day, YYYY-MM-DD. */
+  date: string;
+  users: number;
+  rooms: number;
+}
+
 export interface AdminOverview {
   open_rooms: number;
   ended_rooms: number;
@@ -46,6 +53,10 @@ export interface AdminOverview {
   new_rooms: number;
   users: number;
   rooms: number;
+  open_reports: number;
+  suspended_users: number;
+  pending_deletions: number;
+  daily: AdminDailyCount[];
 }
 
 export interface AdminUser {
@@ -54,6 +65,78 @@ export interface AdminUser {
   created_at: string;
   room_count: number;
   suspension?: AccountSuspension;
+  deletion_scheduled_for?: string;
+  open_reports: number;
+}
+
+export type AdminUserStatus = "" | "suspended" | "deleting" | "reported";
+
+export type ModerationReason = "illegal" | "policy" | "safety" | "spam" | "other";
+export type ReportTargetType = "user" | "guest" | "room";
+export type ReportStatus = "open" | "actioned" | "dismissed";
+
+export interface AdminReport {
+  id: number;
+  reporter_type: IdentityType;
+  reporter_id: string;
+  reporter_name: string;
+  room_id: string;
+  room_name: string;
+  target_type: ReportTargetType;
+  target_id: string;
+  target_name: string;
+  reason: ModerationReason;
+  details: string;
+  status: ReportStatus;
+  resolved_by?: string;
+  resolution_note?: string;
+  resolved_at?: string;
+  created_at: string;
+  /** Every report against the same target, this one included. */
+  target_reports: number;
+}
+
+export interface AdminUserDetail extends AdminUser {
+  last_seen_at: string;
+  member_rooms: number;
+  messages_sent: number;
+  total_reports: number;
+  reports_filed: number;
+  history: AdminAuditEntry[];
+  recent_reports: AdminReport[];
+}
+
+export interface AdminAuditFilter {
+  action?: string;
+  actor?: string;
+  target?: string;
+  /** YYYY-MM-DD, UTC. */
+  from?: string;
+  to?: string;
+}
+
+export interface AccountProfile {
+  id: string;
+  display_name: string;
+  custom_display_name: string | null;
+  avatar_url?: string;
+  hide_avatar: boolean;
+  created_at: string;
+  deletion_scheduled_for: string | null;
+}
+
+export interface RecentRoom extends ApiRoom {
+  owner_name: string;
+  last_visited_at: string;
+}
+
+/** People currently in each room, by room id. Rooms with nobody are absent. */
+export type LiveCounts = Record<string, number>;
+
+/** What a suspended member is told about their own suspension. */
+export interface OwnSuspension {
+  reason: ModerationReason;
+  expires_at: string | null;
 }
 
 export interface AccountSuspension {
@@ -206,6 +289,13 @@ export type ServerEvent =
       event_id: string;
       room_id: string;
       payload: ApiParticipant;
+    }
+  | {
+      type: "participant.avatar";
+      version: 1;
+      event_id: string;
+      room_id: string;
+      payload: { connection_id: string; avatar_url: string };
     }
   | {
       type: "participant.left";

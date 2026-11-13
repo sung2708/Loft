@@ -68,20 +68,25 @@ func (p *Postgres) LiftAccountBan(ctx context.Context, userID, actorID string) e
 	return tx.Commit(ctx)
 }
 
-func (p *Postgres) ListAdminAudit(ctx context.Context, limit, offset int) ([]domain.AdminAuditEntry, int, error) {
+const adminAuditFilter = `($1 = '' OR a.action = $1) AND ($2 = '' OR a.actor_id::text = $2) AND ($3 = '' OR a.target_id = $3)
+	AND ($4::timestamptz IS NULL OR a.created_at >= $4) AND ($5::timestamptz IS NULL OR a.created_at < $5)`
+
+func (p *Postgres) ListAdminAudit(ctx context.Context, filter domain.AdminAuditFilter, limit, offset int) ([]domain.AdminAuditEntry, int, error) {
+	args := []any{filter.Action, filter.ActorID, filter.TargetID, filter.From, filter.To}
 	var total int
-	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_audit_log`).Scan(&total); err != nil {
+	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_audit_log a WHERE `+adminAuditFilter, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := p.pool.Query(ctx, `SELECT a.id, a.actor_id, COALESCE(p.display_name, ''), a.action, a.target_type, a.target_id,
 		COALESCE(a.reason, ''), COALESCE(a.note, ''), a.expires_at, a.created_at
 		FROM admin_audit_log a LEFT JOIN profiles p ON p.id = a.actor_id
-		ORDER BY a.created_at DESC, a.id DESC LIMIT $1 OFFSET $2`, limit, offset)
+		WHERE `+adminAuditFilter+`
+		ORDER BY a.created_at DESC, a.id DESC LIMIT $6 OFFSET $7`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
-	entries := make([]domain.AdminAuditEntry, 0, limit)
+	entries := make([]domain.AdminAuditEntry, 0, min(limit, 100))
 	for rows.Next() {
 		var e domain.AdminAuditEntry
 		if err := rows.Scan(&e.ID, &e.ActorID, &e.ActorName, &e.Action, &e.TargetType, &e.TargetID, &e.Reason, &e.Note, &e.ExpiresAt, &e.CreatedAt); err != nil {

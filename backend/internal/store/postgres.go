@@ -22,41 +22,135 @@ func (p *Postgres) AdminOverview(ctx context.Context) (domain.AdminOverview, err
         (SELECT COUNT(*) FROM rooms r WHERE NOT EXISTS (SELECT 1 FROM room_endings e WHERE e.room_id=r.id)),
         (SELECT COUNT(*) FROM room_endings),
         (SELECT COUNT(*) FROM profiles WHERE created_at >= now() - interval '7 days'),
-        (SELECT COUNT(*) FROM rooms WHERE created_at >= now() - interval '7 days')`).Scan(&overview.Users, &overview.Rooms, &overview.OpenRooms, &overview.EndedRooms, &overview.NewUsers, &overview.NewRooms)
+        (SELECT COUNT(*) FROM rooms WHERE created_at >= now() - interval '7 days'),
+        (SELECT COUNT(*) FROM content_reports WHERE status = 'open'),
+        (SELECT COUNT(*) FROM account_bans WHERE expires_at IS NULL OR expires_at > now()),
+        (SELECT COUNT(*) FROM account_deletions)`).Scan(&overview.Users, &overview.Rooms, &overview.OpenRooms, &overview.EndedRooms, &overview.NewUsers, &overview.NewRooms,
+		&overview.OpenReports, &overview.SuspendedUsers, &overview.PendingDeletions)
+	if err != nil {
+		return overview, err
+	}
+	// Days are UTC calendar days; the last bucket is today so far.
+	rows, err := p.pool.Query(ctx, `WITH bounds AS (
+			SELECT (now() AT TIME ZONE 'UTC')::date AS today
+		), days AS (
+			SELECT today - n AS day FROM bounds CROSS JOIN generate_series(0, $1::int - 1) AS g(n)
+		), signups AS (
+			SELECT (created_at AT TIME ZONE 'UTC')::date AS day, COUNT(*)::int AS total
+			FROM profiles CROSS JOIN bounds
+			WHERE created_at >= ((today - ($1::int - 1))::timestamp AT TIME ZONE 'UTC')
+				AND created_at < ((today + 1)::timestamp AT TIME ZONE 'UTC')
+			GROUP BY 1
+		), created_rooms AS (
+			SELECT (created_at AT TIME ZONE 'UTC')::date AS day, COUNT(*)::int AS total
+			FROM rooms CROSS JOIN bounds
+			WHERE created_at >= ((today - ($1::int - 1))::timestamp AT TIME ZONE 'UTC')
+				AND created_at < ((today + 1)::timestamp AT TIME ZONE 'UTC')
+			GROUP BY 1
+		)
+		SELECT to_char(d.day, 'YYYY-MM-DD'), COALESCE(s.total, 0), COALESCE(r.total, 0)
+		FROM days d LEFT JOIN signups s ON s.day = d.day LEFT JOIN created_rooms r ON r.day = d.day
+		ORDER BY d.day`, domain.AdminTrendDays)
+	if err != nil {
+		return overview, err
+	}
+	overview.Daily, err = pgx.CollectRows(rows, pgx.RowToStructByPos[domain.AdminDailyCount])
 	return overview, err
 }
 
-func (p *Postgres) ListAdminUsers(ctx context.Context, query string, limit, offset int) ([]domain.AdminUser, int, error) {
+const adminUserFilter = `($1 = '' OR strpos(lower(p.display_name), $1) > 0 OR p.id::text = $1)
+	AND ($2 = ''
+		OR ($2 = 'suspended' AND EXISTS (SELECT 1 FROM account_bans s WHERE s.user_id = p.id AND (s.expires_at IS NULL OR s.expires_at > NOW())))
+		OR ($2 = 'deleting' AND EXISTS (SELECT 1 FROM account_deletions d WHERE d.user_id = p.id))
+		OR ($2 = 'reported' AND EXISTS (SELECT 1 FROM content_reports c WHERE c.target_type = 'user' AND c.target_id = p.id AND c.status = 'open')))`
+
+const adminUserColumns = `p.id, p.display_name, p.created_at,
+		(SELECT COUNT(*)::int FROM rooms r WHERE r.owner_id = p.id),
+		b.actor_id, b.reason, b.note, b.expires_at, b.created_at,
+		(SELECT d.scheduled_for FROM account_deletions d WHERE d.user_id = p.id),
+		(SELECT COUNT(*)::int FROM content_reports c WHERE c.target_type = 'user' AND c.target_id = p.id AND c.status = 'open')`
+
+func scanAdminUser(row rowScanner) (domain.AdminUser, error) {
+	var user domain.AdminUser
+	var actorID, reason, note *string
+	var expiresAt, bannedAt *time.Time
+	if err := row.Scan(&user.ID, &user.DisplayName, &user.CreatedAt, &user.RoomCount, &actorID, &reason, &note, &expiresAt, &bannedAt,
+		&user.DeletionScheduledFor, &user.OpenReports); err != nil {
+		return user, err
+	}
+	if actorID != nil && reason != nil && note != nil && bannedAt != nil {
+		user.Suspension = &domain.AccountBan{UserID: user.ID, ActorID: *actorID, Reason: *reason, Note: *note, ExpiresAt: expiresAt, CreatedAt: *bannedAt}
+	}
+	return user, nil
+}
+
+func (p *Postgres) ListAdminUsers(ctx context.Context, query string, status domain.AdminUserStatus, limit, offset int) ([]domain.AdminUser, int, error) {
 	query = strings.ToLower(strings.TrimSpace(query))
 	var total int
-	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM profiles WHERE $1 = '' OR strpos(lower(display_name), $1) > 0 OR id::text = $1`, query).Scan(&total); err != nil {
+	if err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM profiles p WHERE `+adminUserFilter, query, status).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := p.pool.Query(ctx, `SELECT p.id, p.display_name, p.created_at,
-		(SELECT COUNT(*)::int FROM rooms r WHERE r.owner_id = p.id),
-		b.actor_id, b.reason, b.note, b.expires_at, b.created_at
+	rows, err := p.pool.Query(ctx, `SELECT `+adminUserColumns+`
 		FROM profiles p
 		LEFT JOIN account_bans b ON b.user_id = p.id AND (b.expires_at IS NULL OR b.expires_at > NOW())
-		WHERE $1 = '' OR strpos(lower(p.display_name), $1) > 0 OR p.id::text = $1
-		ORDER BY p.created_at DESC, p.id LIMIT $2 OFFSET $3`, query, limit, offset)
+		WHERE `+adminUserFilter+`
+		ORDER BY p.created_at DESC, p.id LIMIT $3 OFFSET $4`, query, status, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 	users := make([]domain.AdminUser, 0)
 	for rows.Next() {
-		var user domain.AdminUser
-		var actorID, reason, note *string
-		var expiresAt, bannedAt *time.Time
-		if err := rows.Scan(&user.ID, &user.DisplayName, &user.CreatedAt, &user.RoomCount, &actorID, &reason, &note, &expiresAt, &bannedAt); err != nil {
+		user, err := scanAdminUser(rows)
+		if err != nil {
 			return nil, 0, err
-		}
-		if actorID != nil && reason != nil && note != nil && bannedAt != nil {
-			user.Suspension = &domain.AccountBan{UserID: user.ID, ActorID: *actorID, Reason: *reason, Note: *note, ExpiresAt: expiresAt, CreatedAt: *bannedAt}
 		}
 		users = append(users, user)
 	}
 	return users, total, rows.Err()
+}
+
+func (p *Postgres) AdminUserDetail(ctx context.Context, userID string) (domain.AdminUserDetail, error) {
+	var detail domain.AdminUserDetail
+	row := p.pool.QueryRow(ctx, `SELECT `+adminUserColumns+`, p.updated_at,
+		(SELECT COUNT(*)::int FROM room_members m WHERE m.user_id = p.id AND m.role = 'member'),
+		(SELECT COUNT(*)::int FROM messages m WHERE m.sender_user_id = p.id),
+		(SELECT COUNT(*)::int FROM content_reports c WHERE c.target_type = 'user' AND c.target_id = p.id),
+		(SELECT COUNT(*)::int FROM content_reports c WHERE c.reporter_type = 'user' AND c.reporter_id = p.id)
+		FROM profiles p
+		LEFT JOIN account_bans b ON b.user_id = p.id AND (b.expires_at IS NULL OR b.expires_at > NOW())
+		WHERE p.id = $1::uuid`, userID)
+	var actorID, reason, note *string
+	var expiresAt, bannedAt *time.Time
+	user := &detail.AdminUser
+	err := row.Scan(&user.ID, &user.DisplayName, &user.CreatedAt, &user.RoomCount, &actorID, &reason, &note, &expiresAt, &bannedAt,
+		&user.DeletionScheduledFor, &user.OpenReports, &detail.LastSeenAt, &detail.MemberRooms, &detail.MessagesSent, &detail.TotalReports, &detail.ReportsFiled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return detail, domain.ErrNotFound
+	}
+	if err != nil {
+		return detail, err
+	}
+	if actorID != nil && reason != nil && note != nil && bannedAt != nil {
+		user.Suspension = &domain.AccountBan{UserID: user.ID, ActorID: *actorID, Reason: *reason, Note: *note, ExpiresAt: expiresAt, CreatedAt: *bannedAt}
+	}
+	if detail.History, _, err = p.ListAdminAudit(ctx, domain.AdminAuditFilter{TargetID: userID}, 20, 0); err != nil {
+		return detail, err
+	}
+	rows, err := p.pool.Query(ctx, `SELECT `+reportColumns+reportJoins+` WHERE c.target_type = 'user' AND c.target_id = $1::uuid ORDER BY c.created_at DESC, c.id DESC LIMIT 10`, userID)
+	if err != nil {
+		return detail, err
+	}
+	defer rows.Close()
+	detail.RecentReports = make([]domain.Report, 0)
+	for rows.Next() {
+		report, err := scanReport(rows)
+		if err != nil {
+			return detail, err
+		}
+		detail.RecentReports = append(detail.RecentReports, report)
+	}
+	return detail, rows.Err()
 }
 
 func (p *Postgres) ListAdminRooms(ctx context.Context, query, status, owner string, limit, offset int) ([]domain.AdminRoom, int, error) {
@@ -286,7 +380,9 @@ func (p *Postgres) Ping(ctx context.Context) error { return p.pool.Ping(ctx) }
 func (p *Postgres) UpsertProfile(ctx context.Context, identity domain.Identity) error {
 	_, err := p.pool.Exec(ctx, `INSERT INTO profiles (id, display_name, avatar_url)
 		VALUES ($1, $2, NULLIF($3, '')) ON CONFLICT (id) DO UPDATE
-		SET display_name = EXCLUDED.display_name, avatar_url = EXCLUDED.avatar_url, updated_at = NOW()`,
+		SET display_name = COALESCE(profiles.custom_display_name, EXCLUDED.display_name),
+		    avatar_url = CASE WHEN profiles.hide_avatar THEN NULL ELSE EXCLUDED.avatar_url END,
+		    updated_at = NOW()`,
 		identity.ID, identity.DisplayName, identity.AvatarURL)
 	return err
 }
@@ -580,7 +676,7 @@ func scanMessage(row rowScanner) (domain.Message, error) {
 	return message, nil
 }
 
-// lockOpenRoom serializes chat writes with room closure.
+// lockOpenRoom serializes writes with room closure.
 func lockOpenRoom(ctx context.Context, tx pgx.Tx, roomID string) error {
 	var id string
 	if err := tx.QueryRow(ctx, `SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, roomID).Scan(&id); err != nil {
@@ -631,7 +727,8 @@ func (p *Postgres) InsertMessageReply(ctx context.Context, roomID string, identi
 	var id string
 	err = tx.QueryRow(ctx, `INSERT INTO messages
 		(room_id, sender_user_id, sender_guest_id, sender_type, sender_display_name, sender_avatar_url, content, reply_to_id)
-		VALUES ($1, CASE WHEN $2 = 'user' THEN $3::uuid END, CASE WHEN $2 = 'guest' THEN $3::uuid END, $2::identity_type, $4, NULLIF($5, ''), $6, NULLIF($7, '')::uuid)
+		VALUES ($1, CASE WHEN $2 = 'user' THEN $3::uuid END, CASE WHEN $2 = 'guest' THEN $3::uuid END, $2::identity_type, $4, CASE WHEN $2 = 'user' AND EXISTS (SELECT 1 FROM profiles WHERE id = $3::uuid AND hide_avatar)
+			THEN NULL ELSE NULLIF($5, '') END, $6, NULLIF($7, '')::uuid)
 		RETURNING id`,
 		roomID, identity.Type, identity.ID, identity.DisplayName, identity.AvatarURL, content, replyToID).Scan(&id)
 	if err != nil {

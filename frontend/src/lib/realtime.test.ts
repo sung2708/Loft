@@ -70,6 +70,16 @@ describe("room socket recovery", () => {
     expect(onState).toHaveBeenLastCalledWith("FAILED", expect.stringContaining("full"));
   });
 
+  it("stops reconnecting when account access is revoked", async () => {
+    const onState = vi.fn();
+    const socket = new RoomSocket(credential, { onEvent: vi.fn(), onState });
+    await socket.connect();
+    TestSocket.instances[0].receive("error", { code: "UNAUTHORIZED" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(TestSocket.instances).toHaveLength(1);
+    expect(onState).toHaveBeenLastCalledWith("FAILED", "Sign in to continue");
+  });
+
   it("stops retrying immediately after a host kick", async () => {
     const onState = vi.fn();
     const socket = new RoomSocket(credential, { onEvent: vi.fn(), onState });

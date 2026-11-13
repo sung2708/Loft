@@ -118,7 +118,11 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	entries, total, err := bans.ListAdminAudit(r.Context(), limit, offset)
+	filter, ok := adminAuditFilterParams(w, r)
+	if !ok {
+		return
+	}
+	entries, total, err := bans.ListAdminAudit(r.Context(), filter, limit, offset)
 	if err != nil {
 		s.internal(w, r, "list admin audit", err)
 		return
