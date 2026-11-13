@@ -92,6 +92,7 @@ Apply in order:
 20. `000020_message_revision.up.sql`
 21. `000021_accounts_reports.up.sql`
 22. `000022_account_deletion_retry.up.sql`
+23. `000023_messages_sender_index.up.sql`
 
 Migrations 000017–000020 must be applied **before** rolling out the backend that
 uses them: chat history reads the new `messages` columns, the admin user list joins
@@ -109,6 +110,10 @@ Apply migrations 000021 and 000022 before deploying account settings and reports
 Verify that the backend database role can read and delete the matching row in `auth.users`
 in a staging environment. If it cannot, the purge rolls back and leaves the
 deletion scheduled for retry.
+
+Readiness checks that the deletion retry column from migration 000022 is available.
+Migration 000023 builds an index on `messages` and blocks writes to that table
+while the index is built. Run it during a low-traffic window.
 
 Do not edit applied migration files. Use a new numbered migration for schema changes.
 

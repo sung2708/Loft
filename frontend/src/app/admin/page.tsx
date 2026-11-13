@@ -1,12 +1,16 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 import { AdminPage } from "@/features/admin/AdminPage";
 
-// The admin view keeps its section and filters in the URL; reading search
-// params on the client needs a Suspense boundary for static rendering.
-export default function Page() {
+export default async function Page() {
+  const host = (await headers()).get("host");
+  const homeHref =
+    host === "admin.mingly.site"
+      ? process.env.NEXT_PUBLIC_SITE_URL || "https://mingly.site/"
+      : "/";
   return (
     <Suspense>
-      <AdminPage />
+      <AdminPage homeHref={homeHref} />
     </Suspense>
   );
 }

@@ -1,0 +1,1 @@
+DROP INDEX messages_sender_created_idx;

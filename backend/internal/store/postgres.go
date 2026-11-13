@@ -374,8 +374,15 @@ func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 	return &Postgres{pool: pool}, nil
 }
 
-func (p *Postgres) Close()                         { p.pool.Close() }
-func (p *Postgres) Ping(ctx context.Context) error { return p.pool.Ping(ctx) }
+func (p *Postgres) Close() { p.pool.Close() }
+
+func (p *Postgres) CheckReady(ctx context.Context) error {
+	// Migration 000022 is required by the account sweeper and deletion flow.
+	_, err := p.pool.Exec(ctx, accountDeletionReadinessSQL)
+	return err
+}
+
+const accountDeletionReadinessSQL = `SELECT retry_after FROM account_deletions LIMIT 0`
 
 func (p *Postgres) UpsertProfile(ctx context.Context, identity domain.Identity) error {
 	_, err := p.pool.Exec(ctx, `INSERT INTO profiles (id, display_name, avatar_url)

@@ -50,7 +50,7 @@ Requirements: Node 24 (used by CI), pnpm 12.10.1 (pinned in `frontend/package.js
 
 1. Copy `frontend/.env.example` to `frontend/.env.local` and set public values.
 2. Copy `backend/.env.example` to `backend/.env` and set server values. Replace example credentials and signing secrets with your own. `go run ./cmd/server` loads this file when run from `backend`; exported shell variables take precedence.
-3. Apply every `backend/migrations/*.up.sql` file in numeric order (currently `000001` through `000020`) through Supabase SQL Editor or your migration runner.
+3. Apply every `backend/migrations/*.up.sql` file in numeric order through Supabase SQL Editor or your migration runner.
 4. For single-node development without Redis, leave `REDIS_URL` empty (the example points to localhost). Otherwise start Redis and set its URL; multiple backend nodes also need distinct `INSTANCE_ID` values.
 5. Start backend in one terminal:
 

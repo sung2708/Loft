@@ -43,6 +43,18 @@ func TestReleaseMigrationInIsolatedSchema(t *testing.T) {
 		t.Fatal("migration files missing", err)
 	}
 	for _, name := range files {
+		if filepath.Base(name) == "000022_account_deletion_retry.up.sql" {
+			_, err := tx.Exec(ctx, "SAVEPOINT readiness")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, accountDeletionReadinessSQL); err == nil {
+				t.Fatal("readiness passed without migration 000022")
+			}
+			if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT readiness"); err != nil {
+				t.Fatal(err)
+			}
+		}
 		migration, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -50,6 +62,9 @@ func TestReleaseMigrationInIsolatedSchema(t *testing.T) {
 		if _, err := tx.Exec(ctx, string(migration)); err != nil {
 			t.Fatalf("migration %s failed (%T)", name, err)
 		}
+	}
+	if _, err := tx.Exec(ctx, accountDeletionReadinessSQL); err != nil {
+		t.Fatalf("readiness failed after migrations: %v", err)
 	}
 	for _, table := range []string{"profiles", "rooms", "room_members", "messages", "room_bans"} {
 		var exists bool

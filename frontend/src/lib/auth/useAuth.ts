@@ -153,7 +153,7 @@ export const useAuthStore = create<AuthStore>((set) => ({
   signOut: async () => {
     const supabase = getSupabase();
     if (supabase) {
-      const { error } = await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut({ scope: "local" });
       if (error) throw error;
     }
     if (typeof window !== "undefined") {

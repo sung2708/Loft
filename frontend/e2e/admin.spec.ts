@@ -41,6 +41,54 @@ const rooms = [
   },
 ];
 
+test("admin signs out without reloading", async ({ page }) => {
+  await page.route("**/auth/v1/logout?**", (route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await page.goto("/admin");
+  const logout = page.waitForResponse("**/auth/v1/logout?**");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  expect(new URL((await logout).url()).searchParams.get("scope")).toBe("local");
+  await expect(page.getByRole("heading", { name: "Sign in to continue" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
+});
+
+test("admin reports when local sign-out could not revoke the session", async ({ page }) => {
+  await page.route("**/auth/v1/logout?**", (route) =>
+    route.fulfill({ status: 500, json: { message: "Unavailable" } }),
+  );
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in to continue" })).toBeVisible();
+  await expect(page.getByText("Signed out in this browser. The server could not confirm the session ended.")).toBeVisible();
+});
+
+test("admin links back to the current site on local and preview hosts", async ({ page }) => {
+  await page.goto("/admin");
+  const header = page.getByRole("banner");
+  await expect(header.getByRole("link", { name: "Back to Mingly" })).toHaveAttribute(
+    "href",
+    "/",
+  );
+  await expect(header.getByRole("link", { name: "Mingly", exact: true })).toHaveAttribute(
+    "href",
+    "/",
+  );
+});
+
+test("admin subdomain renders a link to the configured public site", async ({ request }) => {
+  const response = await request.get("/", { headers: { Host: "admin.mingly.site" } });
+  expect(response.ok()).toBe(true);
+  const html = await response.text();
+  const brandHref = html.match(/<a aria-label="Mingly"[^>]* href="([^"]+)"/)?.[1];
+  const backHref = html.match(/<a [^>]*aria-label="Về Mingly"[^>]* href="([^"]+)"/)?.[1];
+  expect(brandHref).toMatch(/^https?:\/\//);
+  expect(backHref).toBe(brandHref);
+  if (process.env.CI) {
+    expect(brandHref).toBe(process.env.NEXT_PUBLIC_SITE_URL);
+  }
+});
+
 test.beforeEach(async ({ page }) => {
   const payload = Buffer.from(
     JSON.stringify({

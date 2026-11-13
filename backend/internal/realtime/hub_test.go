@@ -85,7 +85,7 @@ func (s *governedRealtimeStore) IsBanned(_ context.Context, roomID string, ident
 	return exists, nil
 }
 
-func (s *realtimeStore) Ping(context.Context) error                           { return nil }
+func (s *realtimeStore) CheckReady(context.Context) error                     { return nil }
 func (s *realtimeStore) UpsertProfile(context.Context, domain.Identity) error { return nil }
 func (s *realtimeStore) CreateRoom(context.Context, domain.CreateRoomParams) (domain.Room, error) {
 	return domain.Room{}, nil
