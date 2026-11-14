@@ -57,6 +57,7 @@ func main() {
 	}
 	hub := realtime.New(database, guests, users, cfg.FrontendOrigins, slogLogger)
 	hub.SetParticipantEvictor(liveKitService)
+	hub.SetMediaTokenIssuer(liveKitService)
 	api := httpapi.New(database, users, guests, liveKitService, cfg.FrontendOrigins, slogLogger, hub)
 	api.ConfigureObservability(logger, observability.NewMetrics())
 	api.ConfigureAdminUserIDs(cfg.AdminUserIDs)

@@ -13,6 +13,9 @@ export function reconnectDelay(retry: number, random = Math.random()) {
   return base * (0.75 + random * 0.5);
 }
 
+export const OFFLINE_MESSAGE = "You’re offline. We’ll reconnect when your network is back.";
+const PROBE_TIMEOUT_MS = 5000;
+
 const memoryTabSessions = new Map<string, string>();
 
 function tabSessionID(roomId: string): string {
@@ -40,10 +43,14 @@ export class RoomSocket {
   private attempt = 0;
   private ready = false;
   private lastReceived = 0;
+  private received = 0;
   private retryError: string | undefined;
   private deadline: ReturnType<typeof setTimeout> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private probe: ReturnType<typeof setTimeout> | null = null;
+  /** The browser reported no network; retries wait instead of burning out. */
+  private offline = false;
   private readonly tabSessionId: string;
   constructor(
     private credential: RoomCredential,
@@ -96,6 +103,7 @@ export class RoomSocket {
       try {
         const event = JSON.parse(String(message.data)) as ServerEvent;
         this.lastReceived = Date.now();
+        this.received += 1;
         if (event.type === "room.snapshot") {
           this.retry = 0;
           this.retryError = undefined;
@@ -166,7 +174,45 @@ export class RoomSocket {
     this.scheduleReconnect();
   }
 
+  /** Browser lost its network: stop counting retries toward FAILED. */
+  networkOffline() {
+    if (this.stopped || this.offline) return;
+    this.offline = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (!this.ready) this.callbacks.onState("RECONNECTING", OFFLINE_MESSAGE);
+  }
+
+  /** Network is back: reconnect now, or verify a socket that looks open. */
+  networkOnline() {
+    if (this.stopped || !this.offline) return;
+    this.offline = false;
+    const socket = this.socket;
+    if (socket && this.ready) {
+      // The socket may have died silently while offline; demand a reply soon.
+      if (this.probe) clearTimeout(this.probe);
+      const before = this.received;
+      this.probe = setTimeout(() => {
+        this.probe = null;
+        if (this.received === before) this.expire(socket);
+      }, PROBE_TIMEOUT_MS);
+      this.send("connection.ping", { client_time: Date.now() });
+      return;
+    }
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.socket = null;
+    this.clearHeartbeat();
+    socket?.close();
+    this.retry = 0;
+    void this.connect();
+  }
+
   private scheduleReconnect() {
+      if (this.offline) {
+        this.callbacks.onState("RECONNECTING", OFFLINE_MESSAGE);
+        return;
+      }
       this.retry += 1;
       if (this.retry > 8) {
         this.callbacks.onState(
@@ -207,6 +253,8 @@ export class RoomSocket {
   }
 
   private clearHeartbeat() {
+    if (this.probe) clearTimeout(this.probe);
+    this.probe = null;
     if (this.deadline) clearTimeout(this.deadline);
     this.deadline = null;
     if (this.heartbeat) clearInterval(this.heartbeat);

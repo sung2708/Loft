@@ -171,11 +171,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ display_name: displayName, password }),
     }),
-  requestRoomAccess: (token: string, id: string) =>
-    request<{ status: "pending" | "approved" | "not_required" }>(
-      `/api/v1/rooms/${encodeURIComponent(id)}/join-requests`,
+  requestRoomAccess: (token: string, id: string, retry = false) =>
+    request<{ status: "pending" | "approved" | "not_required" | "rejected" | "not_requested" }>(
+      `/api/v1/rooms/${encodeURIComponent(id)}/join-requests${retry ? "?retry=true" : ""}`,
       { method: "POST" },
       token,
+    ),
+  roomAccessStatus: (token: string, id: string) =>
+    request<{ status: "pending" | "approved" | "not_required" | "rejected" | "not_requested" }>(
+      `/api/v1/rooms/${encodeURIComponent(id)}/join-requests/status`, {}, token,
     ),
   joinRequests: (token: string, id: string) =>
     request<{

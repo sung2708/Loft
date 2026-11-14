@@ -377,10 +377,14 @@ func Open(ctx context.Context, databaseURL string) (*Postgres, error) {
 func (p *Postgres) Close() { p.pool.Close() }
 
 func (p *Postgres) CheckReady(ctx context.Context) error {
-	// Migration 000022 is required by the account sweeper and deletion flow.
-	_, err := p.pool.Exec(ctx, accountDeletionReadinessSQL)
+	if _, err := p.pool.Exec(ctx, accountDeletionReadinessSQL); err != nil {
+		return err
+	}
+	_, err := p.pool.Exec(ctx, joinRequestReadinessSQL)
 	return err
 }
+
+const joinRequestReadinessSQL = `SELECT status FROM room_join_requests LIMIT 0`
 
 const accountDeletionReadinessSQL = `SELECT retry_after FROM account_deletions LIMIT 0`
 
@@ -512,18 +516,31 @@ func (p *Postgres) IsRoomMember(ctx context.Context, roomID, userID string) (boo
 	return exists, err
 }
 
-func (p *Postgres) RequestRoomAccess(ctx context.Context, roomID string, identity domain.Identity) error {
+func (p *Postgres) JoinRequestStatus(ctx context.Context, roomID, userID string) (string, error) {
+	var status string
+	err := p.pool.QueryRow(ctx, `SELECT CASE
+		WHEN EXISTS (SELECT 1 FROM room_members WHERE room_id=$1::uuid AND user_id=$2::uuid) THEN 'approved'
+		WHEN r.status IN ('pending', 'rejected') THEN r.status ELSE 'not_requested' END
+		FROM (SELECT 1) seed LEFT JOIN room_join_requests r ON r.room_id=$1::uuid AND r.user_id=$2::uuid`, roomID, userID).Scan(&status)
+	return status, err
+}
+
+func (p *Postgres) CreateRoomJoinRequest(ctx context.Context, roomID string, identity domain.Identity, retry bool) (bool, error) {
 	if err := p.UpsertProfile(ctx, identity); err != nil {
-		return err
+		return false, err
 	}
-	_, err := p.pool.Exec(ctx, `INSERT INTO room_join_requests (room_id, user_id) VALUES ($1::uuid, $2::uuid) ON CONFLICT DO NOTHING`, roomID, identity.ID)
-	return err
+	tag, err := p.pool.Exec(ctx, `INSERT INTO room_join_requests (room_id, user_id)
+		SELECT $1::uuid, $2::uuid WHERE NOT EXISTS
+			(SELECT 1 FROM room_members WHERE room_id=$1::uuid AND user_id=$2::uuid)
+		ON CONFLICT (room_id, user_id) DO UPDATE SET status=EXCLUDED.status, requested_at=NOW()
+		WHERE $3 AND room_join_requests.status = 'rejected'`, roomID, identity.ID, retry)
+	return tag.RowsAffected() > 0, err
 }
 
 func (p *Postgres) ListJoinRequests(ctx context.Context, roomID, ownerID string) ([]domain.JoinRequest, error) {
 	rows, err := p.pool.Query(ctx, `SELECT r.user_id, p.display_name, COALESCE(p.avatar_url, ''), r.requested_at
 		FROM room_join_requests r JOIN profiles p ON p.id=r.user_id JOIN rooms room ON room.id=r.room_id
-		WHERE r.room_id=$1::uuid AND room.owner_id=$2::uuid ORDER BY r.requested_at ASC`, roomID, ownerID)
+		WHERE r.room_id=$1::uuid AND room.owner_id=$2::uuid AND r.status='pending' ORDER BY r.requested_at ASC`, roomID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -545,20 +562,20 @@ func (p *Postgres) ResolveJoinRequest(ctx context.Context, roomID, ownerID, user
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_join_requests r JOIN rooms room ON room.id=r.room_id WHERE r.room_id=$1::uuid AND r.user_id=$2::uuid AND room.owner_id=$3::uuid)`, roomID, userID, ownerID).Scan(&exists); err != nil || !exists {
-		if err == nil {
-			return domain.ErrNotFound
-		}
+	// Claim the pending row before granting membership so only one decision wins.
+	tag, err := tx.Exec(ctx, `UPDATE room_join_requests r SET status=CASE WHEN $4 THEN 'approved' ELSE 'rejected' END FROM rooms room
+		WHERE r.room_id=room.id AND r.room_id=$1::uuid AND r.user_id=$2::uuid
+		AND room.owner_id=$3::uuid AND r.status='pending'`, roomID, userID, ownerID, approve)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
 	}
 	if approve {
 		if _, err = tx.Exec(ctx, `INSERT INTO room_members (room_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'member') ON CONFLICT DO NOTHING`, roomID, userID); err != nil {
 			return err
 		}
-	}
-	if _, err = tx.Exec(ctx, `DELETE FROM room_join_requests WHERE room_id=$1::uuid AND user_id=$2::uuid`, roomID, userID); err != nil {
-		return err
 	}
 	return tx.Commit(ctx)
 }

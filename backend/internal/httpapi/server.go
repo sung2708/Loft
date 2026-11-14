@@ -223,6 +223,7 @@ func (s *Server) Routes(ws http.Handler) http.Handler {
 			r.Get("/rooms/{roomID}", s.getRoom)
 			r.Post("/rooms/{roomID}/guest-session", s.guestSession)
 			r.Post("/rooms/{roomID}/join-requests", s.requestJoin)
+			r.Get("/rooms/{roomID}/join-requests/status", s.requestJoin)
 			r.Get("/rooms/{roomID}/join-requests", s.listJoinRequests)
 			r.Patch("/rooms/{roomID}/join-requests/{userID}", s.resolveJoinRequest)
 			r.Patch("/rooms/{roomID}", s.updateRoom)
@@ -708,20 +709,26 @@ func (s *Server) requestJoin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "ROOM_ACCESS_UNAVAILABLE", "Room access is temporarily unavailable")
 		return
 	}
-	member, err := members.IsRoomMember(r.Context(), room.ID, identity.ID)
+	status, err := members.JoinRequestStatus(r.Context(), room.ID, identity.ID)
+	if err == nil && r.Method == http.MethodPost && (status == "not_requested" || status == "rejected" && r.URL.Query().Get("retry") == "true") {
+		var created bool
+		created, err = members.CreateRoomJoinRequest(r.Context(), room.ID, identity, status == "rejected")
+		if err == nil {
+			if created {
+				s.notifyJoinRequests(room.ID, true)
+			}
+			status, err = members.JoinRequestStatus(r.Context(), room.ID, identity.ID)
+		}
+	}
 	if err != nil {
-		s.internal(w, r, "check room membership", err)
+		s.internal(w, r, "check or request room access", err)
 		return
 	}
-	if member {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
-		return
+	code := http.StatusOK
+	if r.Method == http.MethodPost && status == "pending" {
+		code = http.StatusAccepted
 	}
-	if err := members.RequestRoomAccess(r.Context(), room.ID, identity); err != nil {
-		s.internal(w, r, "request room access", err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
+	writeJSON(w, code, map[string]string{"status": status})
 }
 
 func (s *Server) listJoinRequests(w http.ResponseWriter, r *http.Request) {
@@ -773,7 +780,16 @@ func (s *Server) resolveJoinRequest(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, "resolve room join request", err)
 		return
 	}
+	s.notifyJoinRequests(chi.URLParam(r, "roomID"), false)
 	writeJSON(w, http.StatusOK, map[string]bool{"approved": input.Approve})
+}
+
+// notifyJoinRequests pushes a signal without requester details so the host refetches the
+// pending list over authorized HTTP instead of polling it.
+func (s *Server) notifyJoinRequests(roomID string, created bool) {
+	if notifier, ok := s.deletion.(interface{ NotifyJoinRequestsChanged(string, bool) }); ok {
+		notifier.NotifyJoinRequestsChanged(roomID, created)
+	}
 }
 
 type requestAuthKey struct{}

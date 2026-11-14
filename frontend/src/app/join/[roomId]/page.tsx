@@ -130,6 +130,8 @@ export default function RoomJoinPage() {
           router.replace(`/room/${encodeURIComponent(room.slug)}`);
         } else if (active && result.status === "pending") {
           setAccessRequested(true);
+        } else if (active && result.status === "rejected") {
+          setError(l("Your request was declined.", "Yêu cầu tham gia đã bị từ chối."));
         }
       } catch {
         /* User can still interact manually if auto-admission fails */
@@ -138,10 +140,9 @@ export default function RoomJoinPage() {
     return () => {
       active = false;
     };
-  }, [room, hasSession, router]);
+  }, [room, hasSession, router, l]);
 
-  // Keep the waiting page live after a host approves the request. The same
-  // endpoint is idempotent and reports `approved` once membership is created.
+  // Check the decision without submitting another request.
   useEffect(() => {
     if (!accessRequested || !room || !hasSession) return;
     let active = true;
@@ -191,10 +192,17 @@ export default function RoomJoinPage() {
         return;
       }
       try {
-        const result = await api.requestRoomAccess(
+        const result = await api.roomAccessStatus(
           session.access_token,
           room.id,
         );
+        if (!active) return;
+        if (result.status === "rejected" || result.status === "not_requested") {
+          active = false;
+          setAccessRequested(false);
+          setError(l("Your request was declined.", "Yêu cầu tham gia đã bị từ chối."));
+          return;
+        }
         if (result.status === "approved" || result.status === "not_required") {
           const me = await api.me(session.access_token);
           if (!active) return;
@@ -276,6 +284,7 @@ export default function RoomJoinPage() {
           const result = await api.requestRoomAccess(
             session.access_token,
             room.id,
+            true,
           );
           if (
             result.status === "approved" ||
@@ -291,7 +300,10 @@ export default function RoomJoinPage() {
             router.replace(`/room/${encodeURIComponent(room.slug)}`);
             return;
           }
-          setAccessRequested(true);
+          setAccessRequested(result.status === "pending");
+          if (result.status === "rejected") {
+            setError(l("Your request was declined.", "Yêu cầu tham gia đã bị từ chối."));
+          }
         } catch (caught) {
           setError(userFacingError(caught, "Request failed"));
         } finally {

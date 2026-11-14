@@ -19,6 +19,51 @@ beforeEach(() => { vi.useFakeTimers(); TestSocket.instances = []; vi.stubGlobal(
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("room socket recovery", () => {
+  it("waits out a network outage without failing, then reconnects at once", async () => {
+    const onState = vi.fn();
+    const socket = new RoomSocket(credential, { onEvent: vi.fn(), onState });
+    await socket.connect();
+    TestSocket.instances[0].onopen?.();
+    TestSocket.instances[0].receive("room.snapshot");
+    socket.networkOffline();
+    TestSocket.instances[0].onclose?.();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(onState).not.toHaveBeenCalledWith("FAILED", expect.anything());
+    expect(onState).toHaveBeenLastCalledWith("RECONNECTING", expect.stringMatching(/offline/i));
+    expect(TestSocket.instances).toHaveLength(1);
+    socket.networkOnline();
+    await Promise.resolve();
+    expect(TestSocket.instances).toHaveLength(2);
+    socket.close();
+  });
+
+  it("closes the old socket when the network returns before admission", async () => {
+    const socket = new RoomSocket(credential, { onEvent: vi.fn(), onState: vi.fn() });
+    await socket.connect();
+    const first = TestSocket.instances[0];
+    first.onopen?.();
+    socket.networkOffline();
+    socket.networkOnline();
+    await Promise.resolve();
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(TestSocket.instances).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(1);
+    socket.close();
+  });
+
+  it("drops a socket that stays silent after the network returns", async () => {
+    const socket = new RoomSocket(credential, { onEvent: vi.fn(), onState: vi.fn() });
+    await socket.connect();
+    const first = TestSocket.instances[0];
+    first.onopen?.();
+    first.receive("room.snapshot");
+    socket.networkOffline();
+    socket.networkOnline();
+    await vi.advanceTimersByTimeAsync(5_100);
+    expect(first.close).toHaveBeenCalled();
+    socket.close();
+  });
+
   it("refreshes credentials on reconnect and gates commands on the snapshot", async () => {
     const getCredential = vi.fn().mockResolvedValueOnce(credential).mockResolvedValue({ ...credential, token: "fresh" });
     const socket = new RoomSocket(credential, { onEvent: vi.fn(), onState: vi.fn(), getCredential });

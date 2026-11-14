@@ -19,6 +19,13 @@ interface RoomStoreState {
   connectionState: ConnectionState;
   connectionError: string | null;
   governanceError: string | null;
+  /** Bumped when the server signals the host's pending join requests changed. */
+  joinRequestsVersion: number;
+  joinRequestsCreated: number;
+  joinRequestsChanged: (created: boolean) => void;
+  /** Browser reports no network connection (navigator offline event). */
+  networkOffline: boolean;
+  setNetworkOffline: (offline: boolean) => void;
   applySnapshot: (snapshot: RoomSnapshot) => void;
   participantJoined: (participant: ApiParticipant) => void;
   participantAvatar: (connectionId: string, avatarUrl: string) => void;
@@ -42,12 +49,21 @@ const initial = {
   connectionState: "DISCONNECTED" as ConnectionState,
   connectionError: null,
   governanceError: null,
+  joinRequestsVersion: 0,
+  joinRequestsCreated: 0,
+  networkOffline: false,
 };
 
 export const useRoomStore = create<RoomStoreState>((set, _get, api) => {
   api.getInitialState = () => api.getState();
   return {
   ...initial,
+  setNetworkOffline: (networkOffline) => set({ networkOffline }),
+  joinRequestsChanged: (created) =>
+    set((state) => ({
+      joinRequestsVersion: state.joinRequestsVersion + 1,
+      joinRequestsCreated: state.joinRequestsCreated + (created ? 1 : 0),
+    })),
   applySnapshot: (snapshot) =>
     set({
       room: snapshot.room,

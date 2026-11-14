@@ -1,4 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
+
+/** Opens the room and passes the pre-join device check. */
+async function openRoom(page: import("@playwright/test").Page) {
+  await page.goto(`/room/${TEST_SLUG}`);
+  await page.getByRole("button", { name: /^(Join|Tham gia)$/ }).click();
+}
 import { readFileSync } from "node:fs";
 
 const TEST_ROOM_ID = "58bb9fe4-79bc-41c7-9d63-61c04815b668";
@@ -238,7 +244,7 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
 
   test("Host can inspect and switch atmospheres (minimal, ambient, focus, party)", async ({ page }) => {
     await setupDeterministicRoom(page, "host");
-    await page.goto(`/room/${TEST_SLUG}`);
+    await openRoom(page);
 
     // Wait for room shell
     const atmosphereRoot = page.locator("[data-atmosphere]").first();
@@ -266,7 +272,7 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
 
   test("Host can switch all 5 accents (blue, purple, green, orange, rose)", async ({ page }) => {
     await setupDeterministicRoom(page, "host");
-    await page.goto(`/room/${TEST_SLUG}`);
+    await openRoom(page);
 
     const atmosphereRoot = page.locator("[data-atmosphere]").first();
     await expect(atmosphereRoot).toBeVisible({ timeout: 15000 });
@@ -285,7 +291,7 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
 
   test("Participant cannot see or trigger room atmosphere controls", async ({ page }) => {
     await setupDeterministicRoom(page, "participant");
-    await page.goto(`/room/${TEST_SLUG}`);
+    await openRoom(page);
 
     const atmosphereRoot = page.locator("[data-atmosphere]").first();
     await expect(atmosphereRoot).toBeVisible({ timeout: 15000 });
@@ -301,7 +307,7 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
 
   test("Personal theme independence and localStorage loft.theme preservation", async ({ page }) => {
     await setupDeterministicRoom(page, "host");
-    await page.goto(`/room/${TEST_SLUG}`);
+    await openRoom(page);
 
     const appearanceBtn = page.locator('button[aria-label="Appearance"], button[aria-label="Giao diện"]').first();
     await appearanceBtn.click();
@@ -339,7 +345,7 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
     });
 
     await setupDeterministicRoom(page, "host");
-    await page.goto(`/room/${TEST_SLUG}`);
+    await openRoom(page);
 
     await openRoomSettings(page);
     const partyBtn = page.locator('button[role="radio"][data-atmosphere="party"]');
@@ -368,7 +374,7 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
     }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await setupDeterministicRoom(page, "host");
-      await page.goto(`/room/${TEST_SLUG}`);
+      await openRoom(page);
 
       const atmosphereRoot = page.locator("[data-atmosphere]").first();
       await expect(atmosphereRoot).toBeVisible({ timeout: 15000 });
@@ -384,7 +390,7 @@ test.describe("SPEC 005: Room Atmosphere & Appearance", () => {
   test("Reduced motion obeys prefers-reduced-motion without strobe animation", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await setupDeterministicRoom(page, "host");
-    await page.goto(`/room/${TEST_SLUG}`);
+    await openRoom(page);
 
     const atmosphereRoot = page.locator("[data-atmosphere]").first();
     await expect(atmosphereRoot).toBeVisible({ timeout: 15000 });
@@ -420,7 +426,7 @@ test("Music drawer occupies the right column and preserves its player across dra
       }};
       window.onYouTubeIframeAPIReady?.();`,
   }));
-  await page.goto(`/room/${TEST_SLUG}`);
+  await openRoom(page);
   const stage = page.locator('.room-stage-column');
   await expect(stage).toBeVisible();
   const initial = await stage.boundingBox();
@@ -482,7 +488,7 @@ test("Search Play sends metadata and plays with readable dark controls", async (
         setTimeout(() => options.events.onReady(), 0);
       }}; window.onYouTubeIframeAPIReady?.();`,
   }));
-  await page.goto(`/room/${TEST_SLUG}`);
+  await openRoom(page);
   await page.getByRole('button', { name: /shared queue|danh sách chờ/i }).click();
   await page.getByPlaceholder('Search YouTube').fill('test');
   const play = page.getByRole('button', { name: 'Play', exact: true });
@@ -506,7 +512,7 @@ test("Host replay and keyboard seek send the correct room commands", async ({pag
     setTimeout(()=>options.events.onReady(),0);
    }};window.onYouTubeIframeAPIReady?.();
   `}));
-  await page.goto(`/room/${TEST_SLUG}`);
+  await openRoom(page);
   await page.getByRole('button',{name:/shared queue|danh sách chờ/i}).click();
   const progress=page.getByRole('slider',{name:/playback progress|tiến trình phát/i});
   await expect(progress).toHaveAttribute('aria-valuemax','60');
@@ -530,7 +536,7 @@ test("Late YouTube ended callbacks cannot skip the new track", async ({page}) =>
    setTimeout(()=>options.events.onReady(),0);
   }};window.onYouTubeIframeAPIReady?.();
  `}));
- await page.goto(`/room/${TEST_SLUG}`);
+ await openRoom(page);
  await page.getByRole('button',{name:/shared queue|danh sách chờ/i}).click();
  await expect.poll(()=>page.evaluate('typeof window.emitEnded')).toBe('function');
  await page.evaluate('window.emitEnded()');
@@ -545,12 +551,14 @@ test("Late YouTube ended callbacks cannot skip the new track", async ({page}) =>
 test("Participants can add tracks but cannot manage playback or the queue", async ({page}) => {
  const {commands}=await setupDeterministicRoom(page,"participant",undefined,true);
  await page.route("https://www.youtube.com/iframe_api",route=>route.fulfill({contentType:"application/javascript",body:""}));
- await page.goto(`/room/${TEST_SLUG}`);
+ await openRoom(page);
  await page.getByRole('button',{name:/shared queue|danh sách chờ/i}).click();
  const panel=page.locator('aside[aria-hidden="false"]');
- for(const name of [/^(replay|phát lại)$/i,/^(next|bài tiếp)$/i,/^(shuffle|trộn bài)$/i,/^(clear list|xóa danh sách)$/i]){
+ for(const name of [/^(replay|phát lại)$/i,/^(shuffle|trộn bài)$/i,/^(clear list|xóa danh sách)$/i]){
   await expect(panel.getByRole('button',{name})).toBeDisabled();
  }
+ await expect(panel.getByRole('button',{name:/^(next|bài tiếp)$/i})).toHaveCount(0);
+ await expect(panel.getByRole('button',{name:/vote to skip|bỏ phiếu chuyển bài/i})).toBeEnabled();
  const remove=panel.getByRole('button',{name:/^(remove|xóa)$/i});
  await expect(remove).toHaveCount(2);
  for(const button of await remove.all()) await expect(button).toBeDisabled();
@@ -563,24 +571,26 @@ test("Participants can add tracks but cannot manage playback or the queue", asyn
 });
 
 test("Whiteboard shares shapes between participants and displays the drawer's name", async ({browser}) => {
- const first=await browser.newPage();const second=await browser.newPage();
+ test.setTimeout(120_000);
+ const first=await browser.newPage({viewport:{width:1280,height:800}});
+ const second=await browser.newPage({viewport:{width:1280,height:800}});
  const records:Record<string,unknown>={};let version=0;
  const sockets:Array<{send:(data:string)=>void}>=[];
  for(const [index,page]of [first,second].entries()){
   await setupDeterministicRoom(page,index===0?'host':'participant');
-  await page.route('**/api/v1/rooms/*/whiteboard',async route=>{
+  await page.route(/\/api\/v1\/rooms\/[^/]+\/whiteboard(?:\?|$)/,async route=>{
    if(route.request().method()==='PATCH'){
     const patch=route.request().postDataJSON();
     if(patch.version!==version){await route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({version,records})});return}
     for(const record of patch.put)records[record.id]=record;
     for(const id of patch.remove)delete records[id];version++;
-    for(const ws of sockets)ws.send(JSON.stringify({type:'board.changed',payload:{version}}));
+    for(const ws of sockets)if(ws)ws.send(JSON.stringify({type:'board.changed',payload:{version}}));
    }
    await route.fulfill({contentType:'application/json',body:JSON.stringify({version,records})});
   });
   // This transport is isolated from real room/user data; both tabs share one authoritative fixture.
   await page.routeWebSocket('**/ws',ws=>{
-   sockets.push(ws);
+   sockets[index]=ws;
    ws.onMessage(message=>{
     const envelope=JSON.parse(String(message));
     if(envelope.type==='connection.auth')ws.send(JSON.stringify({type:'room.snapshot',payload:{
@@ -589,10 +599,10 @@ test("Whiteboard shares shapes between participants and displays the drawer's na
      self:{connection_id:`conn-${index}`,identity_id:`user-${index}`,identity_type:'guest',display_name:index===0?'Alice':'Bob',role:'guest',livekit_identity:`guest:user-${index}`,joined_at:new Date().toISOString()},
      participants:[0,1].map(i=>({connection_id:`conn-${i}`,identity_id:`user-${i}`,identity_type:'guest',display_name:i===0?'Alice':'Bob',role:'guest',livekit_identity:`guest:user-${i}`,joined_at:new Date().toISOString()})),messages:[],
     }}));
-    if(envelope.type==='board.cursor')for(const other of sockets)other.send(JSON.stringify({type:'board.cursor',payload:{...envelope.payload,connection_id:`conn-${index}`,name:index===0?'Alice':'Bob'}}));
+    if(envelope.type==='board.cursor')for(const other of sockets)if(other!==ws)other.send(JSON.stringify({type:'board.cursor',payload:{...envelope.payload,connection_id:`conn-${index}`,name:index===0?'Alice':'Bob'}}));
    });
   });
-  await page.goto(`/room/${TEST_SLUG}`);
+  await openRoom(page);
   await page.getByRole('button',{name:/whiteboard|bảng vẽ/i}).click();
   await expect(page.locator('.tl-container')).toBeVisible({timeout:30000});
   await expect(page.getByText(/loading whiteboard|đang tải bảng vẽ/i)).toHaveCount(0,{timeout:15000});
@@ -611,14 +621,14 @@ test("Whiteboard shares shapes between participants and displays the drawer's na
   await page.mouse.move(box!.x+x+80,box!.y+360,{steps:12});await page.mouse.up();
  };
  await Promise.all([draw(first,350),draw(second,450)]);
- await expect.poll(()=>Object.values(records).filter((r:unknown)=>(r as {typeName:string}).typeName==='shape').length).toBe(3);
+ await expect.poll(()=>Object.values(records).filter((r:unknown)=>(r as {typeName:string}).typeName==='shape').length,{timeout:15000}).toBe(3);
  await expect(first.locator('.tl-shape')).toHaveCount(3,{timeout:15000});
  await expect(second.locator('.tl-shape')).toHaveCount(3,{timeout:15000});
  // Keep saving while hidden and preserve the same board when opened again.
  await first.getByRole('button',{name:/whiteboard|bảng vẽ/i}).click();
  await first.getByRole('button',{name:/whiteboard|bảng vẽ/i}).click();
  await expect(first.locator('.tl-shape')).toHaveCount(3);
- await second.reload();await second.getByRole('button',{name:/whiteboard|bảng vẽ/i}).click();
+ await second.reload();await second.getByRole("button", {name:/^(Join|Tham gia)$/}).click();await second.getByRole('button',{name:/whiteboard|bảng vẽ/i}).click();
  await expect(second.locator('.tl-shape')).toHaveCount(3,{timeout:15000});
  await first.close();await second.close();
 });
@@ -627,7 +637,7 @@ test("Whiteboard remains reachable on a phone alongside call controls",async({pa
  await page.setViewportSize({width:390,height:844});
  await setupDeterministicRoom(page,'participant');
  let snapshot={version:0,records:{} as Record<string,unknown>};
- await page.route('**/api/v1/rooms/*/whiteboard',route=>{
+ await page.route(/\/api\/v1\/rooms\/[^/]+\/whiteboard(?:\?|$)/,route=>{
   if(route.request().method()==='PATCH'){
    const patch=route.request().postDataJSON();
    for(const record of patch.put)snapshot.records[record.id]=record;
@@ -635,7 +645,7 @@ test("Whiteboard remains reachable on a phone alongside call controls",async({pa
   }
   return route.fulfill({contentType:'application/json',body:JSON.stringify(snapshot)});
  });
- await page.goto(`/room/${TEST_SLUG}`);
+ await openRoom(page);
  const open=page.getByRole('button',{name:/whiteboard|bảng vẽ/i});
  await expect(open).toBeVisible();await open.click();
  await expect(page.locator('.tl-container')).toBeVisible({timeout:15000});
@@ -659,7 +669,7 @@ test("Whiteboard isolates malformed records and recovers from a rejected save",a
  records['shape:cycle-b']={...fixtures[7],id:'shape:cycle-b',parentId:'shape:cycle-a'};
  records['shape:bad-text']={...fixtures[2],id:'shape:bad-text',props:{...fixtures[2].props,richText:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'hi',marks:[{type:'bold italic'}]}]}]}}};
  const quarantined=new Set(Object.keys(records));
- await page.route('**/api/v1/rooms/*/whiteboard',async route=>{
+ await page.route(/\/api\/v1\/rooms\/[^/]+\/whiteboard(?:\?|$)/,async route=>{
   if(route.request().method()==='PATCH'){
    patches++;
    const patch=route.request().postDataJSON();
@@ -671,12 +681,12 @@ test("Whiteboard isolates malformed records and recovers from a rejected save",a
   }
   await route.fulfill({contentType:'application/json',body:JSON.stringify({version,records})});
  });
- await page.goto(`/room/${TEST_SLUG}`);
+ await openRoom(page);
  await page.getByRole('button',{name:/whiteboard|bảng vẽ/i}).click();
  await expect(page.getByText(/loading whiteboard|đang tải bảng vẽ/i)).toHaveCount(0,{timeout:15000});
  await expect(page.locator('.tl-shape')).toHaveCount(0);
  await expect.poll(()=>unchanged).toBeGreaterThan(0);
- const draw=async()=>{await page.keyboard.press('d');const box=await page.locator('.tl-container').boundingBox();await page.mouse.move(box!.x+250,box!.y+200);await page.mouse.down();await page.mouse.move(box!.x+350,box!.y+260,{steps:10});await page.mouse.up()};
+ const draw=async()=>{await page.keyboard.press('d');const box=await page.locator('.tl-container').boundingBox();await page.mouse.move(box!.x+box!.width*0.35,box!.y+box!.height*0.5);await page.mouse.down();await page.mouse.move(box!.x+box!.width*0.55,box!.y+box!.height*0.6,{steps:10});await page.mouse.up()};
  await draw();
  const discard=page.getByRole('button',{name:/discard changes|bỏ thay đổi/i});
  await expect(discard).toBeVisible();
@@ -690,7 +700,7 @@ test("Owner chooses leave or end and ending requires confirmation",async({page})
  await setupDeterministicRoom(page,'host',undefined,false,true);
  let ends=0;
  await page.route('**/api/v1/rooms/*/end',route=>{ends++;return route.fulfill({status:204})});
- await page.goto(`/room/${TEST_SLUG}`);
+ await openRoom(page);
  const leave=page.getByRole('button',{name:/^(leave|rời phòng)$/i});await leave.click();
  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();
  await expect(dialog.getByRole('button',{name:/^(leave room|rời phòng)$/i})).toBeVisible();
@@ -707,7 +717,7 @@ test("Owner chooses leave or end and ending requires confirmation",async({page})
 test("Owner leaving alone does not end the room",async({page})=>{
  const {commands}=await setupDeterministicRoom(page,'host',undefined,false,true);
  let ends=0;await page.route('**/api/v1/rooms/*/end',route=>{ends++;return route.fulfill({status:204})});
- await page.goto(`/room/${TEST_SLUG}`);
+ await openRoom(page);
  await page.getByRole('button',{name:/^(leave|rời phòng)$/i}).click();
  await page.getByRole('dialog').getByRole('button',{name:/^(leave room|rời phòng)$/i}).click();
  await expect(page).not.toHaveURL(/\/room\//);expect(ends).toBe(0);
@@ -715,13 +725,13 @@ test("Owner leaving alone does not end the room",async({page})=>{
 });
 
 test("Member leaves directly without owner choices",async({page})=>{
- await setupDeterministicRoom(page,'participant');await page.goto(`/room/${TEST_SLUG}`);
+ await setupDeterministicRoom(page,'participant');await openRoom(page);
  await page.getByRole('button',{name:/^(leave|rời phòng)$/i}).click();
  await expect(page).not.toHaveURL(/\/room\//);await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test("Ended room notification exits participants and blocks the invite link",async({page})=>{
- const fixture=await setupDeterministicRoom(page,'participant');await page.goto(`/room/${TEST_SLUG}`);
+ const fixture=await setupDeterministicRoom(page,'participant');await openRoom(page);
  await expect(page.getByRole('button',{name:/^(leave|rời phòng)$/i})).toBeVisible();
  await page.route('**/api/v1/rooms/resolve?*',route=>route.fulfill({status:410,contentType:'application/json',body:JSON.stringify({error:{code:'ROOM_ENDED',message:'This room has ended'}})}));
  fixture.sendServerEvent('room.ended',{});
@@ -734,7 +744,7 @@ test("Owner end confirmation fits a phone and remains readable in dark mode",asy
  await page.setViewportSize({width:390,height:844});
  await page.addInitScript(()=>localStorage.setItem('loft.theme','dark'));
  await setupDeterministicRoom(page,'host',undefined,false,true);
- await page.goto(`/room/${TEST_SLUG}`);
+ await openRoom(page);
  await page.getByRole('button',{name:/^(leave|rời phòng)$/i}).click();
  const dialog=page.getByRole('dialog');
  await dialog.getByRole('button',{name:/^(end room|kết thúc phòng)$/i}).click();

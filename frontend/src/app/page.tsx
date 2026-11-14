@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { LazyCallFeedbackPrompt } from "@/components/feedback/LazyCallFeedbackPrompt";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, LazyMotion, domAnimation, m } from "framer-motion";
 import { LobbyHeader } from "@/components/lobby/LobbyHeader";
 import { DeleteRoomDialog } from "@/components/room/DeleteRoomDialog";
 import { LoftMark } from "@/components/brand/LoftMark";
@@ -14,7 +14,7 @@ import { useUIText } from "@/lib/i18n/uiText";
 import { api } from "@/lib/api";
 import { normalizeRoomInput } from "@/lib/roomInput";
 import type { ApiRoom, ApiRoomPreview } from "@/types/api";
-import { EASE_ENTRANCE, EASE_SPATIAL } from "@/lib/motion";
+import { EASE_SPATIAL } from "@/lib/motion";
 import { safeAuthDestination } from "@/lib/authRedirect";
 import {
   Link2,
@@ -142,23 +142,17 @@ export default function LobbyPage() {
       <main className="flex-1 w-full min-h-[calc(100vh-3.5rem)] pt-14 flex items-center px-4 py-8 sm:px-6 sm:py-12">
         <section className="workflow-panel lobby-workflow relative mx-auto grid w-full max-w-[960px] overflow-hidden rounded-[20px] md:grid-cols-[minmax(0,.82fr)_minmax(0,1.18fr)]">
           <div className="lobby-identity flex min-h-48 flex-col items-center justify-center border-b border-[var(--border-loft)] px-5 py-8 text-center sm:min-h-56 sm:px-8 md:min-h-[440px] md:border-b-0 md:border-r md:px-10">
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
-            className="relative mb-5 grid h-14 w-14 place-items-center rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-base)]"
-          >
+          {/* CSS entrance runs before hydration, so the hero (the LCP
+              element) paints with the HTML instead of waiting for JS. */}
+          <div className="lobby-enter lobby-enter-mark relative mb-5 grid h-14 w-14 place-items-center rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-base)]">
             <LoftMark className="h-8 w-8 text-[var(--brand-mark)]" />
-          </motion.div>
+          </div>
 
-          <motion.h1
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.05, ease: EASE_ENTRANCE }}
-            className="max-w-[11ch] text-[clamp(1.75rem,5vw,2.5rem)] font-medium leading-none tracking-[-0.04em] text-[var(--text-loft-primary)] text-balance"
+          <h1
+            className="lobby-enter max-w-[11ch] text-[clamp(1.75rem,5vw,2.5rem)] font-medium leading-none tracking-[-0.04em] text-[var(--text-loft-primary)] text-balance"
           >
             {t.lobby.heroTitle}
-          </motion.h1>
+          </h1>
           </div>
 
           <div className="flex min-w-0 items-center px-5 py-8 sm:px-8 sm:py-10">
@@ -189,9 +183,10 @@ export default function LobbyPage() {
             </div>
 
             {/* Backend-resolved room preview */}
+            <LazyMotion features={domAnimation} strict>
             <AnimatePresence>
               {resolvedRoom && (
-                <motion.div
+                <m.div
                   id="roomPreviewCard"
                   initial={{ opacity: 0, height: 0, scale: 0.96 }}
                   animate={{ opacity: 1, height: "auto", scale: 1 }}
@@ -235,9 +230,10 @@ export default function LobbyPage() {
                       {t.common.join}
                     </button>
                   </div>
-                </motion.div>
+                </m.div>
               )}
             </AnimatePresence>
+            </LazyMotion>
 
             {error && (
               <div

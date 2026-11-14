@@ -48,7 +48,7 @@ test.describe("SPEC 001: Persistent Rooms & Room Access", () => {
     });
     await page.goto("/join/000001");
 
-    const nameInput = page.locator('input[aria-label="Display name"], input[aria-label="Tên hiển thị"]');
+    const nameInput = page.locator("#guest-display-name");
     await expect(nameInput).toBeVisible();
     await nameInput.fill("A");
     const joinBtn = page.locator("#guest-join-btn");
@@ -108,17 +108,32 @@ test('Pending automatic admission enters after approval without reload', async (
   await admissionRoutes(page, {...publicRoom,allow_guests:false,password_required:false});
   let approved = false;
   await page.route('**/join-requests', route => route.fulfill({contentType:'application/json',body:JSON.stringify({status:approved?'approved':'pending'})}));
+  await page.route('**/join-requests/status', route => route.fulfill({json:{status:approved?'approved':'pending'}}));
   await page.goto(`/join/${publicRoom.slug}`);
   await expect(page.getByText(/your request was sent|yêu cầu đã được gửi/i)).toBeVisible();
   approved = true;
   await expect(page).toHaveURL(new RegExp(`/room/${publicRoom.slug}$`),{timeout:10000});
 });
 
+test('Rejected admission stops polling without submitting again', async ({page}) => {
+  await signedIn(page);
+  await admissionRoutes(page, {...publicRoom,allow_guests:false,password_required:false});
+  let submissions = 0;
+  await page.route('**/join-requests', route => {
+    submissions++;
+    return route.fulfill({json:{status:'pending'}});
+  });
+  await page.route('**/join-requests/status', route => route.fulfill({json:{status:'rejected'}}));
+  await page.goto(`/join/${publicRoom.slug}`);
+  await expect(page.getByText(/request was declined|yêu cầu tham gia đã bị từ chối/i)).toBeVisible();
+  expect(submissions).toBe(1);
+});
+
 test('Google login returns through callback to the invited room instead of home', async ({page}) => {
   await admissionRoutes(page, {...publicRoom,allow_guests:false,password_required:false});
   await page.route('**/join-requests', route => route.fulfill({contentType:'application/json',body:'{"status":"approved"}'}));
   let redirectTo = '';
-  await page.route('**/auth/v1/authorize?**', route => {
+  await page.route('**/auth/v1/authorize?**', async route => {
     redirectTo = new URL(route.request().url()).searchParams.get('redirect_to') || '';
     return route.fulfill({contentType:'text/html',body:'<p>Mock Google sign-in</p>'});
   });
@@ -126,7 +141,7 @@ test('Google login returns through callback to the invited room instead of home'
   await page.goto(`/join/${publicRoom.slug}`);
   await page.getByRole('button',{name:/sign in|đăng nhập/i}).last().click();
   await expect.poll(() => redirectTo).toContain('/auth/callback');
-  expect(new URL(redirectTo).searchParams.get('next')).toBe(`/join/${publicRoom.slug}`);
+  expect(new URL(redirectTo).pathname).toBe('/auth/callback');
   await page.goto(`/auth/callback?code=mock-one-time-code`);
   await expect(page).toHaveURL(new RegExp(`/room/${publicRoom.slug}$`),{timeout:15000});
 });

@@ -135,6 +135,10 @@ type snapshotPayload struct {
 	Messages     []domain.Message     `json:"messages"`
 	Media        mediaState           `json:"media"`
 	Picks        []youtubeRoomPick    `json:"picks"`
+	// MediaToken lets the client join LiveKit without a second HTTP round trip.
+	// It is minted only after admission succeeds, so it carries the same
+	// guarantee as POST /livekit-token. Empty when LiveKit is unavailable.
+	MediaToken string `json:"mediaToken,omitempty"`
 }
 type errorPayload struct {
 	Code    string `json:"code"`
@@ -205,6 +209,7 @@ type Hub struct {
 	reactionLimit         *ratelimit.Limiter
 	bus                   roomBus
 	evictor               participantEvictor
+	mediaTokens           mediaTokenIssuer
 	connectionsAccepted   atomic.Uint64
 	broadcasts            atomic.Uint64
 	slowConsumers         atomic.Uint64
@@ -731,6 +736,52 @@ func (h *Hub) handleForwardedMedia(ctx context.Context, request mediaRPCRequest)
 	return mediaRPCResponse{RequestID: request.RequestID}
 }
 
+// mediaTokenIssuer mints LiveKit access tokens (implemented by livekit.TokenService).
+type mediaTokenIssuer interface {
+	Create(room domain.Room, identity domain.Identity) (string, error)
+}
+
+// SetMediaTokenIssuer enables embedding a LiveKit token in the first snapshot.
+func (h *Hub) SetMediaTokenIssuer(issuer mediaTokenIssuer) {
+	h.mu.Lock()
+	h.mediaTokens = issuer
+	h.mu.Unlock()
+}
+
+// issueSnapshotMediaToken is best effort: on failure the client falls back to
+// the HTTP token endpoint, which reports a user-facing error.
+func (h *Hub) issueSnapshotMediaToken(room domain.Room, identity domain.Identity) string {
+	h.mu.RLock()
+	issuer := h.mediaTokens
+	h.mu.RUnlock()
+	if issuer == nil {
+		return ""
+	}
+	token, err := issuer.Create(room, identity)
+	if err != nil {
+		h.logger.Warn("snapshot media token unavailable", "room_id", room.ID, "identity_type", identity.Type, "error", err)
+		return ""
+	}
+	return token
+}
+
+// recordVisit mirrors the HTTP token endpoint so "recent rooms" stays accurate
+// when the client never calls it.
+func (h *Hub) recordVisit(ctx context.Context, roomID string, identity domain.Identity) {
+	if identity.Type != domain.IdentityUser {
+		return
+	}
+	visits, ok := h.store.(domain.RoomVisitStore)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := visits.RecordRoomVisit(ctx, identity.ID, roomID); err != nil {
+		h.logger.Warn("record room visit failed", "room_id", roomID, "error", err)
+	}
+}
+
 func (h *Hub) SetParticipantEvictor(evictor participantEvictor) {
 	h.mu.Lock()
 	h.evictor = evictor
@@ -871,6 +922,14 @@ func (h *Hub) notifyCommitted(roomID, kind string, payload any) {
 
 func (h *Hub) NotifyRoomAccess(room domain.Room) {
 	h.notifyCommitted(room.ID, "room.access_changed", room)
+}
+
+// NotifyJoinRequestsChanged carries no request details; only the host can
+// read the list through the authorized HTTP endpoint.
+func (h *Hub) NotifyJoinRequestsChanged(roomID string, created bool) {
+	h.notifyCommitted(roomID, "room.join_requests_changed", struct {
+		Created bool `json:"created"`
+	}{Created: created})
 }
 
 func (h *Hub) NotifyPickCreated(p store.YouTubeRoomPick) {
@@ -1321,9 +1380,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.RLock()
 	self := c.participant
 	h.mu.RUnlock()
+	currentRoom := h.roomSnapshot(room.ID, room)
+	mediaToken := h.issueSnapshotMediaToken(currentRoom, identity)
 	// The snapshot is always the first frame; queued live events follow it.
 	writeCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-	err = conn.Write(writeCtx, websocket.MessageText, event("room.snapshot", room.ID, snapshotPayload{Room: h.roomSnapshot(room.ID, room), Host: snapshotHost, Self: self, Participants: participants, Messages: messages, Media: media, Picks: picks}))
+	err = conn.Write(writeCtx, websocket.MessageText, event("room.snapshot", room.ID, snapshotPayload{Room: currentRoom, Host: snapshotHost, Self: self, Participants: participants, Messages: messages, Media: media, Picks: picks, MediaToken: mediaToken}))
 	stop()
 	if err != nil {
 		return
@@ -1350,6 +1411,9 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	readDone := make(chan error, 1)
 	pumps.Add(1)
 	go func() { defer pumps.Done(); readDone <- h.readPump(ctx, c) }()
+	if mediaToken != "" && !c.isReconnect {
+		h.recordVisit(ctx, room.ID, identity)
+	}
 	select {
 	case <-ctx.Done():
 	case <-readDone:
