@@ -284,6 +284,26 @@ body {
   border-radius: 999px;
   animation: app-spin var(--duration-standard) linear infinite;
 }
+/* Landing hero entrance: CSS-only so it starts with first paint.
+   The headline only rises (never starts transparent) so it can count as the
+   Largest Contentful Paint immediately; the small mark also fades. */
+@keyframes lobby-enter {
+  from { transform: translateY(6px); }
+  to { transform: none; }
+}
+@keyframes lobby-enter-fade {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+.lobby-enter {
+  animation: lobby-enter 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.lobby-enter-mark {
+  animation-name: lobby-enter-fade;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lobby-enter { animation: none; }
+}
 @keyframes app-spin {
   to { transform: rotate(360deg); }
 }

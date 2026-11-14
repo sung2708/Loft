@@ -27,14 +27,31 @@ type membershipStore struct {
 	*fakeStore
 	members  map[string]bool
 	requests map[string]domain.JoinRequest
+	rejected map[string]bool
 }
 
 func (s *membershipStore) IsRoomMember(_ context.Context, _, userID string) (bool, error) {
 	return s.members[userID], nil
 }
-func (s *membershipStore) RequestRoomAccess(_ context.Context, _ string, identity domain.Identity) error {
+func (s *membershipStore) JoinRequestStatus(_ context.Context, _, userID string) (string, error) {
+	if s.members[userID] {
+		return "approved", nil
+	}
+	if s.rejected[userID] {
+		return "rejected", nil
+	}
+	if _, ok := s.requests[userID]; ok {
+		return "pending", nil
+	}
+	return "not_requested", nil
+}
+func (s *membershipStore) CreateRoomJoinRequest(_ context.Context, _ string, identity domain.Identity, retry bool) (bool, error) {
+	if _, exists := s.requests[identity.ID]; exists || s.rejected[identity.ID] && !retry {
+		return false, nil
+	}
+	delete(s.rejected, identity.ID)
 	s.requests[identity.ID] = domain.JoinRequest{UserID: identity.ID, DisplayName: identity.DisplayName, RequestedAt: time.Now()}
-	return nil
+	return true, nil
 }
 func (s *membershipStore) ListJoinRequests(_ context.Context, _, ownerID string) ([]domain.JoinRequest, error) {
 	if ownerID != s.room.OwnerID {
@@ -55,6 +72,11 @@ func (s *membershipStore) ResolveJoinRequest(_ context.Context, _, ownerID, user
 	}
 	if approve {
 		s.members[userID] = true
+	} else {
+		if s.rejected == nil {
+			s.rejected = make(map[string]bool)
+		}
+		s.rejected[userID] = true
 	}
 	delete(s.requests, userID)
 	return nil

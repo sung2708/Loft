@@ -114,9 +114,11 @@ describe("parseMediaPreferences", () => {
     const saved = {
       audioDeviceId: "mic-1",
       videoDeviceId: "cam-2",
+      audioOutputDeviceId: "speaker-3",
       micOnJoin: false,
       cameraOnJoin: true,
       pushToTalk: true,
+      noiseFilter: false,
       screenShareMode: "motion" as const,
     };
     expect(parseMediaPreferences(JSON.stringify(saved))).toEqual(saved);

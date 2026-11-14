@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { motion, useReducedMotion } from "framer-motion";
 import {
+  ArrowDown,
   Pencil,
   Reply,
   Trash2,
@@ -27,14 +28,14 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, memo, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { activeTypers, useChatStore } from "@/stores/useChatStore";
 import type { ApiMessage } from "@/types/api";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useUIStore } from "@/stores/useUIStore";
-import { EmptyStage, MediaStage, useRoomSession } from "./RoomSession";
+import { ConnectingStage, EmptyStage, MediaStage, useRoomSession } from "./RoomSession";
 import { MusicDrawer } from "./MusicDrawer";
 import { MusicPlayback } from "./MusicPlayback";
 import { useReactionStore } from "@/stores/useReactionStore";
@@ -50,13 +51,20 @@ import {
 import { LeaveRoomDialog } from "@/components/room/LeaveRoomDialog";
 import { SocialActions } from "@/components/room/SocialActions";
 import { RoomAtmosphere } from "./RoomAtmosphere";
-import { SettingsDrawer } from "./SettingsDrawer";
-import { api, clearCredential } from "@/lib/api";
+import { api, ApiError, clearCredential } from "@/lib/api";
+import { OFFLINE_MESSAGE } from "@/lib/realtime";
 import { useMobileDrawerFocus } from "./useMobileDrawerFocus";
 import { useMediaPrefsStore } from "@/stores/useMediaPrefsStore";
 import { isEditableTarget } from "./pushToTalk";
+import { canNotify, useTabSignals } from "./useTabSignals";
+import { useScreenWakeLock } from "./useScreenWakeLock";
 
 const Whiteboard = dynamic(() => import("./Whiteboard"), { ssr: false });
+// Settings is opened rarely; keep its ~700 lines out of the room's first load.
+const SettingsDrawer = dynamic(
+  () => import("./SettingsDrawer").then((module) => module.SettingsDrawer),
+  { ssr: false },
+);
 
 export function RoomView() {
   const [boardOpen,setBoardOpen]=useState(false);
@@ -64,8 +72,27 @@ export function RoomView() {
   const drawer = useUIStore((state) => state.activeDrawer);
   const connection = useRoomStore((state) => state.connectionState);
   const room = useRoomStore((state) => state.room);
+  const self = useRoomStore((state) => state.self);
+  useTabSignals(self?.identity_type === "user" && self.identity_id === room?.owner_id);
+  useScreenWakeLock(connection === "CONNECTED");
   const [musicPlayerSurface, setMusicPlayerSurface] =
     useState<HTMLDivElement | null>(null);
+  // Once the room is live, fetch the settings chunk in idle time so the first
+  // open is still instant.
+  useEffect(() => {
+    if (connection !== "CONNECTED") return;
+    const load = () => void import("./SettingsDrawer").catch(() => undefined);
+    const idle = (window as Window & {
+      requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    });
+    if (idle.requestIdleCallback) {
+      const id = idle.requestIdleCallback(load, { timeout: 5000 });
+      return () => idle.cancelIdleCallback?.(id);
+    }
+    const timer = window.setTimeout(load, 2000);
+    return () => window.clearTimeout(timer);
+  }, [connection]);
   const handleMusicPlayerSurface = useCallback(
     (surface: HTMLDivElement | null) => {
       setMusicPlayerSurface((current) =>
@@ -124,7 +151,13 @@ function Stage() {
   return (
     <RoomAtmosphere screenShare={media.screenShareActive}>
       <div className="relative w-full h-full">
-        {media.mediaConnected ? <MediaStage /> : <EmptyStage />}
+        {media.mediaConnected ? (
+          <MediaStage />
+        ) : media.mediaConnecting ? (
+          <ConnectingStage />
+        ) : (
+          <EmptyStage />
+        )}
         {media.mediaError && (
           <div
             role="alert"
@@ -364,13 +397,25 @@ function RoomHeader() {
 function ConnectionBadge() {
   const tr = useUIText();
   const socketState = useRoomStore((item) => item.connectionState);
+  const offline = useRoomStore((item) => item.networkOffline);
   const { mediaReconnecting } = useRoomSession();
   // The room socket and the call reconnect independently; show whichever is down.
   const state =
     socketState === "CONNECTED" && mediaReconnecting ? "RECONNECTING" : socketState;
-  const visible = state !== "CONNECTED";
+  const visible = offline || state !== "CONNECTED";
   if (!visible) return null;
   const failed = state === "FAILED";
+  if (offline && !failed) {
+    return (
+      <div
+        role="status"
+        className="absolute left-1/2 top-16 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-full bg-[#101113] px-3 py-2 text-[13px] text-white shadow-lg"
+      >
+        <WifiOff className="w-3.5 h-3.5 shrink-0" />
+        <span className="truncate">{tr(OFFLINE_MESSAGE)}</span>
+      </div>
+    );
+  }
   return (
     <div
       role="status"
@@ -535,7 +580,7 @@ function CallDock({boardOpen,toggleBoard}:{boardOpen:boolean;toggleBoard:()=>voi
               useMusicPlayerStore.getState().requestAudioActivation();
             toggleDrawer("music");
           }}
-          className={`room-dock-optional ${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`}
+          className={`${control} ${drawer === "music" ? "bg-[#101113] text-white" : ""}`}
           title={tr("Shared Queue")}
           aria-label={tr("Shared Queue")}
         >
@@ -640,43 +685,200 @@ function renderMessageContent(content: string, isMine?: boolean) {
 }
 
 const TYPING_SEND_INTERVAL_MS = 3000;
+/** Within this distance of the bottom the reader is "following" the chat. */
+const CHAT_FOLLOW_THRESHOLD_PX = 96;
+
+const chatAction =
+  "flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-loft-muted)] hover:bg-[var(--border-loft-light)] hover:text-[var(--text-loft-primary)]";
+
+type ChatMessageRowProps = {
+  message: ApiMessage;
+  mine: boolean;
+  canDelete: boolean;
+  locale: string;
+  onReply: (message: ApiMessage) => void;
+  onEdit: (message: ApiMessage) => void;
+  onDelete: (message: ApiMessage) => void;
+};
+
+// Memoized so typing in the composer, typing indicators and unrelated
+// messages never re-render the whole history.
+const ChatMessageRow = memo(function ChatMessageRow({
+  message,
+  mine,
+  canDelete,
+  locale,
+  onReply,
+  onEdit,
+  onDelete,
+}: ChatMessageRowProps) {
+  const tr = useUIText();
+  const isSystem = message.sender_id === "system" || message.sender_id === "";
+  if (isSystem) {
+    return (
+      <div className="flex justify-center my-2">
+        <span className="text-[13px] px-3 py-1 rounded-full bg-[var(--border-loft-light)] text-[var(--text-loft-muted)] border border-[var(--border-loft)] text-center max-w-[90%] break-words">
+          {renderMessageContent(message.content)}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className={`group flex flex-col ${mine ? "items-end" : "items-start"}`}>
+      <div
+        className={`flex items-center gap-2 mb-1 px-1 text-[13px] text-[var(--text-loft-muted)] ${
+          mine ? "flex-row-reverse" : ""
+        }`}
+      >
+        <span className="font-medium text-[var(--text-loft-secondary)]">
+          {message.sender_display_name}
+        </span>
+        <span>·</span>
+        <span>
+          {new Date(message.created_at).toLocaleTimeString(locale, {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </span>
+        {message.edited_at && !message.deleted && <span>· {tr("edited")}</span>}
+      </div>
+      <div className={`flex max-w-[92%] items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
+        <div
+          className={`min-w-0 px-4 py-2 rounded-[10px] text-[13px] break-words whitespace-pre-wrap leading-relaxed ${
+            message.deleted
+              ? "border border-dashed border-[var(--border-loft)] text-[var(--text-loft-muted)] italic"
+              : mine
+                ? "bg-[#101113] text-white rounded-br-[6px] shadow-sm"
+                : "border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] rounded-bl-[6px] shadow-sm"
+          }`}
+        >
+          {message.reply_to && !message.deleted && (
+            <div
+              className={`mb-1.5 border-l-2 pl-2 text-[12px] leading-snug ${mine ? "border-white/40 text-white/70" : "border-[var(--border-loft)] text-[var(--text-loft-muted)]"}`}
+            >
+              <span className="font-medium">{message.reply_to.sender_display_name}</span>
+              <span className="line-clamp-2">
+                {message.reply_to.deleted ? tr("Message deleted") : message.reply_to.content}
+              </span>
+            </div>
+          )}
+          {message.deleted ? tr("Message deleted") : renderMessageContent(message.content, mine)}
+        </div>
+        {!message.deleted && (
+          <div className="flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+            <button type="button" className={chatAction} onClick={() => onReply(message)} aria-label={tr("Reply")} title={tr("Reply")}>
+              <Reply className="h-3.5 w-3.5" />
+            </button>
+            {mine && (
+              <button type="button" className={chatAction} onClick={() => onEdit(message)} aria-label={tr("Edit")} title={tr("Edit")}>
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {canDelete && (
+              <button type="button" className={chatAction} onClick={() => onDelete(message)} aria-label={tr("Delete")} title={tr("Delete")}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+/** Owns the 1s expiry tick so only this line re-renders while people type. */
+function TypingIndicator() {
+  const tr = useUIText();
+  const typing = useChatStore((state) => state.typing);
+  const [now, setNow] = useState(() => Date.now());
+  const hasTypers = Object.keys(typing).length > 0;
+  useEffect(() => {
+    if (!hasTypers) return;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      useChatStore.getState().pruneTyping();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [hasTypers]);
+  const typers = activeTypers(typing, now);
+  return (
+    <p aria-live="polite" className="h-5 truncate px-4 text-[12px] text-[var(--text-loft-muted)]">
+      {typers.length === 1
+        ? `${typers[0]} ${tr("is typing…")}`
+        : typers.length > 1
+          ? tr("Several people are typing…")
+          : ""}
+    </p>
+  );
+}
 
 function ChatDrawer() {
   const tr = useUIText();
   const locale = useI18nStore((state) => state.locale);
   const messages = useChatStore((state) => state.messages);
   const error = useChatStore((state) => state.sendError);
-  const typing = useChatStore((state) => state.typing);
   const self = useRoomStore((state) => state.self);
   const room = useRoomStore((state) => state.room);
   const session = useRoomSession();
+  const reduceMotion = useReducedMotion();
   const [input, setInput] = useState("");
   const [replyTo, setReplyTo] = useState<ApiMessage | null>(null);
   const [editing, setEditing] = useState<ApiMessage | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [unseen, setUnseen] = useState(0);
   const lastTypingSent = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const end = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const seen = useRef<{ count: number; lastId: string | null } | null>(null);
+  const sessionRef = useRef(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
   const isOwner =
     self?.identity_type === "user" && !!room && self.identity_id === room.owner_id;
-  const isMine = (message: ApiMessage) =>
-    !!self &&
-    message.sender_id === self.identity_id &&
-    message.sender_type === self.identity_type;
-  const typers = activeTypers(typing, now);
+  const selfId = self?.identity_id;
+  const selfType = self?.identity_type;
 
+  const scrollToBottom = useCallback(
+    (smooth: boolean) => {
+      const node = scroller.current;
+      if (!node) return;
+      const top = node.scrollHeight;
+      if (typeof node.scrollTo === "function") {
+        node.scrollTo({ top, behavior: smooth && !reduceMotion ? "smooth" : "auto" });
+      } else {
+        node.scrollTop = top;
+      }
+      following.current = true;
+      setUnseen(0);
+    },
+    [reduceMotion],
+  );
+
+  // Follow new messages only when the reader is already at the bottom or just
+  // sent one. Edits, deletes and reactions never move the viewport.
   useEffect(() => {
-    end.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-  // Expire stale typing indicators without a server round trip.
-  useEffect(() => {
-    if (Object.keys(typing).length === 0) return;
-    const timer = setInterval(() => {
-      setNow(Date.now());
-      useChatStore.getState().pruneTyping();
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [typing]);
+    const last = messages[messages.length - 1];
+    const previous = seen.current;
+    seen.current = { count: messages.length, lastId: last?.id ?? null };
+    if (!previous) {
+      scrollToBottom(false);
+      return;
+    }
+    if (!last || last.id === previous.lastId) return;
+    const added = Math.max(1, messages.length - previous.count);
+    const ownMessage = last.sender_id === selfId && last.sender_type === selfType;
+    if (following.current || ownMessage) scrollToBottom(true);
+    else setUnseen((count) => count + added);
+  }, [messages, scrollToBottom, selfId, selfType]);
+
+  const onScroll = () => {
+    const node = scroller.current;
+    if (!node) return;
+    const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
+    following.current = distance <= CHAT_FOLLOW_THRESHOLD_PX;
+    if (following.current) setUnseen(0);
+  };
 
   const resetComposer = () => {
     setInput("");
@@ -703,125 +905,67 @@ function ChatDrawer() {
       session.sendCommand("chat.typing", {});
     }
   };
-  const startReply = (message: ApiMessage) => {
+  const startReply = useCallback((message: ApiMessage) => {
     setEditing(null);
     setReplyTo(message);
     inputRef.current?.focus();
-  };
-  const startEdit = (message: ApiMessage) => {
+  }, []);
+  const startEdit = useCallback((message: ApiMessage) => {
     setReplyTo(null);
     setEditing(message);
     setInput(message.content);
     inputRef.current?.focus();
-  };
-  const remove = (message: ApiMessage) => {
-    if (!window.confirm(tr("Delete this message?"))) return;
-    session.sendCommand("chat.delete", { message_id: message.id });
-  };
-  const action =
-    "flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-loft-muted)] hover:bg-[var(--border-loft-light)] hover:text-[var(--text-loft-primary)]";
+  }, []);
+  const remove = useCallback(
+    (message: ApiMessage) => {
+      if (!window.confirm(tr("Delete this message?"))) return;
+      sessionRef.current.sendCommand("chat.delete", { message_id: message.id });
+    },
+    [tr],
+  );
 
   return (
     <DrawerFrame title={tr("Room chat")}>
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {messages.length === 0 && (
-          <p className="text-[13px] text-center text-[var(--text-loft-muted)] mt-10">
-            {tr("No messages yet. Say hello.")}
-          </p>
-        )}
-        {messages.map((message) => {
-          const isSystem =
-            message.sender_id === "system" || message.sender_id === "";
-          if (isSystem) {
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scroller}
+          onScroll={onScroll}
+          className="flex-1 space-y-3 overflow-y-auto overscroll-contain p-4"
+        >
+          {messages.length === 0 && (
+            <p className="text-[13px] text-center text-[var(--text-loft-muted)] mt-10">
+              {tr("No messages yet. Say hello.")}
+            </p>
+          )}
+          {messages.map((message) => {
+            const mine =
+              !!selfId && message.sender_id === selfId && message.sender_type === selfType;
             return (
-              <div key={message.id} className="flex justify-center my-2">
-                <span className="text-[13px] px-3 py-1 rounded-full bg-[var(--border-loft-light)] text-[var(--text-loft-muted)] border border-[var(--border-loft)] text-center max-w-[90%] break-words">
-                  {renderMessageContent(message.content)}
-                </span>
-              </div>
+              <ChatMessageRow
+                key={message.id}
+                message={message}
+                mine={mine}
+                canDelete={!message.deleted && (mine || isOwner)}
+                locale={locale}
+                onReply={startReply}
+                onEdit={startEdit}
+                onDelete={remove}
+              />
             );
-          }
-
-          const mine = isMine(message);
-          const canDelete = !message.deleted && (mine || isOwner);
-          return (
-            <div
-              key={message.id}
-              className={`group flex flex-col ${mine ? "items-end" : "items-start"}`}
-            >
-              <div
-                className={`flex items-center gap-2 mb-1 px-1 text-[13px] text-[var(--text-loft-muted)] ${
-                  mine ? "flex-row-reverse" : ""
-                }`}
-              >
-                <span className="font-medium text-[var(--text-loft-secondary)]">
-                  {message.sender_display_name}
-                </span>
-                <span>·</span>
-                <span>
-                  {new Date(message.created_at).toLocaleTimeString(locale, {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-                {message.edited_at && !message.deleted && (
-                  <span>· {tr("edited")}</span>
-                )}
-              </div>
-              <div className={`flex max-w-[92%] items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
-                <div
-                  className={`min-w-0 px-4 py-2 rounded-[10px] text-[13px] break-words whitespace-pre-wrap leading-relaxed ${
-                    message.deleted
-                      ? "border border-dashed border-[var(--border-loft)] text-[var(--text-loft-muted)] italic"
-                      : mine
-                        ? "bg-[#101113] text-white rounded-br-[6px] shadow-sm"
-                        : "border border-[var(--border-loft)] bg-[var(--bg-loft-surface)] text-[var(--text-loft-primary)] rounded-bl-[6px] shadow-sm"
-                  }`}
-                >
-                  {message.reply_to && !message.deleted && (
-                    <div
-                      className={`mb-1.5 border-l-2 pl-2 text-[12px] leading-snug ${mine ? "border-white/40 text-white/70" : "border-[var(--border-loft)] text-[var(--text-loft-muted)]"}`}
-                    >
-                      <span className="font-medium">{message.reply_to.sender_display_name}</span>
-                      <span className="line-clamp-2">
-                        {message.reply_to.deleted ? tr("Message deleted") : message.reply_to.content}
-                      </span>
-                    </div>
-                  )}
-                  {message.deleted
-                    ? tr("Message deleted")
-                    : renderMessageContent(message.content, mine)}
-                </div>
-                {!message.deleted && (
-                  <div className="flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
-                    <button type="button" className={action} onClick={() => startReply(message)} aria-label={tr("Reply")} title={tr("Reply")}>
-                      <Reply className="h-3.5 w-3.5" />
-                    </button>
-                    {mine && (
-                      <button type="button" className={action} onClick={() => startEdit(message)} aria-label={tr("Edit")} title={tr("Edit")}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    {canDelete && (
-                      <button type="button" className={action} onClick={() => remove(message)} aria-label={tr("Delete")} title={tr("Delete")}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-        <div ref={end} />
+          })}
+        </div>
+        {unseen > 0 && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom(true)}
+            className="absolute bottom-2 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-loft-primary)] shadow-md"
+          >
+            <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+            {unseen === 1 ? tr("1 new message") : `${unseen} ${tr("new messages")}`}
+          </button>
+        )}
       </div>
-      <p aria-live="polite" className="h-5 truncate px-4 text-[12px] text-[var(--text-loft-muted)]">
-        {typers.length === 1
-          ? `${typers[0]} ${tr("is typing…")}`
-          : typers.length > 1
-            ? tr("Several people are typing…")
-            : ""}
-      </p>
+      <TypingIndicator />
       {error && (
         <p className="px-4 pb-1 text-[13px] text-[var(--text-loft-primary)]">
           {tr(error)}
@@ -835,7 +979,7 @@ function ChatDrawer() {
               ? `${tr("Replying to")} ${replyTo.sender_display_name}: ${replyTo.content}`
               : tr("Editing message")}
           </span>
-          <button type="button" onClick={resetComposer} className={action} aria-label={tr("Cancel")} title={tr("Cancel")}>
+          <button type="button" onClick={resetComposer} className={chatAction} aria-label={tr("Cancel")} title={tr("Cancel")}>
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -883,6 +1027,9 @@ function PeopleDrawer() {
     Array<{ user_id: string; display_name: string; avatar_url?: string }>
   >([]);
   const [newJoinRequest, setNewJoinRequest] = useState(false);
+  const [notifyPermission, setNotifyPermission] = useState<NotificationPermission | "unsupported">(
+    () => (canNotify() ? Notification.permission : "unsupported"),
+  );
   // The server-published host authority is authoritative. A participant role
   // is display state and can lag during reconnect/failover.
   const isHost = Boolean(
@@ -945,41 +1092,74 @@ function PeopleDrawer() {
       action,
     });
   };
+  const roomId = room?.id;
+  const isOwner = self?.identity_type === "user" && self.identity_id === room?.owner_id;
+  const joinRequestsVersion = useRoomStore((state) => state.joinRequestsVersion);
+  const knownRequestCount = useRef(0);
+  // The server pushes "room.join_requests_changed" over the socket, so the list
+  // is refetched on demand. A slow poll only covers missed signals.
   useEffect(() => {
-    if (!isHost || !room || !session.token) return;
+    if (!isOwner || !roomId || !session.token || connection !== "CONNECTED") return;
     let active = true;
+    const token = session.token;
     const refresh = async () => {
       try {
-        const { requests } = await api.joinRequests(session.token!, room.id);
+        const { requests } = await api.joinRequests(token, roomId);
         if (!active) return;
-        setJoinRequests((current) => {
-          if (requests.length > current.length) setNewJoinRequest(true);
-          return requests;
-        });
+        if (requests.length > knownRequestCount.current) setNewJoinRequest(true);
+        knownRequestCount.current = requests.length;
+        setJoinRequests(requests);
       } catch {
         if (active) setJoinRequests([]);
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
+    const timer = window.setInterval(() => void refresh(), 30_000);
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [isHost, room, session.token]);
+  }, [isOwner, roomId, session.token, connection, joinRequestsVersion]);
   const resolveRequest = async (userID: string, approve: boolean) => {
     if (!room || !session.token) return;
-    await api.resolveJoinRequest(session.token, room.id, userID, approve);
-    setJoinRequests((current) =>
-      current.filter((item) => item.user_id !== userID),
-    );
+    useRoomStore.getState().setGovernanceError(null);
+    try {
+      await api.resolveJoinRequest(session.token, room.id, userID, approve);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        useRoomStore.getState().joinRequestsChanged(false);
+      } else {
+        useRoomStore.getState().setGovernanceError(
+          locale === "vi" ? "Không thể xử lý yêu cầu. Hãy thử lại." : "Could not resolve the request. Try again.",
+        );
+      }
+      return;
+    }
+    setJoinRequests((current) => {
+      const next = current.filter((item) => item.user_id !== userID);
+      knownRequestCount.current = next.length;
+      return next;
+    });
   };
   return (
     <>
       <DrawerFrame title={`${tr("People")} · ${people.length}`}>
-        {isHost && room && (
+        {(isHost || isOwner) && room && (
           <div className="border-b border-[var(--border-loft)] bg-[var(--bg-loft-surface)] px-4 pb-4 pt-4">
-            {newJoinRequest && joinRequests.length > 0 && (
+            {isOwner && !room.allow_guests && notifyPermission === "default" && (
+              <button
+                type="button"
+                onClick={() =>
+                  void Notification.requestPermission()
+                    .then(setNotifyPermission)
+                    .catch(() => undefined)
+                }
+                className="mb-3 w-full rounded-[10px] border border-[var(--border-loft)] bg-[var(--bg-loft-card)] px-3 py-2 text-left text-[13px] text-[var(--text-loft-secondary)] hover-invert"
+              >
+                {tr("Notify me when someone asks to join")}
+              </button>
+            )}
+            {isOwner && newJoinRequest && joinRequests.length > 0 && (
               <button
                 type="button"
                 onClick={() => setNewJoinRequest(false)}
@@ -990,7 +1170,7 @@ function PeopleDrawer() {
                   : "New join request"}
               </button>
             )}
-            <button
+            {isHost && <button
               type="button"
               onClick={lockRoom}
               disabled={connection !== "CONNECTED"}
@@ -1003,8 +1183,8 @@ function PeopleDrawer() {
                 <Lock className="w-4 h-4" />
               )}
               {tr(room.is_locked ? "Unlock room" : "Lock room")}
-            </button>
-            {!room.allow_guests && joinRequests.length > 0 && (
+            </button>}
+            {isOwner && !room.allow_guests && joinRequests.length > 0 && (
               <div className="mt-3 space-y-2">
                 <p className="text-[13px] font-medium text-[var(--text-loft-secondary)]">
                   {locale === "vi"

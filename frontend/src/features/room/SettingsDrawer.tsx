@@ -20,6 +20,7 @@ import {
   Music,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { LIVEKIT_IS_CLOUD } from "@/lib/config";
 import { getSupabase } from "@/lib/supabase/client";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useUIStore } from "@/stores/useUIStore";
@@ -65,6 +66,7 @@ function Switch({
 
 export function SettingsDrawer() {
   const pushToTalk = useMediaPrefsStore((state) => state.pushToTalk);
+  const noiseFilter = useMediaPrefsStore((state) => state.noiseFilter);
   const screenShareMode = useMediaPrefsStore((state) => state.screenShareMode);
   const updateMediaPrefs = useMediaPrefsStore((state) => state.update);
   const reducedMotion = useReducedMotion();
@@ -626,6 +628,27 @@ export function SettingsDrawer() {
                   aria-label={vi ? "Bấm giữ để nói" : "Push to talk"}
                 />
               </div>
+
+              {/* Krisp noise filter (LiveKit Cloud only) */}
+              {LIVEKIT_IS_CLOUD && (
+                <div className="flex items-center justify-between pt-3 border-t border-[var(--border-loft)]">
+                  <div className="min-w-0 pr-2">
+                    <div className="text-[13px] font-medium text-[var(--text-loft-primary)]">
+                      {vi ? "Lọc tiếng ồn nâng cao" : "Enhanced noise filter"}
+                    </div>
+                    <div className="mt-0.5 text-[12px] text-[var(--text-loft-muted)]">
+                      {vi
+                        ? "Giảm tiếng quạt, gõ phím, xe cộ quanh bạn"
+                        : "Reduces fans, typing and traffic around you"}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={noiseFilter}
+                    onChange={(next) => updateMediaPrefs({ noiseFilter: next })}
+                    aria-label={vi ? "Lọc tiếng ồn nâng cao" : "Enhanced noise filter"}
+                  />
+                </div>
+              )}
 
               {/* Screen share quality */}
               <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--border-loft)]">

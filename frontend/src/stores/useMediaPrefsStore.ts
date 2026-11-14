@@ -11,10 +11,14 @@ const STORAGE_KEY = "mingly.media.preferences";
 export interface MediaPreferences {
   audioDeviceId: string;
   videoDeviceId: string;
+  /** Speaker/headphones; empty means the system default output. */
+  audioOutputDeviceId: string;
   /** Last pre-join choice, used as the next pre-join default. */
   micOnJoin: boolean;
   cameraOnJoin: boolean;
   pushToTalk: boolean;
+  /** Krisp enhanced noise filtering on the outgoing microphone (LiveKit Cloud). */
+  noiseFilter: boolean;
   /** "detail" keeps text sharp (slides, code); "motion" keeps video smooth. */
   screenShareMode: ScreenShareMode;
 }
@@ -30,9 +34,11 @@ interface MediaPrefsState extends MediaPreferences {
 export const defaultMediaPreferences: MediaPreferences = {
   audioDeviceId: "",
   videoDeviceId: "",
+  audioOutputDeviceId: "",
   micOnJoin: true,
   cameraOnJoin: false,
   pushToTalk: false,
+  noiseFilter: true,
   screenShareMode: "detail",
 };
 
@@ -46,9 +52,11 @@ export function parseMediaPreferences(raw: string | null): MediaPreferences {
     return {
       audioDeviceId: text(value.audioDeviceId),
       videoDeviceId: text(value.videoDeviceId),
+      audioOutputDeviceId: text(value.audioOutputDeviceId),
       micOnJoin: flag(value.micOnJoin, defaultMediaPreferences.micOnJoin),
       cameraOnJoin: flag(value.cameraOnJoin, defaultMediaPreferences.cameraOnJoin),
       pushToTalk: flag(value.pushToTalk, defaultMediaPreferences.pushToTalk),
+      noiseFilter: flag(value.noiseFilter, defaultMediaPreferences.noiseFilter),
       screenShareMode: value.screenShareMode === "motion" ? "motion" : "detail",
     };
   } catch {
@@ -67,9 +75,11 @@ function save(preferences: MediaPreferences) {
 const pick = (state: MediaPreferences): MediaPreferences => ({
   audioDeviceId: state.audioDeviceId,
   videoDeviceId: state.videoDeviceId,
+  audioOutputDeviceId: state.audioOutputDeviceId,
   micOnJoin: state.micOnJoin,
   cameraOnJoin: state.cameraOnJoin,
   pushToTalk: state.pushToTalk,
+  noiseFilter: state.noiseFilter,
   screenShareMode: state.screenShareMode,
 });
 

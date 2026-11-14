@@ -66,6 +66,13 @@ func TestReleaseMigrationInIsolatedSchema(t *testing.T) {
 	if _, err := tx.Exec(ctx, accountDeletionReadinessSQL); err != nil {
 		t.Fatalf("readiness failed after migrations: %v", err)
 	}
+	if _, err := tx.Exec(ctx, joinRequestReadinessSQL); err != nil {
+		t.Fatalf("join request readiness failed after migrations: %v", err)
+	}
+	var senderIndexValid bool
+	if err := tx.QueryRow(ctx, "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('messages_sender_created_idx')").Scan(&senderIndexValid); err != nil || !senderIndexValid {
+		t.Fatalf("message sender index missing or invalid: %v", err)
+	}
 	for _, table := range []string{"profiles", "rooms", "room_members", "messages", "room_bans"} {
 		var exists bool
 		if err := tx.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil || !exists {

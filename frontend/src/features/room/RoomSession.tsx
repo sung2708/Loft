@@ -21,7 +21,7 @@ import {
   useTracks,
   VideoTrack,
 } from "@livekit/components-react";
-import { Track, ConnectionState, ConnectionQuality, RoomEvent } from "livekit-client";
+import { Track, ConnectionState, ConnectionQuality, LocalAudioTrack, LocalVideoTrack, RoomEvent } from "livekit-client";
 import {
   finishCallStats,
   noteCallReconnect,
@@ -30,11 +30,12 @@ import {
   type QualitySample,
 } from "@/lib/callStats";
 import { motion } from "framer-motion";
-import { Hand, MicOff } from "lucide-react";
+import { Hand, Mic, MicOff, Video, VideoOff } from "lucide-react";
 import { api, clearCredential } from "@/lib/api";
 import { getSupabase } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { LIVEKIT_URL } from "@/lib/config";
+import { LIVEKIT_IS_CLOUD, LIVEKIT_URL } from "@/lib/config";
+import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { RoomSocket } from "@/lib/realtime";
 import { useRoomStore } from "@/stores/useRoomStore";
 import { useBoardStore } from "@/stores/useBoardStore";
@@ -61,6 +62,7 @@ import { ScreenShareViewport } from "./ScreenShareViewport";
 import type { RoomCommandType } from "@/types/room";
 import { useMediaPrefsStore } from "@/stores/useMediaPrefsStore";
 import type { JoinMedia } from "./PreJoin";
+import { audioCaptureConstraints, isLiveTrack, videoCaptureConstraints } from "./previewMedia";
 import { usePushToTalk } from "./pushToTalk";
 
 const currentText = (english: string) =>
@@ -72,6 +74,10 @@ interface SessionValue {
   mediaConnected: boolean;
   /** LiveKit is re-establishing voice/video (separate from the room socket). */
   mediaReconnecting: boolean;
+  /** Voice/video is expected but the first LiveKit connection is not up yet. */
+  mediaConnecting?: boolean;
+  /** What the user chose on the pre-join screen, shown while media connects. */
+  joinIntent?: JoinMedia | null;
   screenShareActive: boolean;
   sendChat: (content: string, replyToId?: string) => boolean;
   sendCommand: (type: RoomCommandType, payload: object) => boolean;
@@ -112,6 +118,25 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
     pendingJoinMedia.current = null;
     return media;
   }, []);
+  // Preview tracks handed over by PreJoin stay live (and keep the camera light
+  // on) until LiveKit publishes them; stop them if that will never happen.
+  const releaseJoinTracks = useCallback(() => {
+    const media = pendingJoinMedia.current;
+    if (!media?.tracks) return;
+    media.tracks.audio?.stop();
+    media.tracks.video?.stop();
+    pendingJoinMedia.current = { ...media, tracks: undefined };
+  }, []);
+  // Deferred so React's development double-mount does not stop tracks the
+  // remounted session is about to publish; a real unmount still releases them.
+  const releaseTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (releaseTimer.current !== null) window.clearTimeout(releaseTimer.current);
+    releaseTimer.current = null;
+    return () => {
+      releaseTimer.current = window.setTimeout(releaseJoinTracks, 0);
+    };
+  }, [releaseJoinTracks]);
   const router = useRouter();
   const socketRef = useRef<RoomSocket | null>(null);
   const [liveKitToken, setLiveKitToken] = useState<string | null>(null);
@@ -123,12 +148,18 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
   const [capture] = useState(() => {
     const prefs = useMediaPrefsStore.getState();
     prefs.hydrate();
-    const { audioDeviceId, videoDeviceId } = useMediaPrefsStore.getState();
+    const { audioDeviceId, videoDeviceId, audioOutputDeviceId } = useMediaPrefsStore.getState();
     return {
       audioDeviceId: audioDeviceId || undefined,
       videoDeviceId: videoDeviceId || undefined,
+      audioOutputDeviceId: audioOutputDeviceId || undefined,
     };
   });
+  useEffect(() => {
+    if (!LIVEKIT_URL || connectionState === "FAILED" || (mediaError && !liveKitToken)) {
+      releaseJoinTracks();
+    }
+  }, [connectionState, mediaError, liveKitToken, releaseJoinTracks]);
   const previousConnectionState = useRef(connectionState);
 
   useEffect(() => {
@@ -215,7 +246,11 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
           }
           // Admission must succeed before a second tab can connect to LiveKit
           // with the same identity and displace the active participant.
-          if (!mediaRequested) {
+          if (!mediaRequested && event.payload.mediaToken) {
+            // Token arrived with admission: skip the extra HTTP round trip.
+            mediaRequested = true;
+            setLiveKitToken(event.payload.mediaToken);
+          } else if (!mediaRequested) {
             mediaRequested = true;
             void api
               .liveKitToken(credential.roomId, currentCredential)
@@ -249,6 +284,8 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
             .roomLocked(event.payload.locked, event.payload.version);
         else if (event.type === "room.access_changed")
           useRoomStore.getState().roomUpdated(event.payload);
+        else if (event.type === "room.join_requests_changed")
+          useRoomStore.getState().joinRequestsChanged(event.payload.created === true);
         else if (event.type === "room.appearance.updated")
           useRoomStore.getState().roomAppearanceUpdated(event.payload);
         else if (event.type === "chat.updated")
@@ -319,9 +356,24 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
       },
     });
     socketRef.current = socket;
+    // React to the browser's own network signal instead of waiting for the
+    // socket heartbeat (up to ~45s) to notice, and never give up while offline.
+    const goOffline = () => {
+      useRoomStore.getState().setNetworkOffline(true);
+      socket.networkOffline();
+    };
+    const goOnline = () => {
+      useRoomStore.getState().setNetworkOffline(false);
+      socket.networkOnline();
+    };
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    if (typeof navigator !== "undefined" && navigator.onLine === false) goOffline();
     socket.connect();
     return () => {
       disposed = true;
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
       socket.close();
       socketRef.current = null;
       useRoomStore.getState().reset();
@@ -415,6 +467,9 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
             noiseSuppression: true,
             autoGainControl: true,
           },
+          audioOutput: capture.audioOutputDeviceId
+            ? { deviceId: capture.audioOutputDeviceId }
+            : undefined,
           publishDefaults: {
             simulcast: true,
             // VP9 (SVC) cuts bandwidth, especially for screen share; browsers
@@ -431,6 +486,7 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
       >
         <LiveMediaContext
           consumeJoinMedia={consumeJoinMedia}
+          joinIntent={joinMedia}
           sendChat={sendChat}
           sendCommand={sendCommand}
           leave={leave}
@@ -448,6 +504,9 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
     credential,
     mediaConnected: false,
     mediaReconnecting: false,
+    mediaConnecting:
+      Boolean(LIVEKIT_URL) && !mediaError && connectionState !== "FAILED",
+    joinIntent: joinMedia,
     screenShareActive: false,
     sendChat,
     sendCommand,
@@ -470,6 +529,7 @@ export function RoomSession({ credential, joinMedia }: { credential: RoomCredent
 
 function LiveMediaContext({
   consumeJoinMedia,
+  joinIntent,
   sendChat,
   sendCommand,
   leave,
@@ -482,6 +542,7 @@ function LiveMediaContext({
   "sendChat" | "sendCommand" | "leave" | "mediaError" | "token" | "credential"
 > & {
   consumeJoinMedia: () => JoinMedia | null;
+  joinIntent: JoinMedia;
   setMediaError: (message: string | null) => void;
 }) {
   const {
@@ -524,6 +585,15 @@ function LiveMediaContext({
   const pushToTalk = useMediaPrefsStore((state) => state.pushToTalk);
   const connected = connectionState === ConnectionState.Connected;
 
+  // Krisp runs on the local mic before audio leaves the device. The hook
+  // lazy-loads the filter and (re)attaches it whenever the mic is published.
+  const noiseFilterWanted = useMediaPrefsStore((state) => state.noiseFilter) && LIVEKIT_IS_CLOUD;
+  const krisp = useKrispNoiseFilter();
+  const setNoiseFilter = krisp.setNoiseFilterEnabled;
+  useEffect(() => {
+    void setNoiseFilter(noiseFilterWanted).catch(() => undefined);
+  }, [noiseFilterWanted, setNoiseFilter]);
+
   const setPushToTalkMic = useCallback(
     async (enabled: boolean) => {
       try {
@@ -561,16 +631,46 @@ function LiveMediaContext({
       return;
     initialized.current = true;
     const preferences = consumeJoinMedia();
-    if (!preferences || !isSecureMediaContext()) return;
-    if (preferences.mic && !useMediaPrefsStore.getState().pushToTalk) {
-      void runCapture(() => localParticipant.setMicrophoneEnabled(true)).catch((error) => {
+    const previewAudio = preferences?.tracks?.audio;
+    const previewVideo = preferences?.tracks?.video;
+    if (!preferences || !isSecureMediaContext()) {
+      previewAudio?.stop();
+      previewVideo?.stop();
+      return;
+    }
+    const prefs = useMediaPrefsStore.getState();
+    // Publish the exact tracks tested on the pre-join screen. They are wrapped
+    // as LiveKit-owned (userProvidedTrack=false) so muting the camera still
+    // releases the device and unmuting reacquires it with these constraints.
+    if (preferences.mic && !prefs.pushToTalk) {
+      void runCapture(() =>
+        isLiveTrack(previewAudio)
+          ? localParticipant.publishTrack(
+              new LocalAudioTrack(previewAudio, audioCaptureConstraints(prefs.audioDeviceId || undefined), false),
+              { source: Track.Source.Microphone },
+            )
+          : localParticipant.setMicrophoneEnabled(true),
+      ).catch((error) => {
+        previewAudio?.stop();
         setMediaError(formatMediaError(error, "mic"));
       });
+    } else {
+      previewAudio?.stop();
     }
     if (preferences.camera) {
-      void runCapture(() => localParticipant.setCameraEnabled(true)).catch((error) => {
+      void runCapture(() =>
+        isLiveTrack(previewVideo)
+          ? localParticipant.publishTrack(
+              new LocalVideoTrack(previewVideo, videoCaptureConstraints(prefs.videoDeviceId || undefined), false),
+              { source: Track.Source.Camera },
+            )
+          : localParticipant.setCameraEnabled(true),
+      ).catch((error) => {
+        previewVideo?.stop();
         setMediaError(formatMediaError(error, "camera"));
       });
+    } else {
+      previewVideo?.stop();
     }
   }, [consumeJoinMedia, runCapture, localParticipant, connectionState, setMediaError]);
 
@@ -582,6 +682,8 @@ function LiveMediaContext({
       mediaReconnecting:
         connectionState === ConnectionState.Reconnecting ||
         connectionState === ConnectionState.SignalReconnecting,
+      mediaConnecting: connectionState === ConnectionState.Connecting && !mediaError,
+      joinIntent,
       screenShareActive,
       sendChat,
       sendCommand,
@@ -700,6 +802,7 @@ function LiveMediaContext({
       setMediaError,
       token,
       credential,
+      joinIntent,
     ],
   );
   return (
@@ -963,6 +1066,94 @@ export function SignalBars({ quality }: { quality: ConnectionQuality }) {
         />
       ))}
     </span>
+  );
+}
+
+/**
+ * Shown between admission and the first LiveKit connection so the stage is
+ * never a misleading "room is ready" while voice/video is still starting.
+ */
+/** Plays the handed-over camera track until LiveKit takes it over. */
+function PreviewVideo({ track }: { track: MediaStreamTrack }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [ended, setEnded] = useState(false);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    video.srcObject = new MediaStream([track]);
+    const onEnded = () => setEnded(true);
+    track.addEventListener("ended", onEnded);
+    return () => {
+      track.removeEventListener("ended", onEnded);
+      video.srcObject = null;
+    };
+  }, [track]);
+  if (ended) return null;
+  const mirrored = track.getSettings().facingMode !== "environment";
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      muted
+      playsInline
+      className="mb-4 aspect-video w-full rounded-[10px] bg-[#101113] object-cover"
+      style={mirrored ? { transform: "scaleX(-1)" } : undefined}
+    />
+  );
+}
+
+export function ConnectingStage() {
+  const tr = useUIText();
+  const self = useRoomStore((state) => state.self);
+  const { joinIntent } = useRoomSession();
+  const name = self?.display_name ?? "";
+  const initial = name.trim().charAt(0).toUpperCase() || "•";
+  const previewTrack = joinIntent?.tracks?.video;
+  const showPreview = isLiveTrack(previewTrack);
+  return (
+    <div className="w-full h-full flex items-center justify-center p-6">
+      <div
+        role="status"
+        aria-live="polite"
+        className="glass-card flex w-full max-w-sm flex-col items-center rounded-[10px] p-8 text-center"
+      >
+        {showPreview && <PreviewVideo track={previewTrack} />}
+        <div className={`relative mb-4 h-20 w-20 items-center justify-center ${showPreview ? "hidden" : "flex"}`}>
+          <span
+            aria-hidden
+            className="absolute inset-0 rounded-full border-2 border-[var(--border-loft)] border-t-[var(--accent-blue)] motion-safe:animate-spin"
+          />
+          {self?.avatar_url ? (
+            <img
+              src={self.avatar_url}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="h-16 w-16 rounded-full object-cover"
+            />
+          ) : (
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#101113] text-[20px] font-medium text-white">
+              {initial}
+            </span>
+          )}
+        </div>
+        <p className="text-[13px] font-medium">
+          {name ? `${name} (${tr("You")})` : tr("You")}
+        </p>
+        <p className="mt-1 text-[13px] text-[var(--text-loft-secondary)]">
+          {tr("Connecting voice and video…")}
+        </p>
+        {joinIntent && (
+          <div className="mt-4 flex items-center gap-2 text-[var(--text-loft-muted)]">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-loft)]" aria-label={tr(joinIntent.mic ? "Microphone on" : "Microphone off")}>
+              {joinIntent.mic ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+            </span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-loft)]" aria-label={tr(joinIntent.camera ? "Camera on" : "Camera off")}>
+              {joinIntent.camera ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

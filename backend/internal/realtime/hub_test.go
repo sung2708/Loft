@@ -537,8 +537,14 @@ func TestRoomLockAndParticipantKick(t *testing.T) {
 	if err := json.Unmarshal(lockEvent.Payload, &lockPayload); err != nil || !lockPayload.Locked || lockPayload.Version != 1 {
 		t.Fatalf("room lock state was not committed: payload=%s", lockEvent.Payload)
 	}
+	// The host's own join broadcasts (participant.joined, host.changed) can
+	// still be in flight when the guest registers; they are harmless here.
 	var guestLock Envelope
-	if err := wsjson.Read(ctx, guest, &guestLock); err != nil || guestLock.Type != "room.locked" {
+	err = wsjson.Read(ctx, guest, &guestLock)
+	for err == nil && (guestLock.Type == "participant.joined" || guestLock.Type == "host.changed") {
+		err = wsjson.Read(ctx, guest, &guestLock)
+	}
+	if err != nil || guestLock.Type != "room.locked" {
 		t.Fatalf("guest did not receive room lock: type=%s err=%v", guestLock.Type, err)
 	}
 	// Presence can briefly retain a participant's former display role after a

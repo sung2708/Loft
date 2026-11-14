@@ -111,9 +111,19 @@ Verify that the backend database role can read and delete the matching row in `a
 in a staging environment. If it cannot, the purge rolls back and leaves the
 deletion scheduled for retry.
 
-Readiness checks that the deletion retry column from migration 000022 is available.
+Readiness checks the deletion retry column from migration 000022 and the
+join-request status column from migration 000024.
 Migration 000023 builds an index on `messages` and blocks writes to that table
-while the index is built. Run it during a low-traffic window.
+while the index is built. Run it during a low-traffic window. Before tagging, verify
+that the index exists and is valid in the production database:
+
+```sql
+SELECT indisvalid FROM pg_index
+WHERE indexrelid = to_regclass('public.messages_sender_created_idx');
+```
+
+Expect one row with `indisvalid = true`. Apply migration 000024 before deploying
+the join-request decision flow.
 
 Do not edit applied migration files. Use a new numbered migration for schema changes.
 

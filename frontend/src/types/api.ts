@@ -246,6 +246,8 @@ export interface RoomSnapshot {
   messages: ApiMessage[];
   media?: RoomMediaState;
   picks?: YouTubeRoomPick[];
+  /** LiveKit token minted at admission; absent when the server couldn't issue one. */
+  mediaToken?: string;
 }
 export interface YouTubeRoomPick { id:string; video_id:string; title:string; channel:string; suggested_by:string; votes:number }
 
@@ -276,6 +278,7 @@ export type ServerEvent =
  | { type:"board.changed"; version:1; event_id:string; room_id:string; payload:{version:number; put?:unknown[]; remove?:string[]} }
  | { type:"board.cursor"; version:1; event_id:string; room_id:string; payload:{connection_id:string;name:string;x:number;y:number;drawing:boolean;visible:boolean;draft?:unknown} }
   | {type:"room.ended";version:1;event_id:string;room_id:string;payload:Record<string,never>}
+  | {type:"room.join_requests_changed";version:1;event_id:string;room_id:string;payload:{created?:boolean}}
   | {
       type: "room.snapshot";
       version: 1;

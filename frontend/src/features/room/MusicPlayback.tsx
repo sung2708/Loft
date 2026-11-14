@@ -82,6 +82,10 @@ export function MusicPlayback({ surface, visible }: { surface: HTMLDivElement | 
   const [playerEnabled, setPlayerEnabled] = useState(false);
   // Initialize in a visible drawer, then retain the player when it closes.
   if (visible && hasTrack && !playerEnabled) setPlayerEnabled(true);
+  // The iframe API (~1 MB with the player) is only fetched once a room has
+  // something to play or someone opens the music drawer, then kept.
+  const [apiWanted, setApiWanted] = useState(false);
+  if ((hasTrack || visible) && !apiWanted) setApiWanted(true);
   const [apiReady, setApiReady] = useState(
     () => typeof window !== "undefined" && Boolean(window.YT?.Player),
   );
@@ -467,6 +471,7 @@ export function MusicPlayback({ surface, visible }: { surface: HTMLDivElement | 
 
   return (
     <>
+      {apiWanted && (
       <Script
         src="https://www.youtube.com/iframe_api"
         strategy="afterInteractive"
@@ -479,6 +484,7 @@ export function MusicPlayback({ surface, visible }: { surface: HTMLDivElement | 
             .setError("Unable to load the YouTube player. Check your connection and try again.");
         }}
       />
+      )}
       {surface
         ? createPortal(
             <div ref={playerHostRef} className="h-full w-full" />,

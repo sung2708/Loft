@@ -48,4 +48,14 @@ describe("SfxManager", () => {
     await Promise.resolve();
     expect(manager.activeVoices).toBe(0);
   });
+
+  it("warms every cue once before first play", () => {
+    const warmed: string[] = [];
+    const manager = new SfxManager(() => fakeAudio(), 4, (src) => warmed.push(src));
+    manager.preload();
+    manager.unlock();
+    expect(warmed.length).toBeGreaterThan(0);
+    expect(new Set(warmed).size).toBe(warmed.length);
+    expect(warmed.every((src) => src.endsWith(".mp3"))).toBe(true);
+  });
 });

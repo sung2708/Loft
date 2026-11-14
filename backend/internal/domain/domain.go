@@ -162,7 +162,8 @@ type JoinRequest struct {
 // A room link identifies a room but never grants a signed-in user membership.
 type RoomMembershipStore interface {
 	IsRoomMember(context.Context, string, string) (bool, error)
-	RequestRoomAccess(context.Context, string, Identity) error
+	CreateRoomJoinRequest(context.Context, string, Identity, bool) (bool, error)
+	JoinRequestStatus(context.Context, string, string) (string, error)
 	ListJoinRequests(context.Context, string, string) ([]JoinRequest, error)
 	ResolveJoinRequest(context.Context, string, string, string, bool) error
 }

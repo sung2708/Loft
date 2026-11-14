@@ -30,6 +30,16 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       {
+        // Sound cues are small and rarely change; let browsers reuse them for a week.
+        source: "/sfx/:file*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=604800, stale-while-revalidate=86400",
+          },
+        ],
+      },
+      {
         source: "/admin/:path*",
         headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
       },
